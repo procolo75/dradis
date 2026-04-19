@@ -1,0 +1,2224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DRADIS</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #111111;
+      --sidebar-bg:   #1c1c1c;
+      --card-bg:      #1e1e1e;
+      --accent:       #03a9f4;
+      --accent-hover: #0288d1;
+      --text:         #e1e1e1;
+      --text-muted:   #9e9e9e;
+      --border:       rgba(225, 225, 225, 0.12);
+      --input-bg:     #292929;
+      --success:      #4caf50;
+      --danger:       #ef5350;
+      --radius:       8px;
+      --sidebar-w:    260px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── App shell ── */
+    #app { display: flex; height: 100vh; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: var(--sidebar-w);
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow-y: auto;
+      padding-bottom: 16px;
+    }
+
+    #brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 18px 16px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #brand-name {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--accent);
+    }
+
+    .nav-section { margin-top: 8px; }
+
+    .nav-section-label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      padding: 8px 16px 4px;
+    }
+
+    .nav-list { list-style: none; padding: 0 8px; }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 2px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .nav-item:hover { background: var(--card-bg); color: var(--text); }
+    .nav-item.active { background: rgba(3, 169, 244, 0.12); color: var(--accent); }
+
+    .nav-icon { font-size: 1rem; flex-shrink: 0; width: 18px; text-align: center; }
+    .nav-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .nav-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .nav-dot.on { background: var(--success); }
+
+    /* ── Main content ── */
+    #content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      position: relative;
+    }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Cards ── */
+    .form-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      max-width: 640px;
+    }
+    .form-card h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      color: var(--text);
+    }
+
+    /* ── Form elements ── */
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 8px 10px;
+      font-size: 0.875rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+    }
+    textarea { resize: vertical; min-height: 80px; }
+
+    /* ── Model row ── */
+    .model-row { display: flex; gap: 6px; align-items: center; }
+    .model-row select { flex: 1; }
+    .model-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; min-height: 16px; }
+
+    /* ── Toggle ── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .toggle-label { font-size: 0.875rem; color: var(--text); }
+
+    .toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle-slider::before {
+      content: "";
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 2px; top: 2px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: rgba(3, 169, 244, 0.2); border-color: var(--accent); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); background: var(--accent); }
+
+    /* ── Row 2-col ── */
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* ── Buttons ── */
+    .btn-save {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 9px 20px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-save:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-icon {
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 7px 10px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+    .btn-icon:hover:not(:disabled) { background: var(--card-bg); }
+    .btn-icon:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 20px; }
+
+    /* ── Empty state ── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 60vh;
+      gap: 12px;
+      color: var(--text-muted);
+    }
+    .empty-state .icon { font-size: 2.5rem; }
+
+    /* ── Documentation ── */
+    .doc-body h2 { font-size: 1.15rem; margin-bottom: 12px; }
+    .doc-body h3 { font-size: 0.95rem; font-weight: 600; margin: 20px 0 8px; color: var(--accent); }
+    .doc-body p  { font-size: 0.875rem; line-height: 1.6; margin-bottom: 8px; color: var(--text-muted); }
+    .doc-body ul, .doc-body ol { padding-left: 20px; margin-bottom: 8px; }
+    .doc-body li { font-size: 0.875rem; line-height: 1.6; color: var(--text-muted); margin-bottom: 2px; }
+    .doc-body a  { color: var(--accent); text-decoration: none; }
+    .doc-body a:hover { text-decoration: underline; }
+    .doc-body code {
+      background: var(--input-bg);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 0.8rem;
+      color: var(--text);
+    }
+    .doc-body table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+      margin-bottom: 12px;
+    }
+    .doc-body th, .doc-body td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-body th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px; }
+    .doc-body td { color: var(--text); }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 16px;
+      font-size: 0.875rem;
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      z-index: 999;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.error { border-color: var(--danger); color: var(--danger); }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <nav id="sidebar">
+
+    <div id="brand">
+      <span id="brand-name">DRADIS</span>
+    </div>
+
+    <div class="nav-section">
+      <span class="nav-section-label">Settings</span>
+      <ul class="nav-list">
+        <li class="nav-item active" data-panel="settings">
+          <span class="nav-icon">⚙️</span>
+          <span class="nav-label">DRADIS</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="nav-section">
+      <span class="nav-section-label">Agents</span>
+      <ul class="nav-list" id="sidebar-agents">
+        <li class="nav-item" data-panel="websearch" id="nav-websearch">
+          <span class="nav-dot" id="ws-dot"></span>
+          <span class="nav-label">Web Search</span>
+        </li>
+        <li class="nav-item" data-panel="weather" id="nav-weather">
+          <span class="nav-dot" id="weather-dot"></span>
+          <span class="nav-label">Weather</span>
+        </li>
+        <li class="nav-item" data-panel="voice" id="nav-voice">
+          <span class="nav-dot" id="voice-dot"></span>
+          <span class="nav-label">Voice</span>
+        </li>
+        <li class="nav-item" data-panel="gcal" id="nav-gcal">
+          <span class="nav-dot" id="gcal-dot"></span>
+          <span class="nav-label">Google Calendar</span>
+        </li>
+        <!-- custom agents injected by renderSidebarAgents() -->
+      </ul>
+    </div>
+
+    <div class="nav-section">
+      <span class="nav-section-label" style="display:flex;align-items:center;justify-content:space-between;">
+        Tasks
+        <button id="btn-new-task" title="New task" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
+      </span>
+      <ul class="nav-list" id="sidebar-tasks"></ul>
+    </div>
+
+    <div class="nav-section">
+      <span class="nav-section-label">Other</span>
+      <ul class="nav-list">
+        <li class="nav-item" data-panel="docs">
+          <span class="nav-icon">📖</span>
+          <span class="nav-label">Documentation</span>
+        </li>
+      </ul>
+    </div>
+
+  </nav>
+
+  <!-- ── Main content ── -->
+  <div id="content">
+
+    <!-- Panel: DRADIS Settings -->
+    <div class="panel active" id="panel-settings">
+      <div class="form-card">
+        <h2>DRADIS Settings</h2>
+
+        <div class="form-group">
+          <label for="s-provider">Provider</label>
+          <select id="s-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="s-model">Model</label>
+          <div class="model-row">
+            <select id="s-model">
+              <option value="">— Click 🔄 to load models —</option>
+            </select>
+            <button class="btn-icon" id="btn-load-models" title="Load free ≥30B models from OpenRouter">🔄</button>
+            <button class="btn-icon" id="btn-speedtest" title="Speed test all models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="s-instructions">Agent instructions</label>
+          <textarea id="s-instructions" placeholder="Describe the agent's role and behaviour..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="s-startup">Startup message</label>
+          <input type="text" id="s-startup" placeholder="✅ DRADIS online and ready.">
+        </div>
+
+        <div class="row2">
+          <div class="form-group">
+            <div class="toggle-row">
+              <span class="toggle-label">Conversation history</span>
+              <label class="toggle">
+                <input type="checkbox" id="s-history">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <div class="toggle-row">
+              <span class="toggle-label">Show metrics</span>
+              <label class="toggle">
+                <input type="checkbox" id="s-metrics">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="s-history-depth">Conversation history depth</label>
+          <input type="number" id="s-history-depth" min="1" max="20" style="width:100px">
+        </div>
+
+        <div class="form-group">
+          <label for="s-timezone">Timezone for scheduled tasks</label>
+          <select id="s-timezone" style="max-width:320px">
+            <option value="UTC">UTC</option>
+            <optgroup label="Europe">
+              <option value="Europe/London">Europe/London (GMT/BST)</option>
+              <option value="Europe/Lisbon">Europe/Lisbon (WET/WEST)</option>
+              <option value="Europe/Paris">Europe/Paris (CET/CEST)</option>
+              <option value="Europe/Rome">Europe/Rome (CET/CEST)</option>
+              <option value="Europe/Madrid">Europe/Madrid (CET/CEST)</option>
+              <option value="Europe/Berlin">Europe/Berlin (CET/CEST)</option>
+              <option value="Europe/Amsterdam">Europe/Amsterdam (CET/CEST)</option>
+              <option value="Europe/Brussels">Europe/Brussels (CET/CEST)</option>
+              <option value="Europe/Zurich">Europe/Zurich (CET/CEST)</option>
+              <option value="Europe/Vienna">Europe/Vienna (CET/CEST)</option>
+              <option value="Europe/Stockholm">Europe/Stockholm (CET/CEST)</option>
+              <option value="Europe/Oslo">Europe/Oslo (CET/CEST)</option>
+              <option value="Europe/Copenhagen">Europe/Copenhagen (CET/CEST)</option>
+              <option value="Europe/Warsaw">Europe/Warsaw (CET/CEST)</option>
+              <option value="Europe/Prague">Europe/Prague (CET/CEST)</option>
+              <option value="Europe/Budapest">Europe/Budapest (CET/CEST)</option>
+              <option value="Europe/Helsinki">Europe/Helsinki (EET/EEST)</option>
+              <option value="Europe/Bucharest">Europe/Bucharest (EET/EEST)</option>
+              <option value="Europe/Athens">Europe/Athens (EET/EEST)</option>
+              <option value="Europe/Istanbul">Europe/Istanbul (TRT)</option>
+              <option value="Europe/Moscow">Europe/Moscow (MSK)</option>
+            </optgroup>
+            <optgroup label="Africa">
+              <option value="Africa/Cairo">Africa/Cairo (EET)</option>
+              <option value="Africa/Johannesburg">Africa/Johannesburg (SAST)</option>
+              <option value="Africa/Lagos">Africa/Lagos (WAT)</option>
+              <option value="Africa/Nairobi">Africa/Nairobi (EAT)</option>
+            </optgroup>
+            <optgroup label="Asia">
+              <option value="Asia/Riyadh">Asia/Riyadh (AST)</option>
+              <option value="Asia/Dubai">Asia/Dubai (GST)</option>
+              <option value="Asia/Tehran">Asia/Tehran (IRST)</option>
+              <option value="Asia/Baghdad">Asia/Baghdad (AST)</option>
+              <option value="Asia/Karachi">Asia/Karachi (PKT)</option>
+              <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+              <option value="Asia/Dhaka">Asia/Dhaka (BST)</option>
+              <option value="Asia/Bangkok">Asia/Bangkok (ICT)</option>
+              <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
+              <option value="Asia/Kuala_Lumpur">Asia/Kuala_Lumpur (MYT)</option>
+              <option value="Asia/Hong_Kong">Asia/Hong_Kong (HKT)</option>
+              <option value="Asia/Taipei">Asia/Taipei (CST)</option>
+              <option value="Asia/Shanghai">Asia/Shanghai (CST)</option>
+              <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+              <option value="Asia/Seoul">Asia/Seoul (KST)</option>
+              <option value="Asia/Jakarta">Asia/Jakarta (WIB)</option>
+            </optgroup>
+            <optgroup label="Australia &amp; Pacific">
+              <option value="Australia/Perth">Australia/Perth (AWST)</option>
+              <option value="Australia/Adelaide">Australia/Adelaide (ACST/ACDT)</option>
+              <option value="Australia/Brisbane">Australia/Brisbane (AEST)</option>
+              <option value="Australia/Sydney">Australia/Sydney (AEST/AEDT)</option>
+              <option value="Australia/Melbourne">Australia/Melbourne (AEST/AEDT)</option>
+              <option value="Pacific/Auckland">Pacific/Auckland (NZST/NZDT)</option>
+              <option value="Pacific/Honolulu">Pacific/Honolulu (HST)</option>
+              <option value="Pacific/Fiji">Pacific/Fiji (FJT)</option>
+            </optgroup>
+            <optgroup label="Americas">
+              <option value="America/Sao_Paulo">America/Sao_Paulo (BRT/BRST)</option>
+              <option value="America/Argentina/Buenos_Aires">America/Argentina/Buenos_Aires (ART)</option>
+              <option value="America/Santiago">America/Santiago (CLT/CLST)</option>
+              <option value="America/Lima">America/Lima (PET)</option>
+              <option value="America/Bogota">America/Bogota (COT)</option>
+              <option value="America/Caracas">America/Caracas (VET)</option>
+              <option value="America/Mexico_City">America/Mexico_City (CST/CDT)</option>
+              <option value="America/New_York">America/New_York (EST/EDT)</option>
+              <option value="America/Chicago">America/Chicago (CST/CDT)</option>
+              <option value="America/Denver">America/Denver (MST/MDT)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option>
+              <option value="America/Toronto">America/Toronto (EST/EDT)</option>
+              <option value="America/Vancouver">America/Vancouver (PST/PDT)</option>
+              <option value="America/Phoenix">America/Phoenix (MST)</option>
+              <option value="America/Anchorage">America/Anchorage (AKST/AKDT)</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-settings">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Web Search -->
+    <div class="panel" id="panel-websearch">
+      <div class="form-card">
+        <h2>Web Search Sub-agent</h2>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="ws-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Tavily connection</label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button class="btn-icon" id="btn-ws-test">Test connection</button>
+            <span id="ws-test-result" style="font-size:0.85rem; color:var(--text-muted);"></span>
+          </div>
+          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:6px;">
+            Set <code>tavily_api_key</code> in the add-on Configuration tab.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="ws-provider">LLM Provider</label>
+          <select id="ws-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="ws-model">Model</label>
+          <div class="model-row">
+            <select id="ws-model">
+              <option value="">— Click 🔄 to load models —</option>
+            </select>
+            <button class="btn-icon" id="btn-ws-load-models" title="Load free ≥30B models">🔄</button>
+            <button class="btn-icon" id="btn-ws-speedtest" title="Speed test loaded models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="ws-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="ws-instructions">Additional instructions</label>
+          <textarea id="ws-instructions" placeholder="Optional: extra instructions for the web search sub-agent..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Show metrics</span>
+            <label class="toggle">
+              <input type="checkbox" id="ws-metrics">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-ws">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Weather -->
+    <div class="panel" id="panel-weather">
+      <div class="form-card">
+        <h2>Weather Sub-agent</h2>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="weather-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Open-Meteo connection</label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button class="btn-icon" id="btn-weather-test">Test connection</button>
+            <span id="weather-test-result" style="font-size:0.85rem; color:var(--text-muted);"></span>
+          </div>
+          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:6px;">
+            Open-Meteo is free and requires no API key.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="weather-provider">LLM Provider</label>
+          <select id="weather-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="weather-model">Model</label>
+          <div class="model-row">
+            <select id="weather-model">
+              <option value="">— Click 🔄 to load models —</option>
+            </select>
+            <button class="btn-icon" id="btn-weather-load-models" title="Load free ≥30B models">🔄</button>
+            <button class="btn-icon" id="btn-weather-speedtest" title="Speed test loaded models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="weather-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="weather-instructions">Additional instructions</label>
+          <textarea id="weather-instructions" placeholder="Optional: extra instructions for the weather sub-agent..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Show metrics</span>
+            <label class="toggle">
+              <input type="checkbox" id="weather-metrics">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-weather">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Voice -->
+    <div class="panel" id="panel-voice">
+      <div class="form-card">
+        <h2>Voice Sub-agent</h2>
+
+        <div id="voice-key-warning" style="display:none; background:var(--warn-bg,#fffbe6); border:1px solid var(--warn-border,#ffe58f); border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:0.85rem; color:var(--warn-text,#7c5a00);">
+          ⚠️ <strong>groq_api_key</strong> not configured — Voice agent cannot be enabled. Set it in the add-on <strong>Configuration</strong> tab and restart.
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="voice-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Groq connection</label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button class="btn-icon" id="btn-voice-test">Test connection</button>
+            <span id="voice-test-result" style="font-size:0.85rem; color:var(--text-muted);"></span>
+          </div>
+          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:6px;">
+            Transcription uses the Groq Whisper API. Set <code>groq_api_key</code> in the add-on <strong>Configuration</strong> tab — required to enable this agent.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="voice-model">Whisper Model</label>
+          <div class="model-row">
+            <select id="voice-model">
+              <option value="">— Click 🔄 to load Whisper models —</option>
+            </select>
+            <button class="btn-icon" id="btn-voice-load-models" title="Load available Whisper models from Groq">🔄</button>
+          </div>
+          <div class="model-hint" id="voice-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="voice-language">Language (ISO 639-1)</label>
+          <input type="text" id="voice-language" placeholder="e.g. it, en, fr, de" style="width:120px">
+        </div>
+
+        <div class="row2">
+          <div class="form-group">
+            <div class="toggle-row">
+              <span class="toggle-label">Send transcription</span>
+              <label class="toggle">
+                <input type="checkbox" id="voice-send-transcription">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <div class="toggle-row">
+              <span class="toggle-label">Show metrics</span>
+              <label class="toggle">
+                <input type="checkbox" id="voice-metrics">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-voice">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Google Calendar -->
+    <div class="panel" id="panel-gcal">
+      <div class="form-card">
+        <h2>Google Calendar</h2>
+
+        <div id="gcal-creds-warning" style="display:none; background:var(--warn-bg,#fffbe6); border:1px solid var(--warn-border,#ffe58f); border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:0.85rem; color:var(--warn-text,#7c5a00);">
+          ⚠️ <strong>google_client_id</strong> and/or <strong>google_client_secret</strong> not configured — set them in the add-on <strong>Configuration</strong> tab and restart.
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="gcal-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Authentication status</label>
+          <span id="gcal-auth-status" style="font-size:0.85rem; color:var(--text-muted);">Checking…</span>
+        </div>
+
+        <div class="form-group">
+          <label for="gcal-provider">LLM Provider</label>
+          <select id="gcal-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="gcal-model">Model</label>
+          <div class="model-row">
+            <select id="gcal-model">
+              <option value="">— Click 🔄 to load models —</option>
+            </select>
+            <button class="btn-icon" id="btn-gcal-load-models" title="Load free ≥30B models">🔄</button>
+            <button class="btn-icon" id="btn-gcal-speedtest" title="Speed test loaded models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="gcal-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="gcal-instructions">Additional instructions</label>
+          <textarea id="gcal-instructions" placeholder="Optional: extra instructions for the calendar sub-agent…"></textarea>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Show metrics</span>
+            <label class="toggle">
+              <input type="checkbox" id="gcal-metrics">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Setup guide</label>
+          <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 8px;">
+            No Google username or password is stored. You need a free OAuth2 credential from Google Cloud. Follow these steps <strong>once</strong>:
+          </p>
+          <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+            <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
+            <li><strong>APIs &amp; Services → Library</strong> → search <em>Google Calendar API</em> → <strong>Enable</strong>.</li>
+            <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
+            <li>Still in the consent screen → <strong>Test users</strong> → add your own Google account email → save.</li>
+            <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
+            <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
+            <li>Paste them in the add-on <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → restart the add-on.</li>
+            <li>Send <code>/gcalauth</code> to the Telegram bot → it replies with a Google authorization link.</li>
+            <li>Click the link → sign in with your Google account → grant access → <strong>your browser redirects back to DRADIS automatically ✅</strong>.</li>
+            <li>The bot confirms connection. Enable Google Calendar above and save.</li>
+          </ol>
+          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
+            <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gcalauth &lt;url&gt;</code>.</em>
+          </p>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-gcal">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Agent edit (injected by renderAgentForm) -->
+    <div class="panel" id="panel-agent">
+      <div class="empty-state">
+        <div class="icon">🤖</div>
+        <p>Select an agent from the sidebar</p>
+      </div>
+    </div>
+
+    <!-- Panel: Task -->
+    <div class="panel" id="panel-task">
+      <div class="empty-state">
+        <div class="icon">⏰</div>
+        <p>Select a task from the sidebar</p>
+      </div>
+    </div>
+
+    <!-- Panel: Documentation -->
+    <div class="panel" id="panel-docs">
+      <div class="form-card" style="max-width:720px">
+        <div class="doc-body">
+
+          <h2>DRADIS — Documentation</h2>
+          <p>DRADIS is a Home Assistant add-on that exposes a conversational AI agent controllable via Telegram. All settings are managed from the built-in Web UI and the HA Configuration tab — no code changes required.</p>
+
+          <h3>Requirements</h3>
+          <ul>
+            <li>Home Assistant with Supervisor (HAOS or Supervised)</li>
+            <li>A Telegram bot (created via <a href="https://t.me/BotFather" target="_blank">@BotFather</a>)</li>
+            <li>An API key for at least one supported LLM provider (OpenRouter, OpenAI, GitHub Models, Gemini, or Groq)</li>
+            <li><em>(Optional)</em> A <a href="https://tavily.com" target="_blank">Tavily</a> API key for the Web Search sub-agent</li>
+            <li><em>(Optional)</em> A <a href="https://console.groq.com" target="_blank">Groq</a> API key for the Voice sub-agent (required to enable voice transcription)</li>
+            <li><em>(Optional)</em> Google Cloud OAuth2 credentials for the Google Calendar sub-agent</li>
+          </ul>
+
+          <h3>Installation</h3>
+          <ol>
+            <li>Add the add-on repository in Home Assistant</li>
+            <li>Install the DRADIS add-on</li>
+            <li>Fill in the <strong>Configuration</strong> tab with your credentials</li>
+            <li>Start the add-on</li>
+          </ol>
+
+          <h3>Configuration (HA tab)</h3>
+          <p>Only API keys and credentials go here. All other settings are managed at runtime from the Web UI.</p>
+          <table>
+            <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>telegram_bot_token</code></td><td>password</td><td>Telegram bot token (from BotFather)</td></tr>
+              <tr><td><code>telegram_allowed_chat_id</code></td><td>int</td><td>Telegram user ID allowed to interact</td></tr>
+              <tr><td><code>openrouter_api_key</code></td><td>password</td><td><em>(Optional)</em> OpenRouter API key</td></tr>
+              <tr><td><code>openai_api_key</code></td><td>password</td><td><em>(Optional)</em> OpenAI API key</td></tr>
+              <tr><td><code>github_token</code></td><td>password</td><td><em>(Optional)</em> GitHub Personal Access Token for GitHub Models</td></tr>
+              <tr><td><code>gemini_api_key</code></td><td>password</td><td><em>(Optional)</em> Google Gemini API key</td></tr>
+              <tr><td><code>groq_api_key</code></td><td>password</td><td><em>(Optional)</em> Groq API key — required for the Voice sub-agent</td></tr>
+              <tr><td><code>tavily_api_key</code></td><td>password</td><td><em>(Optional)</em> Tavily API key — required for the Web Search sub-agent</td></tr>
+              <tr><td><code>google_client_id</code></td><td>str</td><td><em>(Optional)</em> Google OAuth2 client ID — required for Google Calendar</td></tr>
+              <tr><td><code>google_client_secret</code></td><td>password</td><td><em>(Optional)</em> Google OAuth2 client secret — required for Google Calendar</td></tr>
+            </tbody>
+          </table>
+          <p>Fill in at least one LLM provider key. The active provider is selected from the Web UI.</p>
+
+          <h3>How to get your API keys</h3>
+          <ul>
+            <li><strong>Telegram bot token</strong>: open Telegram, start a chat with <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> and follow the prompts — you will receive a token like <code>123456:ABC-DEF...</code></li>
+            <li><strong>Telegram user ID</strong>: start a chat with <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> — it will reply with your numeric ID</li>
+            <li><strong>OpenRouter API key</strong>: sign up at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a>, go to <strong>Settings → Keys</strong> to create a key</li>
+            <li><strong>OpenAI API key</strong>: sign up at <a href="https://platform.openai.com" target="_blank">platform.openai.com</a>, go to <strong>API keys</strong></li>
+            <li><strong>GitHub token</strong>: go to <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a> — a classic token with no scopes is sufficient for GitHub Models</li>
+            <li><strong>Gemini API key</strong>: sign up at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a>, click <strong>Get API key</strong></li>
+            <li><strong>Groq API key</strong>: sign up at <a href="https://console.groq.com" target="_blank">console.groq.com</a>, go to <strong>API Keys</strong></li>
+            <li><strong>Tavily API key</strong> (optional): sign up at <a href="https://tavily.com" target="_blank">tavily.com</a> — the free tier includes 1 000 searches/month</li>
+            <li><strong>Google Calendar credential</strong> (optional): no Google username or password is stored — only a free OAuth2 credential is needed. Steps:
+              <ol>
+                <li>Go to <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> → create or select a project</li>
+                <li><strong>APIs &amp; Services → Library</strong> → search <em>Google Calendar API</em> → <strong>Enable</strong></li>
+                <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save</li>
+                <li>Still in consent screen → <strong>Test users</strong> → add your own Google account email → save</li>
+                <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong></li>
+                <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog</li>
+                <li>Paste them in the add-on Configuration tab (<code>google_client_id</code>, <code>google_client_secret</code>) and <strong>restart the add-on</strong></li>
+                <li>Send <code>/gcalauth</code> to the Telegram bot → click the authorization link it replies with</li>
+                <li>Sign in with your Google account, grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong></li>
+                <li>The bot confirms the connection. Enable Google Calendar in the Web UI and save.</li>
+              </ol>
+              <em>If the automatic redirect doesn't work (HA on a different device from the browser), copy the full URL from the browser address bar and send it as <code>/gcalauth &lt;url&gt;</code>.</em>
+            </li>
+          </ul>
+
+          <h3>Web UI — Settings → DRADIS</h3>
+          <p>All runtime settings are configured here and saved to <code>/data/dradis_settings.json</code>. Changes take effect immediately on the next message — no restart needed.</p>
+          <table>
+            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>Provider</td><td><code>openrouter</code></td><td>LLM provider: OpenRouter, OpenAI, GitHub Models, Gemini, or Groq. Select the provider whose API key is configured in the Configuration tab.</td></tr>
+              <tr><td>Model</td><td>—</td><td>Model for the selected provider. Click 🔄 to fetch the available list, then ⚡ to speed-test all models in parallel (tok/s) and keep the top 5 fastest. Changing the provider clears the model list.</td></tr>
+              <tr><td>Agent instructions</td><td><code>You are DRADIS, a versatile AI assistant.</code></td><td>System prompt — defines the agent's role, behaviour, and any persistent facts about the user (name, preferences, language, etc.).</td></tr>
+              <tr><td>Startup message</td><td><code>✅ DRADIS online and ready.</code></td><td>Telegram message sent when the add-on starts.</td></tr>
+              <tr><td>Conversation history</td><td><code>true</code></td><td>Prepend the last N exchanges as context to each request.</td></tr>
+              <tr><td>Show metrics</td><td><code>false</code></td><td>Send token usage and response time after each reply.</td></tr>
+              <tr><td>Conversation history depth</td><td><code>2</code></td><td>Number of past exchanges kept in context (resets on restart).</td></tr>
+              <tr><td>Timezone for scheduled tasks</td><td><code>UTC</code></td><td>Timezone used to interpret all cron expressions. Select from the dropdown (covers Europe, Americas, Asia, Africa, Pacific). Changes take effect on next save — no restart required.</td></tr>
+            </tbody>
+          </table>
+          <p><strong>Model selection by provider:</strong></p>
+          <table>
+            <thead><tr><th>Provider</th><th>How models are loaded</th></tr></thead>
+            <tbody>
+              <tr><td>OpenRouter</td><td>🔄 fetches free ≥30B tool-calling models; ⚡ speed-tests them; top 5 fastest are kept</td></tr>
+              <tr><td>OpenAI</td><td>🔄 fetches GPT-4o, GPT-4o Mini, GPT-4 Turbo, and other tool-capable models from the API</td></tr>
+              <tr><td>GitHub Models</td><td>Fixed preset: GPT-4o, GPT-4o Mini, Phi 3.5 MoE, Phi 3.5 Mini, Llama 3.1 70B, Llama 3.1 8B, Mistral Nemo, Mistral Large</td></tr>
+              <tr><td>Gemini</td><td>Fixed preset: Gemini 2.0 Flash, 2.0 Flash Lite, 2.5 Pro Preview, 1.5 Pro, 1.5 Flash, 1.5 Flash 8B</td></tr>
+              <tr><td>Groq</td><td>🔄 fetches LLM models from the API (Whisper models excluded from this list)</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Web UI — Agents → Web Search</h3>
+          <p>Configure the built-in Web Search sub-agent, powered by <a href="https://tavily.com" target="_blank">Tavily</a>. A green dot in the sidebar indicates the agent is active. When enabled, DRADIS automatically decides when to call <code>search_web</code> — no prompt engineering required. Tavily returns up to 5 results; a dedicated synthesis LLM formats them into a concise answer.</p>
+          <table>
+            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>Enabled</td><td><code>false</code></td><td>Activate web search delegation. Requires <code>tavily_api_key</code> in the Configuration tab.</td></tr>
+              <tr><td>Test connection</td><td>—</td><td>Sends a test query to Tavily and reports the result inline.</td></tr>
+              <tr><td>LLM Provider</td><td><code>openrouter</code></td><td>Provider for the synthesis LLM (independent from DRADIS).</td></tr>
+              <tr><td>Model</td><td>—</td><td>Model used to synthesise search results. Click 🔄 to load, ⚡ to speed-test.</td></tr>
+              <tr><td>Additional instructions</td><td>—</td><td>Optional extra instructions appended to the synthesis agent's system prompt.</td></tr>
+              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 🔍 metrics message after each web search (tokens, latency, model).</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Web UI — Agents → Weather</h3>
+          <p>Configure the built-in Weather sub-agent, powered by <a href="https://open-meteo.com" target="_blank">Open-Meteo</a> (free, no API key required). A green dot in the sidebar indicates the agent is active. When enabled, DRADIS automatically calls <code>get_weather</code> when the user asks about current weather, forecasts, temperature, rain, wind, or UV index — in any language. The tool fetches current conditions and a 3-day forecast; a synthesis LLM formats the data into a clear response.</p>
+          <table>
+            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>Enabled</td><td><code>false</code></td><td>Activate weather lookup delegation. No API key required.</td></tr>
+              <tr><td>Test connection</td><td>—</td><td>Pings Open-Meteo and reports the current temperature in Rome as a sanity check.</td></tr>
+              <tr><td>LLM Provider</td><td><code>openrouter</code></td><td>Provider for the synthesis LLM (independent from DRADIS).</td></tr>
+              <tr><td>Model</td><td>—</td><td>Model used to synthesise weather data. Click 🔄 to load, ⚡ to speed-test.</td></tr>
+              <tr><td>Additional instructions</td><td>—</td><td>Optional extra instructions appended to the synthesis agent's system prompt.</td></tr>
+              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 🌤 metrics message after each weather lookup (tokens, latency, model).</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Web UI — Agents → Voice</h3>
+          <p>Configure voice message transcription, powered by <a href="https://console.groq.com" target="_blank">Groq Whisper</a>. When enabled, DRADIS accepts Telegram voice messages (OGG audio), transcribes them using the Groq Whisper API, and passes the transcribed text to the main agent as if the user had typed it. A green dot in the sidebar indicates the agent is active. <strong>Requires <code>groq_api_key</code></strong> in the Configuration tab — the Enabled toggle is disabled automatically when the key is missing.</p>
+          <table>
+            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>Enabled</td><td><code>false</code></td><td>Activate voice transcription. Requires <code>groq_api_key</code> in the Configuration tab.</td></tr>
+              <tr><td>Test connection</td><td>—</td><td>Verifies the Groq API key can reach the Whisper models endpoint.</td></tr>
+              <tr><td>Whisper Model</td><td><code>whisper-large-v3-turbo</code></td><td>Click 🔄 to fetch available Whisper models from Groq (separate list from LLM models).</td></tr>
+              <tr><td>Language</td><td><code>it</code></td><td>ISO 639-1 language code for transcription (e.g. <code>en</code>, <code>fr</code>, <code>de</code>).</td></tr>
+              <tr><td>Send transcription</td><td><code>true</code></td><td>Echo the transcribed text to Telegram as <code>🎙️ &lt;text&gt;</code> before the agent replies.</td></tr>
+              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 🎙️ metrics message with transcription latency and model name.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Web UI — Agents → Google Calendar</h3>
+          <p>Connect DRADIS to your primary Google Calendar. When enabled, the agent automatically calls the appropriate calendar tool when the user asks about their schedule or wants to manage events. <strong>Requires <code>google_client_id</code> and <code>google_client_secret</code></strong> in the Configuration tab — see setup steps above. Three tools are available:</p>
+          <table>
+            <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>get_calendar_events</code></td><td>Fetches events for the next N days (default: 7). Returns each event with its ID so it can be referenced for deletion.</td></tr>
+              <tr><td><code>create_calendar_event</code></td><td>Creates a new event with title, start/end datetime (ISO 8601 with timezone), and an optional description. If the user does not specify a duration, defaults to 1 hour.</td></tr>
+              <tr><td><code>delete_calendar_event</code></td><td>Deletes an event by ID. DRADIS always calls <code>get_calendar_events</code> first to retrieve the ID before deleting.</td></tr>
+            </tbody>
+          </table>
+          <p>A calendar sub-agent formats the raw API response using the configured LLM model before replying to the user.</p>
+          <table>
+            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>Enabled</td><td><code>false</code></td><td>Activate calendar access. The toggle is disabled when credentials are not configured.</td></tr>
+              <tr><td>Authentication status</td><td>—</td><td>Shows whether the OAuth2 token is present. If not authenticated, send <code>/gcalauth</code> to the bot and follow the steps.</td></tr>
+              <tr><td>LLM Provider</td><td><code>openrouter</code></td><td>Provider for the calendar formatting sub-agent (independent from DRADIS).</td></tr>
+              <tr><td>Model</td><td>—</td><td>Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test.</td></tr>
+              <tr><td>Additional instructions</td><td>—</td><td>Optional extra instructions appended to the calendar sub-agent's system prompt.</td></tr>
+              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 📅 metrics message after each calendar operation (tokens, latency, model).</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Web UI — Agents → Custom agents</h3>
+          <p>Each agent defined in <code>/data/agents.json</code> appears as a sidebar item. Click to edit its provider, model, instructions, and active toggle. A green dot indicates the agent is active.</p>
+
+          <h3>Web UI — Tasks</h3>
+          <p>Create recurring automated tasks that DRADIS executes on a cron schedule and delivers to your Telegram chat. Tasks are stored in <code>/data/tasks.json</code>. Click <code>+</code> in the Tasks sidebar header to create a new task.</p>
+          <table>
+            <thead><tr><th>Field</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>Name</td><td>Display name shown in the sidebar.</td></tr>
+              <tr><td>Enabled</td><td>Toggle — a green dot in the sidebar shows the task is active.</td></tr>
+              <tr><td>Schedule preset</td><td>Dropdown of common schedules: Every minute, Every hour, Daily at 8:00, Daily at 20:00, Every Monday at 9:00, Weekdays 9–18 every hour.</td></tr>
+              <tr><td>Cron expression</td><td>Raw 5-part cron field. Editing it directly sets the preset to "Custom…" and shows a live human-readable description below the field.</td></tr>
+              <tr><td>Instructions</td><td>What DRADIS should do at this time — passed directly to the main agent, which automatically selects the right tools as needed.</td></tr>
+            </tbody>
+          </table>
+          <p>When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no add-on restart required.</p>
+
+          <h3>Telegram Commands</h3>
+          <table>
+            <thead><tr><th>Command</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>/info</code></td><td>Show status and configuration of all agents (provider, model, metrics, history, sub-agents)</td></tr>
+              <tr><td><code>/menu</code></td><td>List all available commands</td></tr>
+              <tr><td><code>/gcalauth</code></td><td>Start Google Calendar OAuth2 authorization. Send without arguments for the automatic redirect flow; send <code>/gcalauth &lt;url&gt;</code> to manually paste the redirect URL (fallback for HA on a separate device).</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Conversation History</h3>
+          <p>When <strong>Conversation history</strong> is enabled, the last N exchanges (configurable via <strong>Conversation history depth</strong>) are prepended to each request as context. This buffer is in-memory and resets on restart. To give DRADIS persistent knowledge about the user (name, preferences, language, etc.), add it directly to the <strong>Agent instructions</strong> field.</p>
+
+          <h3>Agent Label</h3>
+          <p>Every DRADIS response includes an italic footer indicating which agent(s) processed the request:</p>
+          <ul>
+            <li><code>🤖 DRADIS</code> — standard reply</li>
+            <li><code>🤖 DRADIS · Web Search</code> — reply involved the web search sub-agent</li>
+            <li><code>🤖 DRADIS · Weather</code> — reply involved the weather sub-agent</li>
+            <li><code>🤖 DRADIS · Google Calendar</code> — reply involved the Google Calendar sub-agent</li>
+            <li>Multiple labels are combined, e.g. <code>🤖 DRADIS · Web Search · Weather</code></li>
+            <li>For scheduled tasks the task name is appended: <code>🤖 DRADIS · &lt;task name&gt;</code></li>
+          </ul>
+
+          <h3>Persistent Data</h3>
+          <table>
+            <thead><tr><th>File</th><th>Content</th></tr></thead>
+            <tbody>
+              <tr><td><code>/data/options.json</code></td><td>Add-on configuration managed by HA (API keys, etc.)</td></tr>
+              <tr><td><code>/data/dradis_settings.json</code></td><td>Runtime settings edited from the Web UI</td></tr>
+              <tr><td><code>/data/agents.json</code></td><td>Custom sub-agent configuration (managed from Web UI)</td></tr>
+              <tr><td><code>/data/tasks.json</code></td><td>Scheduled task configuration (managed from Web UI)</td></tr>
+              <tr><td><code>/data/google_calendar_token.json</code></td><td>Google Calendar OAuth2 token (auto-refreshed)</td></tr>
+            </tbody>
+          </table>
+
+        </div>
+      </div>
+    </div>
+
+  </div><!-- #content -->
+</div><!-- #app -->
+
+<div id="toast"></div>
+
+<script>
+let providers       = [];
+let agents          = [];
+let selectedId      = null;
+let tasks           = [];
+let selectedTaskId  = null;
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+
+function navigateTo(panelId, navEl) {
+  document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  if (navEl) navEl.classList.add("active");
+  const panel = document.getElementById("panel-" + panelId);
+  if (panel) panel.classList.add("active");
+}
+
+document.querySelectorAll(".nav-item[data-panel]").forEach(item => {
+  item.addEventListener("click", () => navigateTo(item.dataset.panel, item));
+});
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function showToast(msg, isError = false) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "show" + (isError ? " error" : "");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.className = "", 2500);
+}
+
+// When served via HA Ingress, window.location.pathname is something like
+// /api/hassio_ingress/TOKEN/ — API calls must be relative to that base.
+const API_BASE = (() => {
+  const p = window.location.pathname;
+  return p.endsWith('/') ? p : p + '/';
+})();
+
+async function api(method, path, body) {
+  const url  = API_BASE + path.replace(/^\//, '');
+  const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(await res.text());
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ── Settings panel ────────────────────────────────────────────────────────────
+
+async function loadSettings() {
+  const s = await api("GET", "/api/settings");
+  const provOptions = providers.map(p =>
+    `<option value="${p.id}" ${s.provider === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("s-provider").innerHTML = provOptions;
+
+  const savedModel = s.model || "";
+  const sel = document.getElementById("s-model");
+  if (savedModel && ![...sel.options].some(o => o.value === savedModel)) {
+    sel.innerHTML = `<option value="${savedModel}">${savedModel}</option>` + sel.innerHTML;
+  }
+  if (savedModel) sel.value = savedModel;
+
+  document.getElementById("s-instructions").value    = s.agent_instructions || "";
+  document.getElementById("s-startup").value         = s.startup_message    || "";
+  document.getElementById("s-history").checked       = s.history_enabled    !== false;
+  document.getElementById("s-metrics").checked       = !!s.show_metrics;
+  document.getElementById("s-history-depth").value   = s.history_depth      ?? 2;
+  const tzVal = s.timezone || "UTC";
+  const tzSel = document.getElementById("s-timezone");
+  if (![...tzSel.options].some(o => o.value === tzVal)) {
+    const opt = document.createElement("option");
+    opt.value = tzVal; opt.textContent = tzVal;
+    tzSel.insertBefore(opt, tzSel.firstChild);
+  }
+  tzSel.value = tzVal;
+  _serverTz = tzVal;
+}
+
+// ── Provider-aware model loader ───────────────────────────────────────────────
+
+let orModels      = [];
+let wsModels      = [];
+let weatherModels = [];
+
+function _providerLabel(providerId) {
+  const p = providers.find(x => x.id === providerId);
+  return p ? p.label : providerId;
+}
+
+function _onProviderChange(providerSelId, modelSelId, hintId, loadBtnId, speedtestBtnId) {
+  const sel = document.getElementById(modelSelId);
+  sel.innerHTML = "";
+  const hint = document.getElementById(hintId);
+  hint.textContent = "Click 🔄 to load available models for this provider";
+  if (speedtestBtnId) document.getElementById(speedtestBtnId).disabled = true;
+}
+
+document.getElementById("s-provider").addEventListener("change", () =>
+  _onProviderChange("s-provider", "s-model", "model-hint", "btn-load-models", "btn-speedtest")
+);
+document.getElementById("ws-provider").addEventListener("change", () =>
+  _onProviderChange("ws-provider", "ws-model", "ws-model-hint", "btn-ws-load-models", "btn-ws-speedtest")
+);
+document.getElementById("weather-provider").addEventListener("change", () =>
+  _onProviderChange("weather-provider", "weather-model", "weather-model-hint", "btn-weather-load-models", "btn-weather-speedtest")
+);
+
+function _rebuildModelSelect(models, currentId) {
+  const sel = document.getElementById("s-model");
+  let list = [...models];
+  if (currentId && !list.find(m => m.id === currentId)) {
+    list.unshift({ id: currentId, name: currentId, size_b: 0, tok_s: null, ok: false });
+  }
+  sel.innerHTML = list.map(m => {
+    let tag = "";
+    if (m.tok_s != null)       tag = ` — ⚡ ${m.tok_s} tok/s`;
+    else if (m.ok === false && models.find(x => x.id === m.id)) tag = " — ❌";
+    return `<option value="${m.id}" ${m.id === currentId ? "selected" : ""}>${m.name}${tag}</option>`;
+  }).join("");
+  if (currentId) sel.value = currentId;
+}
+
+function _rebuildWsModelSelect(models, currentId) {
+  const sel = document.getElementById("ws-model");
+  let list = [...models];
+  if (currentId && !list.find(m => m.id === currentId)) {
+    list.unshift({ id: currentId, name: currentId, size_b: 0, tok_s: null, ok: false });
+  }
+  sel.innerHTML = list.map(m => {
+    let tag = "";
+    if (m.tok_s != null)       tag = ` — ⚡ ${m.tok_s} tok/s`;
+    else if (m.ok === false && models.find(x => x.id === m.id)) tag = " — ❌";
+    return `<option value="${m.id}" ${m.id === currentId ? "selected" : ""}>${m.name}${tag}</option>`;
+  }).join("");
+  if (currentId) sel.value = currentId;
+}
+
+function _rebuildWeatherModelSelect(models, currentId) {
+  const sel = document.getElementById("weather-model");
+  let list = [...models];
+  if (currentId && !list.find(m => m.id === currentId)) {
+    list.unshift({ id: currentId, name: currentId, size_b: 0, tok_s: null, ok: false });
+  }
+  sel.innerHTML = list.map(m => {
+    let tag = "";
+    if (m.tok_s != null)       tag = ` — ⚡ ${m.tok_s} tok/s`;
+    else if (m.ok === false && models.find(x => x.id === m.id)) tag = " — ❌";
+    return `<option value="${m.id}" ${m.id === currentId ? "selected" : ""}>${m.name}${tag}</option>`;
+  }).join("");
+  if (currentId) sel.value = currentId;
+}
+
+async function loadOpenRouterModels() {
+  const btn      = document.getElementById("btn-load-models");
+  const hint     = document.getElementById("model-hint");
+  const current  = document.getElementById("s-model").value;
+  const provider = document.getElementById("s-provider").value;
+  const label    = _providerLabel(provider);
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Loading models from ${label}…`;
+
+  try {
+    orModels = await api("GET", `/api/models?provider=${provider}`);
+    _rebuildModelSelect(orModels, current || (orModels[0]?.id ?? ""));
+    document.getElementById("btn-speedtest").disabled = orModels.length === 0;
+    hint.textContent = `${orModels.length} models from ${label} — click ⚡ to speed test`;
+  } catch {
+    hint.textContent = "Error loading models — check your API key";
+    showToast("Error loading models", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "🔄";
+  }
+}
+
+async function runSpeedTest() {
+  if (!orModels.length) return;
+  const btn      = document.getElementById("btn-speedtest");
+  const hint     = document.getElementById("model-hint");
+  const current  = document.getElementById("s-model").value;
+  const provider = document.getElementById("s-provider").value;
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Testing ${orModels.length} models… (may take 30–60 s)`;
+
+  try {
+    const results = await api("POST", `/api/speedtest?provider=${provider}`, { models: orModels.map(m => m.id) });
+    const resMap = {};
+    results.forEach(r => { resMap[r.id] = r; });
+    const topIds = results.map(r => r.id);
+    orModels = orModels
+      .filter(m => topIds.includes(m.id))
+      .map(m => ({ ...m, tok_s: resMap[m.id]?.tok_s ?? null, ok: resMap[m.id]?.ok ?? false }))
+      .sort((a, b) => {
+        if (a.tok_s === null && b.tok_s === null) return 0;
+        if (a.tok_s === null) return 1;
+        if (b.tok_s === null) return -1;
+        return b.tok_s - a.tok_s;
+      });
+    _rebuildModelSelect(orModels, current);
+    const ok = orModels.filter(m => m.ok).length;
+    hint.textContent = `Speed test done: top ${orModels.length} models, ${ok} responded — sorted fastest first`;
+  } catch {
+    hint.textContent = "Speed test failed";
+    showToast("Speed test failed", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "⚡";
+  }
+}
+
+document.getElementById("btn-load-models").addEventListener("click", loadOpenRouterModels);
+document.getElementById("btn-speedtest").addEventListener("click", runSpeedTest);
+
+document.getElementById("btn-save-settings").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-settings");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    provider:           document.getElementById("s-provider").value,
+    agent_instructions: document.getElementById("s-instructions").value.trim(),
+    model:              document.getElementById("s-model").value.trim(),
+    startup_message:    document.getElementById("s-startup").value.trim(),
+    history_enabled:    document.getElementById("s-history").checked,
+    show_metrics:       document.getElementById("s-metrics").checked,
+    history_depth:      parseInt(document.getElementById("s-history-depth").value, 10) || 2,
+    timezone:           document.getElementById("s-timezone").value.trim() || "UTC",
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    _serverTz = payload.timezone;
+    showToast("Settings saved");
+  } catch (e) {
+    showToast(e.message || "Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Agents sidebar ────────────────────────────────────────────────────────────
+
+function renderSidebarAgents() {
+  const ul = document.getElementById("sidebar-agents");
+  while (ul.children.length > 4) ul.removeChild(ul.lastChild); // preserve Web Search + Weather + Voice + Google Calendar
+  agents.forEach(a => {
+    const li = document.createElement("li");
+    li.className = "nav-item" + (a.id === selectedId ? " active" : "");
+    li.dataset.panel   = "agent";
+    li.dataset.agentId = a.id;
+    li.innerHTML = `<span class="nav-dot ${a.active ? "on" : ""}"></span>
+                    <span class="nav-label">${a.name}</span>`;
+    li.addEventListener("click", () => {
+      selectedId = a.id;
+      renderSidebarAgents();
+      renderAgentForm(agents.find(x => x.id === a.id));
+      navigateTo("agent", li);
+    });
+    ul.appendChild(li);
+  });
+}
+
+function renderAgentForm(agent) {
+  const provOptions = providers.map(p =>
+    `<option value="${p.id}" ${agent.provider === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+
+  document.getElementById("panel-agent").innerHTML = `
+    <div class="form-card">
+      <h2>${agent.name}</h2>
+
+      <div class="form-group">
+        <label for="f-provider">Provider</label>
+        <select id="f-provider">${provOptions}</select>
+      </div>
+
+      <div class="form-group">
+        <label for="f-model">Model</label>
+        <input type="text" id="f-model" placeholder="e.g. nvidia/nemotron-3-nano-30b-a3b:free"
+               value="${agent.model || ""}">
+      </div>
+
+      <div class="form-group">
+        <label for="f-instructions">Instructions</label>
+        <textarea id="f-instructions"
+          placeholder="Describe the role of this agent...">${agent.instructions || ""}</textarea>
+      </div>
+
+      <div class="form-group">
+        <div class="toggle-row">
+          <span class="toggle-label">Active</span>
+          <label class="toggle">
+            <input type="checkbox" id="f-active" ${agent.active !== false ? "checked" : ""}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-save" id="btn-save-agent">Save</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("btn-save-agent").onclick = saveAgent;
+}
+
+async function saveAgent() {
+  const btn = document.getElementById("btn-save-agent");
+  btn.disabled = true;
+  const payload = {
+    provider:     document.getElementById("f-provider").value,
+    model:        document.getElementById("f-model").value.trim(),
+    instructions: document.getElementById("f-instructions").value.trim(),
+    active:       document.getElementById("f-active").checked,
+  };
+  try {
+    const updated = await api("PUT", `/api/agents/${selectedId}`, payload);
+    agents = agents.map(a => a.id === selectedId ? { ...a, ...updated } : a);
+    renderSidebarAgents();
+    renderAgentForm(agents.find(a => a.id === selectedId));
+    showToast("Saved");
+  } catch {
+    showToast("Error saving", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Web Search panel ──────────────────────────────────────────────────────────
+
+async function loadWsSettings() {
+  const s = await api("GET", "/api/settings");
+
+  const provOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.ws_provider || "openrouter") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("ws-provider").innerHTML = provOptions;
+
+  const savedModel = s.ws_model || "";
+  const sel = document.getElementById("ws-model");
+  if (savedModel && ![...sel.options].some(o => o.value === savedModel)) {
+    sel.innerHTML = `<option value="${savedModel}">${savedModel}</option>` + sel.innerHTML;
+  }
+  if (savedModel) sel.value = savedModel;
+
+  document.getElementById("ws-enabled").checked  = !!s.ws_enabled;
+  document.getElementById("ws-instructions").value = s.ws_instructions  || "";
+  document.getElementById("ws-metrics").checked   = !!s.ws_show_metrics;
+
+  const wsDot = document.getElementById("ws-dot");
+  if (wsDot) wsDot.classList.toggle("on", !!s.ws_enabled);
+}
+
+async function loadWsModels() {
+  const btn      = document.getElementById("btn-ws-load-models");
+  const hint     = document.getElementById("ws-model-hint");
+  const current  = document.getElementById("ws-model").value;
+  const provider = document.getElementById("ws-provider").value;
+  const label    = _providerLabel(provider);
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Loading models from ${label}…`;
+
+  try {
+    const models = await api("GET", `/api/models?provider=${provider}`);
+    wsModels = [...models];
+    const sel = document.getElementById("ws-model");
+    let list = [...models];
+    if (current && !list.find(m => m.id === current)) {
+      list.unshift({ id: current, name: current });
+    }
+    sel.innerHTML = list.map(m =>
+      `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}</option>`
+    ).join("");
+    if (current) sel.value = current;
+    document.getElementById("btn-ws-speedtest").disabled = wsModels.length === 0;
+    hint.textContent = `${models.length} models from ${label} — click ⚡ to speed test`;
+  } catch {
+    hint.textContent = "Error loading models";
+    showToast("Error loading models", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "🔄";
+  }
+}
+
+async function runWsSpeedTest() {
+  if (!wsModels.length) return;
+  const btn      = document.getElementById("btn-ws-speedtest");
+  const hint     = document.getElementById("ws-model-hint");
+  const current  = document.getElementById("ws-model").value;
+  const provider = document.getElementById("ws-provider").value;
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Testing ${wsModels.length} models… (may take 30–60 s)`;
+
+  try {
+    const results = await api("POST", `/api/speedtest?provider=${provider}`, { models: wsModels.map(m => m.id) });
+    const resMap = {};
+    results.forEach(r => { resMap[r.id] = r; });
+    const topIds = results.map(r => r.id);
+    wsModels = wsModels
+      .filter(m => topIds.includes(m.id))
+      .map(m => ({ ...m, tok_s: resMap[m.id]?.tok_s ?? null, ok: resMap[m.id]?.ok ?? false }))
+      .sort((a, b) => {
+        if (a.tok_s === null && b.tok_s === null) return 0;
+        if (a.tok_s === null) return 1;
+        if (b.tok_s === null) return -1;
+        return b.tok_s - a.tok_s;
+      });
+    _rebuildWsModelSelect(wsModels, current);
+    const ok = wsModels.filter(m => m.ok).length;
+    hint.textContent = `Speed test done: top ${wsModels.length} models, ${ok} responded — sorted fastest first`;
+  } catch {
+    hint.textContent = "Speed test failed";
+    showToast("Speed test failed", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "⚡";
+  }
+}
+
+document.getElementById("btn-ws-load-models").addEventListener("click", loadWsModels);
+document.getElementById("btn-ws-speedtest").addEventListener("click", runWsSpeedTest);
+
+document.getElementById("btn-ws-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-ws-test");
+  const result = document.getElementById("ws-test-result");
+  btn.disabled       = true;
+  result.textContent = "Testing…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("POST", "/api/websearch-test");
+    result.textContent = "✅ " + (data.message || "Connection successful");
+    result.style.color = "var(--success)";
+  } catch (e) {
+    result.textContent = "❌ " + (e.message || "Connection failed");
+    result.style.color = "var(--danger)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-save-ws").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-ws");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    ws_enabled:      document.getElementById("ws-enabled").checked,
+    ws_provider:     document.getElementById("ws-provider").value,
+    ws_model:        document.getElementById("ws-model").value.trim(),
+    ws_instructions: document.getElementById("ws-instructions").value.trim(),
+    ws_show_metrics: document.getElementById("ws-metrics").checked,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const wsDot = document.getElementById("ws-dot");
+    if (wsDot) wsDot.classList.toggle("on", payload.ws_enabled);
+    showToast("Web Search settings saved");
+  } catch {
+    showToast("Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Weather panel ─────────────────────────────────────────────────────────────
+
+async function loadWeatherSettings() {
+  const s = await api("GET", "/api/settings");
+
+  const provOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.weather_provider || "openrouter") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("weather-provider").innerHTML = provOptions;
+
+  const savedModel = s.weather_model || "";
+  const sel = document.getElementById("weather-model");
+  if (savedModel && ![...sel.options].some(o => o.value === savedModel)) {
+    sel.innerHTML = `<option value="${savedModel}">${savedModel}</option>` + sel.innerHTML;
+  }
+  if (savedModel) sel.value = savedModel;
+
+  document.getElementById("weather-enabled").checked      = !!s.weather_enabled;
+  document.getElementById("weather-instructions").value   = s.weather_instructions || "";
+  document.getElementById("weather-metrics").checked      = !!s.weather_show_metrics;
+
+  const weatherDot = document.getElementById("weather-dot");
+  if (weatherDot) weatherDot.classList.toggle("on", !!s.weather_enabled);
+}
+
+async function loadWeatherModels() {
+  const btn      = document.getElementById("btn-weather-load-models");
+  const hint     = document.getElementById("weather-model-hint");
+  const current  = document.getElementById("weather-model").value;
+  const provider = document.getElementById("weather-provider").value;
+  const label    = _providerLabel(provider);
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Loading models from ${label}…`;
+
+  try {
+    const models = await api("GET", `/api/models?provider=${provider}`);
+    weatherModels = [...models];
+    const sel = document.getElementById("weather-model");
+    let list = [...models];
+    if (current && !list.find(m => m.id === current)) {
+      list.unshift({ id: current, name: current });
+    }
+    sel.innerHTML = list.map(m =>
+      `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}</option>`
+    ).join("");
+    if (current) sel.value = current;
+    document.getElementById("btn-weather-speedtest").disabled = weatherModels.length === 0;
+    hint.textContent = `${models.length} models from ${label} — click ⚡ to speed test`;
+  } catch {
+    hint.textContent = "Error loading models";
+    showToast("Error loading models", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "🔄";
+  }
+}
+
+async function runWeatherSpeedTest() {
+  if (!weatherModels.length) return;
+  const btn      = document.getElementById("btn-weather-speedtest");
+  const hint     = document.getElementById("weather-model-hint");
+  const current  = document.getElementById("weather-model").value;
+  const provider = document.getElementById("weather-provider").value;
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Testing ${weatherModels.length} models… (may take 30–60 s)`;
+
+  try {
+    const results = await api("POST", `/api/speedtest?provider=${provider}`, { models: weatherModels.map(m => m.id) });
+    const resMap = {};
+    results.forEach(r => { resMap[r.id] = r; });
+    const topIds = results.map(r => r.id);
+    weatherModels = weatherModels
+      .filter(m => topIds.includes(m.id))
+      .map(m => ({ ...m, tok_s: resMap[m.id]?.tok_s ?? null, ok: resMap[m.id]?.ok ?? false }))
+      .sort((a, b) => {
+        if (a.tok_s === null && b.tok_s === null) return 0;
+        if (a.tok_s === null) return 1;
+        if (b.tok_s === null) return -1;
+        return b.tok_s - a.tok_s;
+      });
+    _rebuildWeatherModelSelect(weatherModels, current);
+    const ok = weatherModels.filter(m => m.ok).length;
+    hint.textContent = `Speed test done: top ${weatherModels.length} models, ${ok} responded — sorted fastest first`;
+  } catch {
+    hint.textContent = "Speed test failed";
+    showToast("Speed test failed", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "⚡";
+  }
+}
+
+document.getElementById("btn-weather-load-models").addEventListener("click", loadWeatherModels);
+document.getElementById("btn-weather-speedtest").addEventListener("click", runWeatherSpeedTest);
+
+document.getElementById("btn-weather-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-weather-test");
+  const result = document.getElementById("weather-test-result");
+  btn.disabled       = true;
+  result.textContent = "Testing…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("GET", "/api/weather-test");
+    result.textContent = "✅ " + (data.message || "Connection successful");
+    result.style.color = "var(--success)";
+  } catch (e) {
+    result.textContent = "❌ " + (e.message || "Connection failed");
+    result.style.color = "var(--danger)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-save-weather").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-weather");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    weather_enabled:      document.getElementById("weather-enabled").checked,
+    weather_provider:     document.getElementById("weather-provider").value,
+    weather_model:        document.getElementById("weather-model").value.trim(),
+    weather_instructions: document.getElementById("weather-instructions").value.trim(),
+    weather_show_metrics: document.getElementById("weather-metrics").checked,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const weatherDot = document.getElementById("weather-dot");
+    if (weatherDot) weatherDot.classList.toggle("on", payload.weather_enabled);
+    showToast("Weather settings saved");
+  } catch {
+    showToast("Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Voice panel ───────────────────────────────────────────────────────────────
+
+async function loadVoiceSettings() {
+  const s = await api("GET", "/api/settings");
+
+  const savedModel = s.voice_model || "whisper-large-v3-turbo";
+  const sel = document.getElementById("voice-model");
+  if (savedModel && ![...sel.options].some(o => o.value === savedModel)) {
+    sel.innerHTML = `<option value="${savedModel}">${savedModel}</option>` + sel.innerHTML;
+  }
+  if (savedModel) sel.value = savedModel;
+
+  document.getElementById("voice-language").value             = s.voice_language || "it";
+  document.getElementById("voice-send-transcription").checked = s.voice_send_transcription !== false;
+  document.getElementById("voice-metrics").checked            = !!s.voice_metrics;
+
+  // Check if Groq key is configured; disable toggle if not.
+  let groqOk = false;
+  try {
+    const test = await api("POST", "/api/voice-test");
+    groqOk = !!test.ok;
+  } catch {}
+
+  const toggle  = document.getElementById("voice-enabled");
+  const warning = document.getElementById("voice-key-warning");
+  if (!groqOk) {
+    toggle.checked  = false;
+    toggle.disabled = true;
+    warning.style.display = "";
+  } else {
+    toggle.disabled = false;
+    toggle.checked  = !!s.voice_enabled;
+    warning.style.display = "none";
+  }
+
+  const voiceDot = document.getElementById("voice-dot");
+  if (voiceDot) voiceDot.classList.toggle("on", !!s.voice_enabled && groqOk);
+}
+
+async function loadVoiceModels() {
+  const btn  = document.getElementById("btn-voice-load-models");
+  const hint = document.getElementById("voice-model-hint");
+  const current = document.getElementById("voice-model").value;
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = "Loading Whisper models from Groq…";
+
+  try {
+    const models = await api("GET", "/api/voice-models");
+    const sel = document.getElementById("voice-model");
+    let list = [...models];
+    if (current && !list.find(m => m.id === current)) {
+      list.unshift({ id: current, name: current });
+    }
+    sel.innerHTML = list.map(m =>
+      `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}</option>`
+    ).join("");
+    if (current) sel.value = current;
+    hint.textContent = `${models.length} Whisper model(s) available`;
+  } catch {
+    hint.textContent = "Error loading models — check your Groq API key";
+    showToast("Error loading voice models", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "🔄";
+  }
+}
+
+document.getElementById("btn-voice-load-models").addEventListener("click", loadVoiceModels);
+
+document.getElementById("btn-voice-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-voice-test");
+  const result = document.getElementById("voice-test-result");
+  const toggle  = document.getElementById("voice-enabled");
+  const warning = document.getElementById("voice-key-warning");
+  btn.disabled       = true;
+  result.textContent = "Testing…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("POST", "/api/voice-test");
+    result.textContent = "✅ " + (data.message || "Connection successful");
+    result.style.color = "var(--success)";
+    toggle.disabled = false;
+    warning.style.display = "none";
+  } catch (e) {
+    result.textContent = "❌ " + (e.message || "Connection failed");
+    result.style.color = "var(--danger)";
+    toggle.checked  = false;
+    toggle.disabled = true;
+    warning.style.display = "";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-save-voice").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-voice");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    voice_enabled:            document.getElementById("voice-enabled").checked,
+    voice_model:              document.getElementById("voice-model").value.trim(),
+    voice_language:           document.getElementById("voice-language").value.trim() || "it",
+    voice_send_transcription: document.getElementById("voice-send-transcription").checked,
+    voice_metrics:            document.getElementById("voice-metrics").checked,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const voiceDot = document.getElementById("voice-dot");
+    if (voiceDot) voiceDot.classList.toggle("on", payload.voice_enabled);
+    showToast("Voice settings saved");
+  } catch (e) {
+    const msg = e.message || "";
+    if (msg.includes("Groq API key")) {
+      document.getElementById("voice-enabled").checked = false;
+      document.getElementById("voice-key-warning").style.display = "";
+      showToast("Groq API key required to enable Voice agent", true);
+    } else {
+      showToast("Error saving settings", true);
+    }
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Google Calendar panel ─────────────────────────────────────────────────────
+
+let gcalModels = [];
+
+async function loadGcalSettings() {
+  const [s, status] = await Promise.all([
+    api("GET", "/api/settings"),
+    api("GET", "/api/gcal-status").catch(() => ({ credentials_configured: false, authenticated: false })),
+  ]);
+
+  const warning = document.getElementById("gcal-creds-warning");
+  const toggle  = document.getElementById("gcal-enabled");
+  const authEl  = document.getElementById("gcal-auth-status");
+
+  if (!status.credentials_configured) {
+    warning.style.display = "";
+    toggle.checked  = false;
+    toggle.disabled = true;
+  } else {
+    warning.style.display = "none";
+    toggle.disabled = false;
+    toggle.checked  = !!s.gcal_enabled;
+  }
+
+  authEl.textContent = status.authenticated ? "✅ Connected" : "❌ Not authenticated — send /gcalauth to the bot";
+  authEl.style.color = status.authenticated ? "var(--success)" : "var(--danger)";
+
+  const provOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.gcal_provider || "openrouter") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("gcal-provider").innerHTML = provOptions;
+
+  const savedModel = s.gcal_model || "";
+  const sel = document.getElementById("gcal-model");
+  if (savedModel && ![...sel.options].some(o => o.value === savedModel)) {
+    sel.innerHTML = `<option value="${savedModel}">${savedModel}</option>` + sel.innerHTML;
+  }
+  if (savedModel) sel.value = savedModel;
+
+  document.getElementById("gcal-instructions").value = s.gcal_instructions || "";
+  document.getElementById("gcal-metrics").checked    = !!s.gcal_show_metrics;
+
+  const gcalDot = document.getElementById("gcal-dot");
+  if (gcalDot) gcalDot.classList.toggle("on", !!s.gcal_enabled && status.authenticated);
+}
+
+document.getElementById("gcal-provider").addEventListener("change", () =>
+  _onProviderChange("gcal-provider", "gcal-model", "gcal-model-hint", "btn-gcal-load-models", "btn-gcal-speedtest")
+);
+
+async function loadGcalModels() {
+  const btn      = document.getElementById("btn-gcal-load-models");
+  const hint     = document.getElementById("gcal-model-hint");
+  const current  = document.getElementById("gcal-model").value;
+  const provider = document.getElementById("gcal-provider").value;
+  const label    = _providerLabel(provider);
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Loading models from ${label}…`;
+
+  try {
+    const models = await api("GET", `/api/models?provider=${provider}`);
+    gcalModels = [...models];
+    const sel  = document.getElementById("gcal-model");
+    let list   = [...models];
+    if (current && !list.find(m => m.id === current)) list.unshift({ id: current, name: current });
+    sel.innerHTML = list.map(m =>
+      `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}</option>`
+    ).join("");
+    if (current) sel.value = current;
+    document.getElementById("btn-gcal-speedtest").disabled = gcalModels.length === 0;
+    hint.textContent = `${models.length} models from ${label} — click ⚡ to speed test`;
+  } catch {
+    hint.textContent = "Error loading models";
+    showToast("Error loading models", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "🔄";
+  }
+}
+
+async function runGcalSpeedTest() {
+  if (!gcalModels.length) return;
+  const btn      = document.getElementById("btn-gcal-speedtest");
+  const hint     = document.getElementById("gcal-model-hint");
+  const current  = document.getElementById("gcal-model").value;
+  const provider = document.getElementById("gcal-provider").value;
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Testing ${gcalModels.length} models… (may take 30–60 s)`;
+
+  try {
+    const results = await api("POST", `/api/speedtest?provider=${provider}`, { models: gcalModels.map(m => m.id) });
+    const resMap  = {};
+    results.forEach(r => { resMap[r.id] = r; });
+    gcalModels = gcalModels
+      .filter(m => results.map(r => r.id).includes(m.id))
+      .map(m => ({ ...m, tok_s: resMap[m.id]?.tok_s ?? null, ok: resMap[m.id]?.ok ?? false }))
+      .sort((a, b) => (b.tok_s ?? -1) - (a.tok_s ?? -1));
+    const sel = document.getElementById("gcal-model");
+    sel.innerHTML = gcalModels.map(m => {
+      const tag = m.tok_s != null ? ` — ⚡ ${m.tok_s} tok/s` : m.ok === false ? " — ❌" : "";
+      return `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}${tag}</option>`;
+    }).join("");
+    if (current) sel.value = current;
+    hint.textContent = `Speed test done — sorted fastest first`;
+  } catch {
+    hint.textContent = "Speed test failed";
+    showToast("Speed test failed", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "⚡";
+  }
+}
+
+document.getElementById("btn-gcal-load-models").addEventListener("click", loadGcalModels);
+document.getElementById("btn-gcal-speedtest").addEventListener("click", runGcalSpeedTest);
+
+document.getElementById("btn-save-gcal").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-gcal");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    gcal_enabled:      document.getElementById("gcal-enabled").checked,
+    gcal_provider:     document.getElementById("gcal-provider").value,
+    gcal_model:        document.getElementById("gcal-model").value.trim(),
+    gcal_instructions: document.getElementById("gcal-instructions").value.trim(),
+    gcal_show_metrics: document.getElementById("gcal-metrics").checked,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const gcalDot = document.getElementById("gcal-dot");
+    if (gcalDot) gcalDot.classList.toggle("on", payload.gcal_enabled);
+    showToast("Google Calendar settings saved");
+  } catch {
+    showToast("Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+async function init() {
+  const [config, agentList] = await Promise.all([
+    api("GET", "/api/config").catch(() => ({ providers: [] })),
+    api("GET", "/api/agents").catch(() => []),
+  ]);
+  providers = config.providers || [];
+  agents    = agentList || [];
+
+  try {
+    await loadSettings();
+  } catch (e) {
+    showToast("Error loading settings", true);
+    console.error("loadSettings:", e);
+  }
+
+  try {
+    await loadWsSettings();
+  } catch (e) {
+    console.error("loadWsSettings:", e);
+  }
+
+  try {
+    await loadWeatherSettings();
+  } catch (e) {
+    console.error("loadWeatherSettings:", e);
+  }
+
+  try {
+    await loadVoiceSettings();
+  } catch (e) {
+    console.error("loadVoiceSettings:", e);
+  }
+
+  try {
+    await loadGcalSettings();
+  } catch (e) {
+    console.error("loadGcalSettings:", e);
+  }
+
+  renderSidebarAgents();
+
+  try {
+    tasks = await api("GET", "/api/tasks");
+  } catch (e) {
+    console.error("loadTasks:", e);
+  }
+  renderSidebarTasks();
+}
+
+// ── Tasks sidebar ─────────────────────────────────────────────────────────────
+
+const CRON_PRESETS = [
+  { label: "Every minute",              cron: "* * * * *" },
+  { label: "Every hour",                cron: "0 * * * *" },
+  { label: "Every day at 8:00",         cron: "0 8 * * *" },
+  { label: "Every day at 20:00",        cron: "0 20 * * *" },
+  { label: "Every Monday at 9:00",      cron: "0 9 * * 1" },
+  { label: "Weekdays 9–18, every hour", cron: "0 9-18 * * 1-5" },
+];
+
+function cronDescription(cron) {
+  const match = CRON_PRESETS.find(p => p.cron === cron.trim());
+  return match ? match.label : "Custom schedule";
+}
+
+let _cronValidateTimer = null;
+let _serverTz = null;
+
+async function loadServerTz() {
+  if (_serverTz) return _serverTz;
+  try {
+    const data = await api("GET", "/api/server-timezone");
+    _serverTz = data.tz;
+  } catch {
+    _serverTz = "UTC";
+  }
+  return _serverTz;
+}
+
+async function validateCronLive(expr) {
+  const el = document.getElementById("t-cron-desc");
+  if (!el) return;
+  clearTimeout(_cronValidateTimer);
+  _cronValidateTimer = setTimeout(async () => {
+    if (!expr.trim()) { el.textContent = "—"; el.style.color = "var(--text-muted)"; return; }
+    try {
+      const data = await api("GET", `/api/tasks/validate-cron?expr=${encodeURIComponent(expr.trim())}`);
+      const tz = data.tz || await loadServerTz();
+      if (data.valid) {
+        const next = data.next_fire
+          ? new Date(data.next_fire).toLocaleString(undefined, { hour12: false })
+          : "—";
+        el.textContent = `✅ Valid — next: ${next} (server time ${tz})`;
+        el.style.color = "var(--success)";
+      } else {
+        el.textContent = `❌ ${data.error}`;
+        el.style.color = "var(--danger)";
+      }
+    } catch {
+      el.textContent = "Could not validate";
+      el.style.color = "var(--text-muted)";
+    }
+  }, 400);
+}
+
+function renderSidebarTasks() {
+  const ul = document.getElementById("sidebar-tasks");
+  ul.innerHTML = "";
+  tasks.forEach(t => {
+    const li = document.createElement("li");
+    li.className = "nav-item" + (t.id === selectedTaskId ? " active" : "");
+    li.dataset.panel  = "task";
+    li.dataset.taskId = t.id;
+    li.innerHTML = `<span class="nav-dot ${t.enabled ? "on" : ""}"></span>
+                    <span class="nav-label">${t.name}</span>`;
+    li.addEventListener("click", () => {
+      selectedTaskId = t.id;
+      renderSidebarTasks();
+      renderTaskForm(tasks.find(x => x.id === t.id));
+      navigateTo("task", li);
+    });
+    ul.appendChild(li);
+  });
+}
+
+function renderTaskForm(task) {
+  const presetOptions = CRON_PRESETS.map(p =>
+    `<option value="${p.cron}" ${task.cron === p.cron ? "selected" : ""}>${p.label} (${p.cron})</option>`
+  ).join("");
+  const isCustom = !CRON_PRESETS.find(p => p.cron === (task.cron || "").trim());
+
+  document.getElementById("panel-task").innerHTML = `
+    <div class="form-card">
+      <h2>${task.name}</h2>
+
+      <div class="form-group">
+        <label for="t-name">Name</label>
+        <input type="text" id="t-name" value="${task.name || ""}">
+      </div>
+
+      <div class="form-group">
+        <div class="toggle-row">
+          <span class="toggle-label">Enabled</span>
+          <label class="toggle">
+            <input type="checkbox" id="t-enabled" ${task.enabled ? "checked" : ""}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="t-cron-preset">Schedule preset</label>
+        <select id="t-cron-preset">
+          ${presetOptions}
+          <option value="__custom__" ${isCustom ? "selected" : ""}>Custom…</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="t-cron">Cron expression <span id="t-cron-tz-label" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></label>
+        <input type="text" id="t-cron" value="${task.cron || "0 8 * * *"}" placeholder="0 8 * * *">
+        <small id="t-cron-desc" style="margin-top:4px;display:block;color:var(--text-muted)">${cronDescription(task.cron || "")}</small>
+        <details style="margin-top:10px;font-size:0.82rem;color:var(--text-muted)">
+          <summary style="cursor:pointer;color:var(--accent)">How does the cron expression work?</summary>
+          <div style="margin-top:8px;line-height:1.6">
+            <p>A cron expression has <strong>5 fields</strong> separated by spaces:</p>
+            <pre style="background:var(--card-bg);padding:8px 10px;border-radius:6px;font-size:0.85rem;overflow-x:auto">┌──────── minute      (0–59)
+│ ┌────── hour        (0–23)
+│ │ ┌──── day of month (1–31)
+│ │ │ ┌── month        (1–12)
+│ │ │ │ ┌ day of week  (0–7, 0 and 7 = Sunday)
+│ │ │ │ │
+* * * * *</pre>
+            <p><strong>Special characters:</strong></p>
+            <ul style="padding-left:1.2em;margin:4px 0">
+              <li><code>*</code> — any value (every minute, every hour…)</li>
+              <li><code>5</code> — exact value (e.g. minute 5)</li>
+              <li><code>0,15,30,45</code> — list (every 15 minutes)</li>
+              <li><code>9-17</code> — range (from 9:xx to 17:xx)</li>
+              <li><code>*/2</code> — every N (every 2 hours)</li>
+            </ul>
+            <p style="margin-top:6px"><strong>Examples:</strong></p>
+            <ul style="padding-left:1.2em;margin:4px 0">
+              <li><code>0 8 * * *</code> — every day at 08:00</li>
+              <li><code>30 7 * * 1-5</code> — Mon–Fri at 07:30</li>
+              <li><code>0 */3 * * *</code> — every 3 hours</li>
+              <li><code>0 9 1 * *</code> — 1st of every month at 09:00</li>
+              <li><code>* * * * *</code> — every minute (useful for testing)</li>
+            </ul>
+          </div>
+        </details>
+      </div>
+
+      <div class="form-group">
+        <label for="t-instructions">Instructions</label>
+        <textarea id="t-instructions" placeholder="What should DRADIS do at this time?">${task.instructions || ""}</textarea>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-save" id="btn-save-task">Save</button>
+        <button class="btn-save" id="btn-delete-task" style="background:var(--danger,#e53935)">Delete</button>
+      </div>
+    </div>
+  `;
+
+  // Show server timezone in label, then validate
+  loadServerTz().then(tz => {
+    const lbl = document.getElementById("t-cron-tz-label");
+    if (lbl) lbl.textContent = `(server time: ${tz})`;
+  });
+  validateCronLive(task.cron || "0 8 * * *");
+
+  // Sync preset → cron input
+  document.getElementById("t-cron-preset").addEventListener("change", e => {
+    if (e.target.value !== "__custom__") {
+      document.getElementById("t-cron").value = e.target.value;
+      validateCronLive(e.target.value);
+    }
+  });
+
+  // Sync cron input → description + set preset to Custom
+  document.getElementById("t-cron").addEventListener("input", e => {
+    const val = e.target.value.trim();
+    const match = CRON_PRESETS.find(p => p.cron === val);
+    const sel = document.getElementById("t-cron-preset");
+    sel.value = match ? match.cron : "__custom__";
+    validateCronLive(val);
+  });
+
+  document.getElementById("btn-save-task").onclick = saveTask;
+  document.getElementById("btn-delete-task").onclick = deleteTask;
+}
+
+async function saveTask() {
+  const btn = document.getElementById("btn-save-task");
+  btn.disabled = true;
+  const payload = {
+    name:         document.getElementById("t-name").value.trim(),
+    enabled:      document.getElementById("t-enabled").checked,
+    cron:         document.getElementById("t-cron").value.trim(),
+    instructions: document.getElementById("t-instructions").value.trim(),
+  };
+  try {
+    const updated = await api("PUT", `/api/tasks/${selectedTaskId}`, payload);
+    tasks = tasks.map(t => t.id === selectedTaskId ? { ...t, ...updated } : t);
+    renderSidebarTasks();
+    renderTaskForm(tasks.find(t => t.id === selectedTaskId));
+    showToast("Saved");
+  } catch {
+    showToast("Error saving", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteTask() {
+  if (!confirm("Delete this task?")) return;
+  try {
+    await api("DELETE", `/api/tasks/${selectedTaskId}`);
+    tasks = tasks.filter(t => t.id !== selectedTaskId);
+    selectedTaskId = null;
+    renderSidebarTasks();
+    document.getElementById("panel-task").innerHTML = `
+      <div class="empty-state">
+        <div class="icon">⏰</div>
+        <p>Select a task from the sidebar</p>
+      </div>`;
+    navigateTo("settings", document.querySelector(".nav-item[data-panel='settings']"));
+    showToast("Deleted");
+  } catch {
+    showToast("Error deleting", true);
+  }
+}
+
+document.getElementById("btn-new-task").addEventListener("click", async () => {
+  try {
+    const task = await api("POST", "/api/tasks", {
+      name: "New Task", enabled: false, cron: "0 8 * * *", instructions: "",
+    });
+    tasks.push(task);
+    selectedTaskId = task.id;
+    renderSidebarTasks();
+    renderTaskForm(task);
+    navigateTo("task", document.querySelector(`[data-task-id="${task.id}"]`));
+  } catch {
+    showToast("Error creating task", true);
+  }
+});
+
+init();
+</script>
+</body>
+</html>

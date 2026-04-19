@@ -1,0 +1,32 @@
+# Home Assistant runtime data (contains real API keys at runtime)
+data/
+/data/options.json
+
+# Google OAuth tokens generated at runtime
+*.json
+!repository.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+secrets.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp

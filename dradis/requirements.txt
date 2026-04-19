@@ -1,0 +1,11 @@
+agno
+python-telegram-bot
+openai
+fastapi
+uvicorn
+httpx
+tavily-python
+groq
+apscheduler
+google-auth-oauthlib
+google-api-python-client
