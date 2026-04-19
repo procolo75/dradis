@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [1.7.8] - 2026-04-19
+- **Rename**: add-on display name changed to "DRADIS Agentic AI for Home Assistant" across config.yaml, README, DOCS, and Web UI
+
 ## [1.7.7] - 2026-04-19
 - **Timezone dropdown**: replaced free-text input with a grouped `<select>` covering ~60 IANA timezones across Europe, Americas, Asia, Africa, and Pacific; legacy free-text values are preserved as a custom option if not found in the list
 

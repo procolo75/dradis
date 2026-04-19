@@ -1,4 +1,4 @@
-# DRADIS — Documentation
+# DRADIS Agentic AI for Home Assistant — Documentation
 
 DRADIS is a Home Assistant add-on that exposes a conversational AI agent controllable via Telegram. All settings are managed from the built-in Web UI and the HA Configuration tab — no code changes required.
 
