@@ -189,6 +189,58 @@ When a task fires, the agent response is sent to your Telegram chat with a label
 
 ---
 
+## Usage Examples
+
+### Voice appointment
+*Requires: Voice sub-agent + Google Calendar*
+
+Send a Telegram voice message:
+> 🎙️ *"Add a meeting with Marco on Friday at 3pm"*
+
+DRADIS transcribes the audio via Groq Whisper, interprets the request, creates the event in Google Calendar, and confirms via Telegram.
+
+---
+
+### Weather query
+> *"What's the weather in Milan tomorrow?"*
+
+DRADIS calls the Weather sub-agent (Open-Meteo, no API key needed) and replies with current conditions and a 3-day forecast including temperature, rain probability, wind, and UV index.
+
+---
+
+### Web search
+> *"What are the latest Home Assistant announcements?"*
+
+DRADIS routes the request to the Web Search sub-agent (Tavily), retrieves up to 5 results, and sends a concise summarised answer.
+
+---
+
+### Daily appointments digest *(scheduled task)*
+
+Every morning DRADIS sends a Telegram message with your Google Calendar events for the day.
+
+| Field | Value |
+|-------|-------|
+| Cron | `0 8 * * *` |
+| Instructions | `Fetch today's calendar events and send a tidy summary to Telegram.` |
+
+*Requires: Google Calendar sub-agent enabled.*
+
+---
+
+### Morning news briefing *(scheduled task)*
+
+Every weekday morning DRADIS searches the web for the latest tech news and delivers a digest.
+
+| Field | Value |
+|-------|-------|
+| Cron | `0 7 * * 1-5` |
+| Instructions | `Search for today's top technology news and send a short summary to Telegram.` |
+
+*Requires: Web Search sub-agent enabled.*
+
+---
+
 ## Telegram Commands
 
 Type `/` in Telegram to see the full command list with descriptions.
