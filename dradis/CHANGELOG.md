@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [1.7.9] - 2026-04-19
+- **Docs**: added usage examples to README, DOCS, and GitHub Wiki (voice appointment, weather, web search, scheduled tasks)
+
 ## [1.7.8] - 2026-04-19
 - **Rename**: add-on display name changed to "DRADIS Agentic AI for Home Assistant" across config.yaml, README, DOCS, and Web UI
 
