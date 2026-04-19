@@ -15,6 +15,12 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 - **Conversation history** with configurable depth
 - All settings managed at runtime from the Web UI — no restart required
 
+## Installation
+
+1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**
+2. Add: `https://github.com/procolo75/dradis`
+3. Find **DRADIS** in the store and click **Install**
+
 ## Documentation
 
 Full documentation is available in the **Documentation** tab of the add-on page in Home Assistant, or directly in the Web UI under **Other → Documentation**.

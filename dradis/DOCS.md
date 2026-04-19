@@ -17,10 +17,11 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 ## Installation
 
-1. Add the add-on repository in Home Assistant
-2. Install the DRADIS add-on
-3. Fill in the **Configuration** tab with your credentials
-4. Start the add-on
+1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**
+2. Add the repository URL: `https://github.com/procolo75/dradis`
+3. Find **DRADIS** in the store and click **Install**
+4. Fill in the **Configuration** tab with your credentials
+5. Start the add-on
 
 ---
 
