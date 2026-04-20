@@ -11,7 +11,6 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 - **Voice** transcription via Groq Whisper (optional)
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
-- **Custom agents** configurable from the Web UI
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
 - **Conversation history** with configurable depth
