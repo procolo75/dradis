@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="sweep-grad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#03a9f4" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#03a9f4" stop-opacity="0.38"/>
+    </radialGradient>
+    <clipPath id="circle-clip">
+      <circle cx="128" cy="128" r="124"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <circle cx="128" cy="128" r="128" fill="#0d1117"/>
+
+  <!-- Crosshair lines -->
+  <line x1="128" y1="4" x2="128" y2="252" stroke="#03a9f4" stroke-width="0.8" opacity="0.2" clip-path="url(#circle-clip)"/>
+  <line x1="4" y1="128" x2="252" y2="128" stroke="#03a9f4" stroke-width="0.8" opacity="0.2" clip-path="url(#circle-clip)"/>
+
+  <!-- Diagonal guides -->
+  <line x1="37" y1="37" x2="219" y2="219" stroke="#03a9f4" stroke-width="0.5" opacity="0.12" clip-path="url(#circle-clip)"/>
+  <line x1="219" y1="37" x2="37" y2="219" stroke="#03a9f4" stroke-width="0.5" opacity="0.12" clip-path="url(#circle-clip)"/>
+
+  <!-- Concentric rings -->
+  <circle cx="128" cy="128" r="40"  fill="none" stroke="#03a9f4" stroke-width="0.8" opacity="0.25"/>
+  <circle cx="128" cy="128" r="80"  fill="none" stroke="#03a9f4" stroke-width="0.8" opacity="0.25"/>
+  <circle cx="128" cy="128" r="112" fill="none" stroke="#03a9f4" stroke-width="1"   opacity="0.3"/>
+
+  <!-- Sweep sector: 270° (top) → 315° (upper-right), r=112 -->
+  <!-- 270° → (128, 16)   315° → (207.2, 48.8) -->
+  <path d="M 128 128 L 128 16 A 112 112 0 0 1 207.2 48.8 Z"
+        fill="url(#sweep-grad)" clip-path="url(#circle-clip)"/>
+
+  <!-- Sweep line at 315° -->
+  <line x1="128" y1="128" x2="207" y2="49"
+        stroke="#03a9f4" stroke-width="1.5" opacity="0.9"/>
+
+  <!-- Primary blip at ~85% radius on sweep line -->
+  <circle cx="195" cy="61" r="4"   fill="#4caf50" opacity="0.9"/>
+  <circle cx="195" cy="61" r="7.5" fill="none" stroke="#4caf50" stroke-width="1" opacity="0.4"/>
+
+  <!-- Secondary blip -->
+  <circle cx="148" cy="75" r="2.5" fill="#03a9f4" opacity="0.5"/>
+
+  <!-- Center dot -->
+  <circle cx="128" cy="128" r="3" fill="#03a9f4"/>
+  <circle cx="128" cy="128" r="6" fill="none" stroke="#03a9f4" stroke-width="1" opacity="0.5"/>
+
+  <!-- Outer border ring -->
+  <circle cx="128" cy="128" r="124" fill="none" stroke="#03a9f4" stroke-width="2" opacity="0.4"/>
+</svg>

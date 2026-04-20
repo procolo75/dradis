@@ -4,6 +4,12 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 ---
 
+## Icon
+
+DRADIS displays a radar-sweep icon in the Home Assistant add-on dashboard (`icon.png`) and in the Web UI sidebar header, matching the dark/cyan color scheme.
+
+---
+
 ## Requirements
 
 - Home Assistant with Supervisor (HAOS or Supervised)
@@ -11,7 +17,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 - An API key for at least one supported LLM provider (OpenRouter, OpenAI, GitHub Models, Gemini, or Groq)
 - *(Optional)* A [Tavily](https://tavily.com) API key for the Web Search sub-agent
 - *(Optional)* A [Groq](https://console.groq.com) API key for the Voice sub-agent (required to enable voice transcription)
-- *(Optional)* Google Cloud OAuth2 credentials for the Google Calendar sub-agent
+- *(Optional)* Google Cloud OAuth2 credentials — one credential covers both the Google Calendar and Gmail sub-agents
 
 ---
 
@@ -39,8 +45,8 @@ Only API keys and credentials go here. All other settings are managed at runtime
 | `gemini_api_key` | password | *(Optional)* Google Gemini API key |
 | `groq_api_key` | password | *(Optional)* Groq API key — required for the Voice sub-agent |
 | `tavily_api_key` | password | *(Optional)* Tavily API key — required for the Web Search sub-agent |
-| `google_client_id` | str | *(Optional)* Google OAuth2 client ID — required for Google Calendar |
-| `google_client_secret` | password | *(Optional)* Google OAuth2 client secret — required for Google Calendar |
+| `google_client_id` | str | *(Optional)* Google OAuth2 client ID — required for Google Calendar and/or Gmail |
+| `google_client_secret` | password | *(Optional)* Google OAuth2 client secret — required for Google Calendar and/or Gmail |
 
 Fill in at least one LLM provider key. The active provider is selected from the Web UI.
 
@@ -54,19 +60,24 @@ Fill in at least one LLM provider key. The active provider is selected from the 
 - **Gemini API key**: sign up at [aistudio.google.com](https://aistudio.google.com), click **Get API key**
 - **Groq API key**: sign up at [console.groq.com](https://console.groq.com), go to **API Keys**
 - **Tavily API key** *(optional)*: sign up at [tavily.com](https://tavily.com) — the free tier includes 1 000 searches/month
-- **Google Calendar credential** *(optional)*: no Google username or password is stored — only a free OAuth2 credential is needed. Steps:
+- **Google OAuth2 credential** *(optional — required for Calendar and/or Gmail)*: no Google username or password is stored. **One credential covers both services.**
+
+  **Part 1 — One-time Google Cloud setup (do this once for both Calendar and Gmail):**
   1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create or select a project
-  2. **APIs & Services → Library** → search *Google Calendar API* → **Enable**
+  2. **APIs & Services → Library** → search *Google Calendar API* → **Enable**. Then search *Gmail API* → **Enable**. *(Enable only the ones you need — both are free.)*
   3. **APIs & Services → OAuth consent screen** → choose **External** → fill in app name (e.g. *DRADIS*) and your email → save
   4. Still in consent screen → **Test users** → add your own Google account email → save
   5. **Credentials → Create credentials → OAuth client ID → Desktop app** → any name → **Create**
   6. Copy the **Client ID** and **Client Secret** from the dialog
   7. Paste them in the add-on Configuration tab (`google_client_id`, `google_client_secret`) and **restart the add-on**
-  8. Send `/gcalauth` to the Telegram bot → click the authorization link it replies with
-  9. Sign in with your Google account, grant access → **the browser redirects back to DRADIS automatically** ✅
-  10. The bot confirms the connection. Enable Google Calendar in the Web UI and save.
 
-  *If the automatic redirect doesn't work (HA on a different device from the browser), copy the full URL from the browser address bar and send it as `/gcalauth <url>`.*
+  **Part 2 — Authorize each service (run once per service):**
+  - **Calendar**: send `/gcalauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Google Calendar in the Web UI and save.
+  - **Gmail**: send `/gmailauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Gmail in the Web UI and save.
+
+  *Gmail and Calendar use separate token files — even if Calendar is already connected, run `/gmailauth` separately.*
+
+  *If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as `/gcalauth <url>` or `/gmailauth <url>`.*
 
 ---
 
@@ -167,9 +178,29 @@ A calendar sub-agent formats the raw API response using the configured LLM model
 | Additional instructions | — | Optional extra instructions appended to the calendar sub-agent's system prompt. |
 | Show metrics | `false` | Send a separate 📅 metrics message after each calendar operation (tokens, latency, model). |
 
-### Agents → Custom agents
+### Agents → Gmail
 
-Each agent defined in `/data/agents.json` appears as a sidebar item. Click to edit its provider, model, instructions, and active toggle. A green dot indicates the agent is active.
+Connect DRADIS to your Gmail inbox. When enabled, the agent can read emails and send messages on your behalf. **Requires `google_client_id` and `google_client_secret`** in the Configuration tab — see *Gmail credential* under *How to get your API keys* above.
+
+Four tools are available:
+
+| Tool | Description |
+|------|-------------|
+| `get_emails` | Fetches the latest N emails from the inbox (default: 10). Returns sender, subject, date, and a short snippet. |
+| `get_unread_emails` | Fetches unread emails only. |
+| `search_emails` | Searches Gmail using any query supported by the Gmail search bar (e.g. `from:boss@example.com`, `subject:invoice`). |
+| `send_email` | Sends a plain-text email. DRADIS always confirms recipient and subject before sending if they are not specified. |
+
+A synthesis sub-agent formats the raw email data using the configured LLM model before replying to the user.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Enabled | `false` | Activate Gmail access. The toggle is disabled when credentials are not configured. |
+| Authentication status | — | Shows whether the Gmail OAuth2 token is present. If not authenticated, send `/gmailauth` to the bot and follow the steps. |
+| LLM Provider | `openrouter` | Provider for the email formatting sub-agent (independent from DRADIS). |
+| Model | — | Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test. |
+| Additional instructions | — | Optional extra instructions appended to the Gmail sub-agent's system prompt. |
+| Show metrics | `false` | Send a separate 📧 metrics message after each Gmail operation (tokens, latency, model). |
 
 ### Tasks
 
@@ -241,6 +272,45 @@ Every weekday morning DRADIS searches the web for the latest tech news and deliv
 
 ---
 
+### Morning email digest *(scheduled task)*
+
+Every weekday morning DRADIS checks unread emails and sends a summary to Telegram.
+
+| Field | Value |
+|-------|-------|
+| Cron | `0 8 * * 1-5` |
+| Instructions | `Check unread emails and send a brief summary of each (sender, subject, key points) to Telegram.` |
+
+*Requires: Gmail sub-agent enabled.*
+
+---
+
+### Evening inbox summary *(scheduled task)*
+
+At the end of each weekday DRADIS reports any new emails received during the day.
+
+| Field | Value |
+|-------|-------|
+| Cron | `0 18 * * 1-5` |
+| Instructions | `Fetch unread emails from today and send a summary to Telegram. If there are none, just say the inbox is clear.` |
+
+*Requires: Gmail sub-agent enabled.*
+
+---
+
+### Weekly email report *(scheduled task)*
+
+Every Monday morning DRADIS delivers a summary of the previous week's emails.
+
+| Field | Value |
+|-------|-------|
+| Cron | `0 9 * * 1` |
+| Instructions | `Search for emails received in the last 7 days. Summarise the most important ones by sender and topic, and send the report to Telegram.` |
+
+*Requires: Gmail sub-agent enabled.*
+
+---
+
 ## Telegram Commands
 
 Type `/` in Telegram to see the full command list with descriptions.
@@ -250,6 +320,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/info` | Show status and configuration of all agents (provider, model, metrics, history, sub-agents) |
 | `/menu` | List all available commands |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
+| `/gmailauth` | Start Gmail OAuth2 authorization. Same flow as `/gcalauth` but authorizes Gmail read and send scopes. Send `/gmailauth <url>` as fallback if the automatic redirect fails. |
 
 ---
 
@@ -269,6 +340,7 @@ Every DRADIS response includes an italic footer indicating which agent(s) proces
 - `🤖 DRADIS · Web Search` — reply involved the web search sub-agent
 - `🤖 DRADIS · Weather` — reply involved the weather sub-agent
 - `🤖 DRADIS · Google Calendar` — reply involved the Google Calendar sub-agent
+- `🤖 DRADIS · Gmail` — reply involved the Gmail sub-agent
 - Multiple labels are combined, e.g. `🤖 DRADIS · Web Search · Weather`
 - For scheduled tasks the task name is appended: `🤖 DRADIS · <task name>`
 
@@ -285,3 +357,4 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/agents.json` | Custom sub-agent configuration (managed from Web UI) |
 | `/data/tasks.json` | Scheduled task configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
+| `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |

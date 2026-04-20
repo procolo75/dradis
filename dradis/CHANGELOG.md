@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## [1.8.7] - 2026-04-20
+- **Docs & Wiki**: added Gmail scheduled task examples (morning digest, evening inbox summary, weekly report) to DOCS.md, README.md, and GitHub Wiki; fixed missing `google_gmail_token.json` entry in Persistent Data table; updated icon description
+
+## [1.8.6] - 2026-04-20
+- **Icon update**: replaced add-on icon with new DRADIS AI branded artwork; added `panel_icon: mdi:radar` to config.yaml for the HA sidebar
+
+## [1.8.5] - 2026-04-20
+- **Timezone-aware datetime for all agents**: all sub-agents (Gmail, Calendar, Weather, Web Search) and the main agent now receive the current date **and time** in the configured IANA timezone (e.g. `It is 20 April 2026, 14:35 (Europe/Rome).`) instead of only the date in server local time. Added `_now_str(tz_name)` helper using `zoneinfo`.
+
+## [1.8.4] - 2026-04-20
+- **Icon**: added radar-sweep icon (`icon.png`) for the Home Assistant add-on dashboard and a matching inline SVG logo in the Web UI sidebar header
+
+## [1.8.3] - 2026-04-20
+- **`/info` command**: Google Calendar and Gmail sections now show Provider and Model when enabled
+
+## [1.8.2] - 2026-04-20
+- **Google setup guide**: merged the Calendar and Gmail OAuth2 setup docs into a single unified guide (Part 1: one-time Google Cloud setup covering both APIs; Part 2: per-service auth). Fixes confusion about needing to enable the Gmail API separately. Updated UI panels, inline Documentation panel, and DOCS.md.
+
+## [1.8.1] - 2026-04-20
+- **Voice language dropdown**: replaced free-text ISO 639-1 input with a `<select>` covering 40 languages; existing saved values are preserved via standard `<select>.value` assignment
+
+## [1.8.0] - 2026-04-20
+- **Gmail**: DRADIS can now read and send emails — ask it to check your inbox, search messages, or send an email directly from Telegram
+- Authentication via `/gmailauth` command (same Google Cloud credentials as Calendar, one-time setup)
+- New Gmail section in the Web UI with provider, model, and metrics settings
+
 ## [1.7.9] - 2026-04-19
 - **Docs**: added usage examples to README, DOCS, and GitHub Wiki (voice appointment, weather, web search, scheduled tasks)
 

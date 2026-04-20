@@ -4,11 +4,13 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 ## Features
 
+- **Branded icon**: custom DRADIS AI icon in the HA add-on dashboard and sidebar
 - **Multi-provider LLM**: OpenRouter, OpenAI, GitHub Models, Gemini, Groq
 - **Web Search** sub-agent powered by Tavily (optional)
 - **Weather** sub-agent powered by Open-Meteo (free, no API key)
 - **Voice** transcription via Groq Whisper (optional)
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
+- **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
 - **Custom agents** configurable from the Web UI
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
@@ -41,6 +43,10 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 **Morning briefing** *(scheduled task)*
 > Cron: `0 7 * * 1-5` (weekdays at 7:00) — Instructions: *"Search for today's top tech news and send a summary to Telegram."*
+
+**Morning email digest** *(scheduled task)*
+> Every morning DRADIS checks your unread emails and sends a summary to Telegram.
+> Cron: `0 8 * * 1-5` — Instructions: *"Check unread emails and send a brief summary of each to Telegram."*
 
 ## Documentation
 
