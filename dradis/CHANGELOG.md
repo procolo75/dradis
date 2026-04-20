@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [1.8.8] - 2026-04-20
+- **Icon fix**: properly cropped icon.png (removed white background, 256×256); replaced inline radar SVG in Web UI sidebar with the new DRADIS AI branded image (base64 PNG)
+
 ## [1.8.7] - 2026-04-20
 - **Docs & Wiki**: added Gmail scheduled task examples (morning digest, evening inbox summary, weekly report) to DOCS.md, README.md, and GitHub Wiki; fixed missing `google_gmail_token.json` entry in Persistent Data table; updated icon description
 
