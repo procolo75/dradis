@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [1.9.0] - 2026-04-21
+- **Bug fix — metrics call count**: `_count_tool_calls` was incorrectly excluding assistant messages that contained only a tool call (no text), so the call counter showed 1 instead of 2 when a sub-agent was used. Renamed to `_count_model_calls` and now counts all assistant messages.
+- **Bug fix — token display**: `_val_metric` now sums list values (agno can return token counts as a per-step list); previously the raw list was displayed instead of the total.
+- **Token counter**: cumulative input/output token tracking per agent (DRADIS, Weather, Web Search, Calendar, Gmail), persisted to `/data/dradis_token_stats.json`. Two new Telegram commands: `/tokens` (show breakdown) and `/tokens_reset` (reset counters).
+
 ## [1.8.8] - 2026-04-20
 - **Icon fix**: properly cropped icon.png (removed white background, 256×256); replaced inline radar SVG in Web UI sidebar with the new DRADIS AI branded image (base64 PNG)
 

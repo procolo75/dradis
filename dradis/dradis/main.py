@@ -30,6 +30,7 @@ from web.server import (
     save_settings, SETTINGS_KEYS,
     register_tasks_changed_callback, load_tasks,
     set_gcal_code_event, pop_gcal_pending_code,
+    set_gmail_code_event, pop_gmail_pending_code,
 )
 
 WEB_PORT = 8099
@@ -164,9 +165,10 @@ def create_calendar_tools(settings: dict, gcal_metrics: list):
         gcal_model    = settings.get("gcal_model", "")    or SETTINGS_DEFAULTS["gcal_model"]
         gcal_provider = settings.get("gcal_provider", "") or SETTINGS_DEFAULTS["gcal_provider"]
         try:
+            _tz = settings.get("timezone", "UTC") or "UTC"
             gcal_agent = create_agent(
                 system_prompt=(
-                    f"Today is {datetime.now().strftime('%d %B %Y')}. "
+                    f"It is {_now_str(_tz)} ({_tz}). "
                     "You are a calendar assistant. Present the events clearly and concisely "
                     "in the same language the user used. Never invent events not present in the data. "
                     "Include the event ID in brackets at the end of each line so the user can reference it. "
@@ -178,6 +180,7 @@ def create_calendar_tools(settings: dict, gcal_metrics: list):
             t0       = time.time()
             response = await gcal_agent.arun(f"Calendar events for the next {days_ahead} day(s):\n{raw}")
             gcal_metrics.append((response, time.time() - t0))
+            _add_tokens("gcal", response)
             return response.content or raw
         except Exception:
             gcal_metrics.append((None, 0))
@@ -209,6 +212,193 @@ def create_calendar_tools(settings: dict, gcal_metrics: list):
         return result
 
     return [get_calendar_events, create_calendar_event, delete_calendar_event]
+
+
+# ── Gmail ─────────────────────────────────────────────────────────────────────
+
+GMAIL_TOKEN_FILE   = Path("/data/google_gmail_token.json")
+GMAIL_SCOPES       = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://mail.google.com/",
+]
+GMAIL_REDIRECT_URI  = "http://localhost:8099/gmailauth/callback"
+_gmail_pending_flow = None
+
+
+def _build_gmail_flow():
+    from google_auth_oauthlib.flow import Flow
+    client_config = {
+        "installed": {
+            "client_id":      GOOGLE_CLIENT_ID,
+            "client_secret":  GOOGLE_CLIENT_SECRET,
+            "auth_uri":       "https://accounts.google.com/o/oauth2/auth",
+            "token_uri":      "https://oauth2.googleapis.com/token",
+            "redirect_uris":  [GMAIL_REDIRECT_URI],
+        }
+    }
+    return Flow.from_client_config(client_config, scopes=GMAIL_SCOPES, redirect_uri=GMAIL_REDIRECT_URI)
+
+
+def _get_gmail_creds():
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request as GoogleRequest
+    if not GMAIL_TOKEN_FILE.exists():
+        return None
+    creds = Credentials.from_authorized_user_file(str(GMAIL_TOKEN_FILE), GMAIL_SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(GoogleRequest())
+        GMAIL_TOKEN_FILE.write_text(creds.to_json())
+    return creds
+
+
+def create_gmail_tools(settings: dict, gmail_metrics: list):
+    _not_auth_msg = "Gmail not authenticated. Send /gmailauth to connect."
+
+    async def get_emails(max_results: int = 10) -> str:
+        """Get the latest emails from Gmail inbox."""
+        loop = asyncio.get_running_loop()
+        raw  = await loop.run_in_executor(None, _sync_get_emails, max_results)
+        if raw == "NOT_AUTHENTICATED":
+            return _not_auth_msg
+        return await _synthesise_gmail(raw, "inbox emails", settings, gmail_metrics)
+
+    async def get_unread_emails(max_results: int = 10) -> str:
+        """Get unread emails from Gmail."""
+        loop = asyncio.get_running_loop()
+        raw  = await loop.run_in_executor(None, _sync_get_unread_emails, max_results)
+        if raw == "NOT_AUTHENTICATED":
+            return _not_auth_msg
+        return await _synthesise_gmail(raw, "unread emails", settings, gmail_metrics)
+
+    async def search_emails(query: str, max_results: int = 10) -> str:
+        """Search Gmail emails by query (same syntax as Gmail search bar)."""
+        loop = asyncio.get_running_loop()
+        raw  = await loop.run_in_executor(None, _sync_search_emails, query, max_results)
+        if raw == "NOT_AUTHENTICATED":
+            return _not_auth_msg
+        return await _synthesise_gmail(raw, f"search '{query}'", settings, gmail_metrics)
+
+    async def send_email(to: str, subject: str, body: str) -> str:
+        """Send an email via Gmail. to is the recipient address, subject is the email subject, body is plain text."""
+        loop   = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _sync_send_email, to, subject, body)
+        gmail_metrics.append((None, 0))
+        if result == "NOT_AUTHENTICATED":
+            return _not_auth_msg
+        return result
+
+    return [get_emails, get_unread_emails, search_emails, send_email]
+
+
+def _sync_get_emails(max_results: int) -> str:
+    from googleapiclient.discovery import build as gmail_build
+    creds = _get_gmail_creds()
+    if not creds:
+        return "NOT_AUTHENTICATED"
+    service  = gmail_build("gmail", "v1", credentials=creds)
+    result   = service.users().messages().list(userId="me", maxResults=max_results).execute()
+    return _format_message_list(service, result.get("messages", []))
+
+
+def _sync_get_unread_emails(max_results: int) -> str:
+    from googleapiclient.discovery import build as gmail_build
+    creds = _get_gmail_creds()
+    if not creds:
+        return "NOT_AUTHENTICATED"
+    service  = gmail_build("gmail", "v1", credentials=creds)
+    result   = service.users().messages().list(userId="me", q="is:unread", maxResults=max_results).execute()
+    return _format_message_list(service, result.get("messages", []))
+
+
+def _sync_search_emails(query: str, max_results: int) -> str:
+    from googleapiclient.discovery import build as gmail_build
+    creds = _get_gmail_creds()
+    if not creds:
+        return "NOT_AUTHENTICATED"
+    service  = gmail_build("gmail", "v1", credentials=creds)
+    result   = service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
+    return _format_message_list(service, result.get("messages", []))
+
+
+def _format_message_list(service, messages: list) -> str:
+    if not messages:
+        return "No emails found."
+    lines = []
+    for msg in messages:
+        try:
+            detail  = service.users().messages().get(userId="me", id=msg["id"], format="metadata",
+                                                     metadataHeaders=["From", "Subject", "Date"]).execute()
+            headers = {h["name"]: h["value"] for h in detail.get("payload", {}).get("headers", [])}
+            snippet = detail.get("snippet", "")[:120]
+            lines.append(
+                f"[{msg['id']}] {headers.get('Date', '?')} | From: {headers.get('From', '?')} | "
+                f"Subject: {headers.get('Subject', '(no subject)')} | {snippet}"
+            )
+        except Exception as e:
+            lines.append(f"[{msg['id']}] Error reading message: {e}")
+    return "\n".join(lines)
+
+
+def _sync_send_email(to: str, subject: str, body: str) -> str:
+    import base64
+    from email.message import EmailMessage
+    from googleapiclient.discovery import build as gmail_build
+    creds = _get_gmail_creds()
+    if not creds:
+        return "NOT_AUTHENTICATED"
+    msg = EmailMessage()
+    msg["To"]      = to
+    msg["Subject"] = subject
+    msg.set_content(body)
+    raw     = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    service = gmail_build("gmail", "v1", credentials=creds)
+    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    return f"Email sent to {to} — Subject: {subject}"
+
+
+async def _synthesise_gmail(raw: str, context: str, settings: dict, gmail_metrics: list) -> str:
+    gmail_model    = settings.get("gmail_model", "")    or SETTINGS_DEFAULTS["gmail_model"]
+    gmail_provider = settings.get("gmail_provider", "") or SETTINGS_DEFAULTS["gmail_provider"]
+    try:
+        _tz = settings.get("timezone", "UTC") or "UTC"
+        gmail_agent = create_agent(
+            system_prompt=(
+                f"It is {_now_str(_tz)} ({_tz}). "
+                "You are an email assistant. Present the emails clearly and concisely "
+                "in the same language the user used. Never invent data not present in the results. "
+                "Include the message ID in brackets so the user can reference it. "
+                + settings.get("gmail_instructions", "")
+            ),
+            model=gmail_model,
+            provider=gmail_provider,
+        )
+        t0       = time.time()
+        response = await gmail_agent.arun(f"Gmail {context}:\n{raw}")
+        gmail_metrics.append((response, time.time() - t0))
+        _add_tokens("gmail", response)
+        return response.content or raw
+    except Exception:
+        gmail_metrics.append((None, 0))
+        return raw
+
+
+GMAIL_HIDDEN_INSTRUCTIONS = (
+    "You have access to Gmail tools: `get_emails`, `get_unread_emails`, `search_emails`, `send_email`.\n"
+    "Call `get_emails` when:\n"
+    "- The user asks to check or list their emails or inbox\n"
+    "- Phrases: 'controlla le email', 'check my email', 'show inbox', 'any emails'\n"
+    "Call `get_unread_emails` when:\n"
+    "- The user asks specifically about unread messages\n"
+    "- Phrases: 'email non lette', 'unread emails', 'nuovi messaggi'\n"
+    "Call `search_emails` when:\n"
+    "- The user wants to find emails from a specific sender, subject, or date\n"
+    "- Phrases: 'cerca email da X', 'find emails about Y', 'search mail'\n"
+    "Call `send_email` when:\n"
+    "- The user wants to send, compose, or write an email\n"
+    "- Phrases: 'manda una email', 'send email to', 'scrivi a', 'reply'\n"
+    "- If recipient or subject is missing, ask the user before calling `send_email`\n"
+    "- NEVER send an email without confirming the recipient and subject with the user first"
+)
 
 
 GCAL_HIDDEN_INSTRUCTIONS = (
@@ -247,11 +437,20 @@ def md_to_html(text: str) -> str:
     return text
 
 
+def _now_str(tz_name: str | None = None) -> str:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        tz = ZoneInfo(tz_name or "UTC")
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).strftime("%d %B %Y, %H:%M")
+
+
 def build_system_prompt() -> str:
     settings     = read_settings()
+    tz_name      = settings.get("timezone", "UTC") or "UTC"
     instructions = settings.get("agent_instructions", SETTINGS_DEFAULTS["agent_instructions"])
-    today        = datetime.now().strftime("%d %B %Y")
-    return f"Today is {today}.\n{instructions}"
+    return f"It is {_now_str(tz_name)} ({tz_name}).\n{instructions}"
 
 
 # ── Conversation history ──────────────────────────────────────────────────────
@@ -265,6 +464,59 @@ def _init_settings():
         SETTINGS_FILE.write_text(
             json.dumps(SETTINGS_DEFAULTS, ensure_ascii=False, indent=2)
         )
+
+
+# ── Token counter ─────────────────────────────────────────────────────────────
+
+TOKEN_STATS_FILE = Path("/data/dradis_token_stats.json")
+_TOKEN_STATS: dict = {}
+
+_TOKEN_CATEGORIES = ("dradis", "weather", "ws", "gcal", "gmail")
+
+
+def _load_token_stats() -> dict:
+    default = {k: {"in": 0, "out": 0} for k in _TOKEN_CATEGORIES}
+    try:
+        data = json.loads(TOKEN_STATS_FILE.read_text())
+        for k in default:
+            if k not in data:
+                data[k] = {"in": 0, "out": 0}
+        return data
+    except Exception:
+        return default
+
+
+def _save_token_stats():
+    try:
+        TOKEN_STATS_FILE.write_text(json.dumps(_TOKEN_STATS, ensure_ascii=False))
+    except Exception as e:
+        print(f"[DRADIS] WARNING: could not save token stats: {e}")
+
+
+def _extract_tokens(response) -> tuple[int, int]:
+    try:
+        m = response.metrics
+        def _sum_key(key):
+            v = m.get(key) if isinstance(m, dict) else getattr(m, key, None)
+            if v is None:
+                return 0
+            if isinstance(v, list):
+                return sum(int(x) for x in v if x is not None)
+            return int(v)
+        return _sum_key("input_tokens"), _sum_key("output_tokens")
+    except Exception:
+        return 0, 0
+
+
+def _add_tokens(category: str, response):
+    if response is None:
+        return
+    in_t, out_t = _extract_tokens(response)
+    if in_t == 0 and out_t == 0:
+        return
+    _TOKEN_STATS[category]["in"]  += in_t
+    _TOKEN_STATS[category]["out"] += out_t
+    _save_token_stats()
 
 
 _LEGACY_SETTINGS_MAP = {
@@ -384,9 +636,10 @@ def create_weather_tool(settings: dict, weather_metrics: list):
         daily   = data.get("daily", {})
         raw_text = f"Location: {name}\nCurrent: {current}\nDaily forecast (3 days): {daily}"
 
+        _tz = settings.get("timezone", "UTC") or "UTC"
         weather_agent = create_agent(
             system_prompt=(
-                f"Today is {datetime.now().strftime('%d %B %Y')}. "
+                f"It is {_now_str(_tz)} ({_tz}). "
                 "You are a meteorologist. Summarise the weather data clearly and concisely "
                 "in the same language the user used. Never invent data not present in the results. "
                 + settings.get("weather_instructions", "")
@@ -397,6 +650,7 @@ def create_weather_tool(settings: dict, weather_metrics: list):
         t0 = time.time()
         response = await weather_agent.arun(f"Weather data for {name}:\n{raw_text}")
         weather_metrics.append((response, time.time() - t0))
+        _add_tokens("weather", response)
         return response.content or ""
 
     return get_weather
@@ -416,9 +670,10 @@ def create_web_search_tool(settings: dict, ws_metrics: list):
             f"Title: {r['title']}\n{r['content']}\nURL: {r['url']}"
             for r in results
         )
+        _tz = settings.get("timezone", "UTC") or "UTC"
         ws_agent = create_agent(
             system_prompt=(
-                f"Today is {datetime.now().strftime('%d %B %Y')}. "
+                f"It is {_now_str(_tz)} ({_tz}). "
                 "You are a web research assistant. Synthesise ONLY the information "
                 "present in the search results below into a clear, concise answer. "
                 "If the results do not contain enough information, say so explicitly. "
@@ -434,37 +689,38 @@ def create_web_search_tool(settings: dict, ws_metrics: list):
         )
         duration = time.time() - t0
         ws_metrics.append((response, duration))
+        _add_tokens("ws", response)
         return response.content or ""
 
     return search_web
 
 
-def _count_tool_calls(msgs: list) -> int:
-    return sum(
-        1 for m in msgs
-        if getattr(m, "role", "") == "assistant"
-        and not (
-            hasattr(m, "tool_calls") and m.tool_calls
-            and not getattr(m, "content", None)
-        )
-    )
+def _count_model_calls(msgs: list) -> int:
+    return sum(1 for m in msgs if getattr(m, "role", "") == "assistant")
 
 
 def _val_metric(m, key: str) -> str:
     if m is None:
         return "?"
     v = m.get(key) if isinstance(m, dict) else getattr(m, key, None)
-    return str(v) if v is not None else "?"
+    if v is None:
+        return "?"
+    if isinstance(v, list):
+        try:
+            return str(sum(int(x) for x in v if x is not None))
+        except (TypeError, ValueError):
+            return str(v)
+    return str(v)
 
 
 def format_metrics(response, duration: float) -> str:
     try:
-        m          = response.metrics
-        msgs       = response.messages or []
-        tool_calls = _count_tool_calls(msgs)
-        model      = getattr(response, "model", None) or "?"
+        m           = response.metrics
+        msgs        = response.messages or []
+        model_calls = _count_model_calls(msgs)
+        model       = getattr(response, "model", None) or "?"
         return (
-            f"📊 {duration:.1f}s | 🤖 {model} | 📞 {tool_calls}\n"
+            f"📊 {duration:.1f}s | 🤖 {model} | 📞 {model_calls}\n"
             f"🔢 in:{_val_metric(m,'input_tokens')} "
             f"out:{_val_metric(m,'output_tokens')} "
             f"tot:{_val_metric(m,'total_tokens')}"
@@ -606,6 +862,7 @@ async def run_scheduled_task(task: dict):
     ws_metrics: list      = []
     weather_metrics: list = []
     gcal_metrics: list    = []
+    gmail_metrics: list   = []
     tools = []
     if settings.get("ws_enabled") and TAVILY_API_KEY:
         system_prompt += "\n\n" + WS_HIDDEN_INSTRUCTIONS
@@ -616,6 +873,9 @@ async def run_scheduled_task(task: dict):
     if settings.get("gcal_enabled") and GCAL_TOKEN_FILE.exists():
         system_prompt += "\n\n" + GCAL_HIDDEN_INSTRUCTIONS
         tools.extend(create_calendar_tools(settings, gcal_metrics))
+    if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists():
+        system_prompt += "\n\n" + GMAIL_HIDDEN_INSTRUCTIONS
+        tools.extend(create_gmail_tools(settings, gmail_metrics))
 
     print(f"[DRADIS] Scheduled task '{task_name}': model={model}")
     agent = create_agent(system_prompt, model, provider, tools=tools)
@@ -630,6 +890,7 @@ async def run_scheduled_task(task: dict):
         )
         return
     duration = time.time() - start_time
+    _add_tokens("dradis", response)
 
     text = (response.content or "").strip()
     agents_used = ["DRADIS"]
@@ -639,6 +900,8 @@ async def run_scheduled_task(task: dict):
         agents_used.append("Weather")
     if gcal_metrics:
         agents_used.append("Google Calendar")
+    if gmail_metrics:
+        agents_used.append("Gmail")
     label = "🤖 " + " · ".join(agents_used) + f" · <i>{html.escape(task_name)}</i>"
 
     if text:
@@ -659,6 +922,13 @@ async def run_scheduled_task(task: dict):
                 await _telegram_bot.send_message(
                     chat_id=ALLOWED_CHAT_ID,
                     text="📅 Google Calendar\n" + format_metrics(gcal_resp, gcal_dur),
+                )
+    if settings.get("gmail_show_metrics") and gmail_metrics:
+        for gmail_resp, gmail_dur in gmail_metrics:
+            if gmail_resp is not None:
+                await _telegram_bot.send_message(
+                    chat_id=ALLOWED_CHAT_ID,
+                    text="📧 Gmail\n" + format_metrics(gmail_resp, gmail_dur),
                 )
 
 
@@ -700,6 +970,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ws_metrics: list      = []
     weather_metrics: list = []
     gcal_metrics: list    = []
+    gmail_metrics: list   = []
     tools = []
     if settings.get("ws_enabled") and TAVILY_API_KEY:
         system_prompt += "\n\n" + WS_HIDDEN_INSTRUCTIONS
@@ -710,8 +981,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if settings.get("gcal_enabled") and GCAL_TOKEN_FILE.exists():
         system_prompt += "\n\n" + GCAL_HIDDEN_INSTRUCTIONS
         tools.extend(create_calendar_tools(settings, gcal_metrics))
+    if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists():
+        system_prompt += "\n\n" + GMAIL_HIDDEN_INSTRUCTIONS
+        tools.extend(create_gmail_tools(settings, gmail_metrics))
 
-    print(f"[DRADIS] model: {model} | ws: {settings.get('ws_enabled', False)} | weather: {settings.get('weather_enabled', False)} | gcal: {settings.get('gcal_enabled', False)}")
+    print(f"[DRADIS] model: {model} | ws: {settings.get('ws_enabled', False)} | weather: {settings.get('weather_enabled', False)} | gcal: {settings.get('gcal_enabled', False)} | gmail: {settings.get('gmail_enabled', False)}")
     agent      = create_agent(system_prompt, model, provider, tools=tools)
     start_time = time.time()
     try:
@@ -724,6 +998,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     duration = time.time() - start_time
+    _add_tokens("dradis", response)
 
     text = (response.content or "").strip()
 
@@ -738,6 +1013,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         agents_used.append("Weather")
     if gcal_metrics:
         agents_used.append("Google Calendar")
+    if gmail_metrics:
+        agents_used.append("Gmail")
     agents_label = "🤖 " + " · ".join(agents_used)
 
     if text:
@@ -761,6 +1038,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if settings.get("gcal_show_metrics") and gcal_metrics:
         for gcal_resp, gcal_dur in gcal_metrics:
             parts.append("📅 Google Calendar\n" + format_metrics(gcal_resp, gcal_dur))
+    if settings.get("gmail_show_metrics") and gmail_metrics:
+        for gmail_resp, gmail_dur in gmail_metrics:
+            parts.append("📧 Gmail\n" + format_metrics(gmail_resp, gmail_dur))
     if metrics_on:
         parts.append("🤖 DRADIS\n" + format_metrics(response, duration))
     if parts:
@@ -801,7 +1081,17 @@ async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gcal_auth = GCAL_TOKEN_FILE.exists()
     lines += ["", "<b>Google Calendar</b>", f"Status: {'enabled' if gcal_on else 'disabled'}"]
     if gcal_on:
+        lines.append(f"Provider: {settings.get('gcal_provider', SETTINGS_DEFAULTS['gcal_provider'])}")
+        lines.append(f"Model: {settings.get('gcal_model', SETTINGS_DEFAULTS['gcal_model'])}")
         lines.append(f"Auth: {'✅ connected' if gcal_auth else '❌ not authenticated — send /gcalauth'}")
+
+    gmail_on = settings.get("gmail_enabled", False)
+    gmail_auth = GMAIL_TOKEN_FILE.exists()
+    lines += ["", "<b>Gmail</b>", f"Status: {'enabled' if gmail_on else 'disabled'}"]
+    if gmail_on:
+        lines.append(f"Provider: {settings.get('gmail_provider', SETTINGS_DEFAULTS['gmail_provider'])}")
+        lines.append(f"Model: {settings.get('gmail_model', SETTINGS_DEFAULTS['gmail_model'])}")
+        lines.append(f"Auth: {'✅ connected' if gmail_auth else '❌ not authenticated — send /gmailauth'}")
 
     agents = []
     try:
@@ -820,6 +1110,7 @@ async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _gcal_complete_auth(flow, code: str, message) -> bool:
     """Exchange OAuth code for token and save. Returns True on success."""
+    from web.server import _gcal_code_event as _ev
     global _gcal_pending_flow
     try:
         loop  = asyncio.get_event_loop()
@@ -829,6 +1120,8 @@ async def _gcal_complete_auth(flow, code: str, message) -> bool:
         )
         GCAL_TOKEN_FILE.write_text(creds.to_json())
         _gcal_pending_flow = None
+        if _ev and not _ev.is_set():
+            _ev.set()
         await message.reply_text(
             "✅ <b>Google Calendar connected!</b> You can now ask DRADIS about your calendar.",
             parse_mode=ParseMode.HTML,
@@ -847,12 +1140,11 @@ async def _gcal_auth_background(event: asyncio.Event, flow, message):
     try:
         await asyncio.wait_for(event.wait(), timeout=300)
         code = pop_gcal_pending_code()
-        if code:
+        if code and not GCAL_TOKEN_FILE.exists():
             await _gcal_complete_auth(flow, code, message)
-        else:
-            await message.reply_text("❌ Authorization failed — no code received. Send /gcalauth to try again.")
     except asyncio.TimeoutError:
-        await message.reply_text("⏱ Authorization timed out (5 min). Send /gcalauth to try again.")
+        if not GCAL_TOKEN_FILE.exists():
+            await message.reply_text("⏱ Authorization timed out (5 min). Send /gcalauth to try again.")
 
 
 async def cmd_gcalauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -912,10 +1204,107 @@ async def cmd_gcalauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _gcal_complete_auth(flow, code, update.message)
 
 
+async def _gmail_complete_auth(flow, code: str, message) -> bool:
+    """Exchange OAuth code for Gmail token and save. Returns True on success."""
+    from web.server import _gmail_code_event as _ev
+    global _gmail_pending_flow
+    try:
+        loop  = asyncio.get_event_loop()
+        creds = await loop.run_in_executor(
+            None,
+            lambda: (flow.fetch_token(code=code), flow.credentials)[1],
+        )
+        GMAIL_TOKEN_FILE.write_text(creds.to_json())
+        _gmail_pending_flow = None
+        if _ev and not _ev.is_set():
+            _ev.set()
+        await message.reply_text(
+            "✅ <b>Gmail connected!</b> You can now ask DRADIS to read or send emails.",
+            parse_mode=ParseMode.HTML,
+        )
+        return True
+    except Exception as e:
+        await message.reply_text(
+            f"❌ Authorization failed: {html.escape(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+        return False
+
+
+async def _gmail_auth_background(event: asyncio.Event, flow, message):
+    """Background task: wait for loopback callback then complete Gmail auth."""
+    try:
+        await asyncio.wait_for(event.wait(), timeout=300)
+        code = pop_gmail_pending_code()
+        if code and not GMAIL_TOKEN_FILE.exists():
+            await _gmail_complete_auth(flow, code, message)
+    except asyncio.TimeoutError:
+        if not GMAIL_TOKEN_FILE.exists():
+            await message.reply_text("⏱ Authorization timed out (5 min). Send /gmailauth to try again.")
+
+
+async def cmd_gmailauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /gmailauth.
+    No args  → start OAuth flow, wait for loopback callback automatically.
+    With URL → fallback: parse code from the redirect URL and exchange manually.
+    """
+    global _gmail_pending_flow
+    if update.effective_user.id != ALLOWED_CHAT_ID:
+        return
+
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        await update.message.reply_text(
+            "❌ <code>google_client_id</code> and <code>google_client_secret</code> are not configured.\n"
+            "Add them in the add-on <b>Configuration</b> tab and restart.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    args = context.args or []
+
+    if not args:
+        event = asyncio.Event()
+        set_gmail_code_event(event)
+        flow = _build_gmail_flow()
+        _gmail_pending_flow = flow
+        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+
+        msg = (
+            "📧 <b>Gmail — Authorization</b>\n\n"
+            "1. Open this link in your browser:\n"
+            f"<code>{html.escape(auth_url)}</code>\n\n"
+            "2. Sign in with your Google account and grant access.\n"
+            "3. Your browser will redirect back to DRADIS automatically ✅\n\n"
+            "<i>If the redirect fails (HA on a different device), copy the full URL "
+            "from the browser address bar and send it as:\n"
+            "/gmailauth &lt;url&gt;</i>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        asyncio.create_task(_gmail_auth_background(event, flow, update.message))
+        return
+
+    raw  = " ".join(args)
+    code = parse_qs(urlparse(raw).query).get("code", [raw])[0]
+
+    if not code:
+        await update.message.reply_text(
+            "❌ Could not parse the authorization code. "
+            "Make sure you copied the full redirect URL.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    flow = _gmail_pending_flow or _build_gmail_flow()
+    await _gmail_complete_auth(flow, code, update.message)
+
+
 COMMANDS = [
-    BotCommand("info",      "Status and configuration of all agents"),
-    BotCommand("menu",      "List all available commands"),
-    BotCommand("gcalauth",  "Connect Google Calendar (OAuth2)"),
+    BotCommand("info",         "Status and configuration of all agents"),
+    BotCommand("menu",         "List all available commands"),
+    BotCommand("tokens",       "Show total token usage"),
+    BotCommand("tokens_reset", "Reset token counters"),
+    BotCommand("gcalauth",     "Connect Google Calendar (OAuth2)"),
+    BotCommand("gmailauth",    "Connect Gmail (OAuth2)"),
 ]
 
 
@@ -926,13 +1315,49 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"<b>DRADIS Commands:</b>\n\n{lines}", parse_mode=ParseMode.HTML)
 
 
+async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ALLOWED_CHAT_ID:
+        return
+    labels = {
+        "dradis":  "🤖 DRADIS",
+        "weather": "🌤 Weather",
+        "ws":      "🔍 Web Search",
+        "gcal":    "📅 Calendar",
+        "gmail":   "📧 Gmail",
+    }
+    lines = ["<b>Token usage</b>"]
+    total_in = total_out = 0
+    for key, label in labels.items():
+        s    = _TOKEN_STATS.get(key, {"in": 0, "out": 0})
+        i, o = s["in"], s["out"]
+        total_in  += i
+        total_out += o
+        lines.append(f"{label}: in {i:,} | out {o:,} | tot {i + o:,}")
+    lines.append(
+        f"\n<b>Total: in {total_in:,} | out {total_out:,} | tot {total_in + total_out:,}</b>"
+    )
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def cmd_tokens_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ALLOWED_CHAT_ID:
+        return
+    for key in _TOKEN_STATS:
+        _TOKEN_STATS[key] = {"in": 0, "out": 0}
+    _save_token_stats()
+    await update.message.reply_text("✅ Token counters reset.")
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def build_telegram_app():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("info",     cmd_info))
-    app.add_handler(CommandHandler("menu",     cmd_menu))
-    app.add_handler(CommandHandler("gcalauth", cmd_gcalauth))
+    app.add_handler(CommandHandler("info",         cmd_info))
+    app.add_handler(CommandHandler("menu",         cmd_menu))
+    app.add_handler(CommandHandler("tokens",       cmd_tokens))
+    app.add_handler(CommandHandler("tokens_reset", cmd_tokens_reset))
+    app.add_handler(CommandHandler("gcalauth",     cmd_gcalauth))
+    app.add_handler(CommandHandler("gmailauth",    cmd_gmailauth))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     return app
@@ -948,8 +1373,9 @@ async def _register_commands(bot):
 
 
 async def main():
-    global _telegram_bot
+    global _telegram_bot, _TOKEN_STATS
     _init_settings()
+    _TOKEN_STATS = _load_token_stats()
     telegram_app = build_telegram_app()
     web_server   = uvicorn.Server(
         uvicorn.Config(web_app, host="0.0.0.0", port=WEB_PORT, log_level="warning")

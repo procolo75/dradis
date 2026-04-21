@@ -61,6 +61,7 @@ SETTINGS_KEYS = [
     "weather_enabled", "weather_provider", "weather_model", "weather_instructions", "weather_show_metrics",
     "voice_enabled", "voice_provider", "voice_model", "voice_language", "voice_send_transcription", "voice_metrics",
     "gcal_enabled", "gcal_provider", "gcal_model", "gcal_instructions", "gcal_show_metrics",
+    "gmail_enabled", "gmail_provider", "gmail_model", "gmail_instructions", "gmail_show_metrics",
 ]
 
 # Maps old key names to current names for transparent migration.
@@ -167,6 +168,11 @@ SETTINGS_DEFAULTS = {
     "gcal_model":               "nvidia/nemotron-3-nano-30b-a3b:free",
     "gcal_instructions":        "",
     "gcal_show_metrics":        False,
+    "gmail_enabled":            False,
+    "gmail_provider":           "openrouter",
+    "gmail_model":              "nvidia/nemotron-3-nano-30b-a3b:free",
+    "gmail_instructions":       "",
+    "gmail_show_metrics":       False,
 }
 
 def load_settings() -> dict:
@@ -228,6 +234,11 @@ class SettingsPayload(BaseModel):
     gcal_model:               str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     gcal_instructions:        str  = ""
     gcal_show_metrics:        bool = False
+    gmail_enabled:            bool = False
+    gmail_provider:           str  = "openrouter"
+    gmail_model:              str  = "nvidia/nemotron-3-nano-30b-a3b:free"
+    gmail_instructions:       str  = ""
+    gmail_show_metrics:       bool = False
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -614,6 +625,63 @@ async def get_gcal_status():
     client_id     = opts.get("google_client_id", "")
     client_secret = opts.get("google_client_secret", "")
     token_file    = Path("/data/google_calendar_token.json")
+    return {
+        "credentials_configured": bool(client_id and client_secret),
+        "authenticated": token_file.exists(),
+    }
+
+
+# ── Gmail OAuth callback ──────────────────────────────────────────────────────
+
+_gmail_pending_code: str | None = None
+_gmail_code_event: asyncio.Event | None = None
+
+
+def set_gmail_code_event(event: asyncio.Event):
+    global _gmail_code_event
+    _gmail_code_event = event
+
+
+def pop_gmail_pending_code() -> str | None:
+    global _gmail_pending_code
+    code = _gmail_pending_code
+    _gmail_pending_code = None
+    return code
+
+
+@app.get("/gmailauth/callback")
+async def gmail_oauth_callback(code: str = None, error: str = None):
+    """Loopback redirect target for Gmail OAuth. Signals the waiting Telegram command."""
+    global _gmail_pending_code
+    if error:
+        return HTMLResponse(
+            f"<h2 style='font-family:sans-serif;color:#c00'>❌ Authorization failed: {error}</h2>"
+            "<p style='font-family:sans-serif'>Return to Telegram and send /gmailauth to try again.</p>"
+        )
+    if not code:
+        return HTMLResponse(
+            "<h2 style='font-family:sans-serif;color:#c00'>❌ No authorization code received.</h2>"
+        )
+    _gmail_pending_code = code
+    if _gmail_code_event:
+        _gmail_code_event.set()
+    return HTMLResponse(
+        "<h2 style='font-family:sans-serif;color:#080'>✅ Gmail connected!</h2>"
+        "<p style='font-family:sans-serif'>You can close this tab and return to Telegram.</p>"
+    )
+
+
+@app.get("/api/gmail-status")
+async def get_gmail_status():
+    """Return whether Gmail credentials are configured and authenticated."""
+    opts = {}
+    try:
+        opts = json.loads(OPTIONS_FILE.read_text())
+    except Exception:
+        pass
+    client_id     = opts.get("google_client_id", "")
+    client_secret = opts.get("google_client_secret", "")
+    token_file    = Path("/data/google_gmail_token.json")
     return {
         "credentials_configured": bool(client_id and client_secret),
         "authenticated": token_file.exists(),

@@ -14,6 +14,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
 - **Conversation history** with configurable depth
+- **Token counter** — `/tokens` shows cumulative input/output usage per agent; `/tokens_reset` resets
 - All settings managed at runtime from the Web UI — no restart required
 
 ## Installation
