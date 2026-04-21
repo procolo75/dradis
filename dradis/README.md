@@ -48,6 +48,17 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 > Every morning DRADIS checks your unread emails and sends a summary to Telegram.
 > Cron: `0 8 * * 1-5` — Instructions: *"Check unread emails and send a brief summary of each to Telegram."*
 
+## Telegram Commands
+
+| Command | Description |
+|---------|-------------|
+| `/info` | Status and configuration of all agents |
+| `/menu` | List all available commands |
+| `/tokens` | Show cumulative token usage (input/output/total) per agent |
+| `/tokens_reset` | Reset token counters to zero |
+| `/gcalauth` | Connect Google Calendar (OAuth2) |
+| `/gmailauth` | Connect Gmail (OAuth2) |
+
 ## Documentation
 
 Full documentation is available in the **Documentation** tab of the add-on page in Home Assistant, or directly in the Web UI under **Other → Documentation**.
