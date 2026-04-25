@@ -61,5 +61,4 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 ## Documentation
 
-Full documentation is available in the **Documentation** tab of the add-on page in Home Assistant, or directly in the Web UI under **Other → Documentation**.
-Full docs also on the [GitHub Wiki](https://github.com/procolo75/dradis/wiki).
+Full documentation is available in the **Documentation** tab of the add-on page in Home Assistant and on the [GitHub Wiki](https://github.com/procolo75/dradis/wiki).

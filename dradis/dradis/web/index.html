@@ -244,35 +244,6 @@
     }
     .empty-state .icon { font-size: 2.5rem; }
 
-    /* ── Documentation ── */
-    .doc-body h2 { font-size: 1.15rem; margin-bottom: 12px; }
-    .doc-body h3 { font-size: 0.95rem; font-weight: 600; margin: 20px 0 8px; color: var(--accent); }
-    .doc-body p  { font-size: 0.875rem; line-height: 1.6; margin-bottom: 8px; color: var(--text-muted); }
-    .doc-body ul, .doc-body ol { padding-left: 20px; margin-bottom: 8px; }
-    .doc-body li { font-size: 0.875rem; line-height: 1.6; color: var(--text-muted); margin-bottom: 2px; }
-    .doc-body a  { color: var(--accent); text-decoration: none; }
-    .doc-body a:hover { text-decoration: underline; }
-    .doc-body code {
-      background: var(--input-bg);
-      border-radius: 3px;
-      padding: 1px 5px;
-      font-size: 0.8rem;
-      color: var(--text);
-    }
-    .doc-body table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.8rem;
-      margin-bottom: 12px;
-    }
-    .doc-body th, .doc-body td {
-      text-align: left;
-      padding: 6px 10px;
-      border-bottom: 1px solid var(--border);
-    }
-    .doc-body th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px; }
-    .doc-body td { color: var(--text); }
-
     /* ── Toast ── */
     #toast {
       position: fixed;
@@ -354,15 +325,6 @@
       <ul class="nav-list" id="sidebar-tasks"></ul>
     </div>
 
-    <div class="nav-section">
-      <span class="nav-section-label">Other</span>
-      <ul class="nav-list">
-        <li class="nav-item" data-panel="docs">
-          <span class="nav-icon">📖</span>
-          <span class="nav-label">Documentation</span>
-        </li>
-      </ul>
-    </div>
 
   </nav>
 
@@ -964,227 +926,6 @@
       </div>
     </div>
 
-    <!-- Panel: Documentation -->
-    <div class="panel" id="panel-docs">
-      <div class="form-card" style="max-width:720px">
-        <div class="doc-body">
-
-          <h2>DRADIS Agentic AI for Home Assistant — Documentation</h2>
-          <p>DRADIS is a Home Assistant add-on that exposes a conversational AI agent controllable via Telegram. All settings are managed from the built-in Web UI and the HA Configuration tab — no code changes required.</p>
-
-          <h3>Requirements</h3>
-          <ul>
-            <li>Home Assistant with Supervisor (HAOS or Supervised)</li>
-            <li>A Telegram bot (created via <a href="https://t.me/BotFather" target="_blank">@BotFather</a>)</li>
-            <li>An API key for at least one supported LLM provider (OpenRouter, OpenAI, GitHub Models, Gemini, or Groq)</li>
-            <li><em>(Optional)</em> A <a href="https://tavily.com" target="_blank">Tavily</a> API key for the Web Search sub-agent</li>
-            <li><em>(Optional)</em> A <a href="https://console.groq.com" target="_blank">Groq</a> API key for the Voice sub-agent (required to enable voice transcription)</li>
-            <li><em>(Optional)</em> Google Cloud OAuth2 credentials — one credential covers both the Google Calendar and Gmail sub-agents</li>
-          </ul>
-
-          <h3>Installation</h3>
-          <ol>
-            <li>Add the add-on repository in Home Assistant</li>
-            <li>Install the DRADIS add-on</li>
-            <li>Fill in the <strong>Configuration</strong> tab with your credentials</li>
-            <li>Start the add-on</li>
-          </ol>
-
-          <h3>Configuration (HA tab)</h3>
-          <p>Only API keys and credentials go here. All other settings are managed at runtime from the Web UI.</p>
-          <table>
-            <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td><code>telegram_bot_token</code></td><td>password</td><td>Telegram bot token (from BotFather)</td></tr>
-              <tr><td><code>telegram_allowed_chat_id</code></td><td>int</td><td>Telegram user ID allowed to interact</td></tr>
-              <tr><td><code>openrouter_api_key</code></td><td>password</td><td><em>(Optional)</em> OpenRouter API key</td></tr>
-              <tr><td><code>openai_api_key</code></td><td>password</td><td><em>(Optional)</em> OpenAI API key</td></tr>
-              <tr><td><code>github_token</code></td><td>password</td><td><em>(Optional)</em> GitHub Personal Access Token for GitHub Models</td></tr>
-              <tr><td><code>gemini_api_key</code></td><td>password</td><td><em>(Optional)</em> Google Gemini API key</td></tr>
-              <tr><td><code>groq_api_key</code></td><td>password</td><td><em>(Optional)</em> Groq API key — required for the Voice sub-agent</td></tr>
-              <tr><td><code>tavily_api_key</code></td><td>password</td><td><em>(Optional)</em> Tavily API key — required for the Web Search sub-agent</td></tr>
-              <tr><td><code>google_client_id</code></td><td>str</td><td><em>(Optional)</em> Google OAuth2 client ID — required for Google Calendar and/or Gmail</td></tr>
-              <tr><td><code>google_client_secret</code></td><td>password</td><td><em>(Optional)</em> Google OAuth2 client secret — required for Google Calendar and/or Gmail</td></tr>
-            </tbody>
-          </table>
-          <p>Fill in at least one LLM provider key. The active provider is selected from the Web UI.</p>
-
-          <h3>How to get your API keys</h3>
-          <ul>
-            <li><strong>Telegram bot token</strong>: open Telegram, start a chat with <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> and follow the prompts — you will receive a token like <code>123456:ABC-DEF...</code></li>
-            <li><strong>Telegram user ID</strong>: start a chat with <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> — it will reply with your numeric ID</li>
-            <li><strong>OpenRouter API key</strong>: sign up at <a href="https://openrouter.ai" target="_blank">openrouter.ai</a>, go to <strong>Settings → Keys</strong> to create a key</li>
-            <li><strong>OpenAI API key</strong>: sign up at <a href="https://platform.openai.com" target="_blank">platform.openai.com</a>, go to <strong>API keys</strong></li>
-            <li><strong>GitHub token</strong>: go to <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a> — a classic token with no scopes is sufficient for GitHub Models</li>
-            <li><strong>Gemini API key</strong>: sign up at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a>, click <strong>Get API key</strong></li>
-            <li><strong>Groq API key</strong>: sign up at <a href="https://console.groq.com" target="_blank">console.groq.com</a>, go to <strong>API Keys</strong></li>
-            <li><strong>Tavily API key</strong> (optional): sign up at <a href="https://tavily.com" target="_blank">tavily.com</a> — the free tier includes 1 000 searches/month</li>
-            <li><strong>Google OAuth2 credential</strong> (optional — required for Calendar and/or Gmail): no Google username or password is stored. One credential covers both services.
-              <br><br><strong>Part 1 — One-time Google Cloud setup (do this once for both Calendar and Gmail):</strong>
-              <ol>
-                <li>Go to <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> → create or select a project</li>
-                <li><strong>APIs &amp; Services → Library</strong> → search <em>Google Calendar API</em> → <strong>Enable</strong>. Then search <em>Gmail API</em> → <strong>Enable</strong>. (Enable only the ones you need — both are free.)</li>
-                <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save</li>
-                <li>Still in consent screen → <strong>Test users</strong> → add your own Google account email → save</li>
-                <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong></li>
-                <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog</li>
-                <li>Paste them in the add-on Configuration tab (<code>google_client_id</code>, <code>google_client_secret</code>) and <strong>restart the add-on</strong></li>
-              </ol>
-              <strong>Part 2 — Authorize each service (run once per service):</strong>
-              <ul>
-                <li><strong>Calendar</strong>: send <code>/gcalauth</code> to the bot → click the link → sign in → grant access → <strong>browser redirects back automatically ✅</strong>. Enable Google Calendar in the Web UI and save.</li>
-                <li><strong>Gmail</strong>: send <code>/gmailauth</code> to the bot → click the link → sign in → grant access → <strong>browser redirects back automatically ✅</strong>. Enable Gmail in the Web UI and save.</li>
-              </ul>
-              <em>Gmail and Calendar use separate token files — even if Calendar is already connected, run <code>/gmailauth</code> separately.</em><br>
-              <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser and send it as <code>/gcalauth &lt;url&gt;</code> or <code>/gmailauth &lt;url&gt;</code>.</em>
-            </li>
-          </ul>
-
-          <h3>Web UI — Settings → DRADIS</h3>
-          <p>All runtime settings are configured here and saved to <code>/data/dradis_settings.json</code>. Changes take effect immediately on the next message — no restart needed.</p>
-          <table>
-            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td>Provider</td><td><code>openrouter</code></td><td>LLM provider: OpenRouter, OpenAI, GitHub Models, Gemini, or Groq. Select the provider whose API key is configured in the Configuration tab.</td></tr>
-              <tr><td>Model</td><td>—</td><td>Model for the selected provider. Click 🔄 to fetch the available list, then ⚡ to speed-test all models in parallel (tok/s) and keep the top 5 fastest. Changing the provider clears the model list.</td></tr>
-              <tr><td>Agent instructions</td><td><code>You are DRADIS, a versatile AI assistant.</code></td><td>System prompt — defines the agent's role, behaviour, and any persistent facts about the user (name, preferences, language, etc.).</td></tr>
-              <tr><td>Startup message</td><td><code>✅ DRADIS online and ready.</code></td><td>Telegram message sent when the add-on starts.</td></tr>
-              <tr><td>Conversation history</td><td><code>true</code></td><td>Prepend the last N exchanges as context to each request.</td></tr>
-              <tr><td>Show metrics</td><td><code>false</code></td><td>Send token usage and response time after each reply.</td></tr>
-              <tr><td>Conversation history depth</td><td><code>2</code></td><td>Number of past exchanges kept in context (resets on restart).</td></tr>
-              <tr><td>Timezone for scheduled tasks</td><td><code>UTC</code></td><td>Timezone used to interpret all cron expressions. Select from the dropdown (covers Europe, Americas, Asia, Africa, Pacific). Changes take effect on next save — no restart required.</td></tr>
-            </tbody>
-          </table>
-          <p><strong>Model selection by provider:</strong></p>
-          <table>
-            <thead><tr><th>Provider</th><th>How models are loaded</th></tr></thead>
-            <tbody>
-              <tr><td>OpenRouter</td><td>🔄 fetches free ≥30B tool-calling models; ⚡ speed-tests them; top 5 fastest are kept</td></tr>
-              <tr><td>OpenAI</td><td>🔄 fetches GPT-4o, GPT-4o Mini, GPT-4 Turbo, and other tool-capable models from the API</td></tr>
-              <tr><td>GitHub Models</td><td>Fixed preset: GPT-4o, GPT-4o Mini, Phi 3.5 MoE, Phi 3.5 Mini, Llama 3.1 70B, Llama 3.1 8B, Mistral Nemo, Mistral Large</td></tr>
-              <tr><td>Gemini</td><td>Fixed preset: Gemini 2.0 Flash, 2.0 Flash Lite, 2.5 Pro Preview, 1.5 Pro, 1.5 Flash, 1.5 Flash 8B</td></tr>
-              <tr><td>Groq</td><td>🔄 fetches LLM models from the API (Whisper models excluded from this list)</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Web UI — Agents → Web Search</h3>
-          <p>Configure the built-in Web Search sub-agent, powered by <a href="https://tavily.com" target="_blank">Tavily</a>. A green dot in the sidebar indicates the agent is active. When enabled, DRADIS automatically decides when to call <code>search_web</code> — no prompt engineering required. Tavily returns up to 5 results; a dedicated synthesis LLM formats them into a concise answer.</p>
-          <table>
-            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td>Enabled</td><td><code>false</code></td><td>Activate web search delegation. Requires <code>tavily_api_key</code> in the Configuration tab.</td></tr>
-              <tr><td>Test connection</td><td>—</td><td>Sends a test query to Tavily and reports the result inline.</td></tr>
-              <tr><td>LLM Provider</td><td><code>openrouter</code></td><td>Provider for the synthesis LLM (independent from DRADIS).</td></tr>
-              <tr><td>Model</td><td>—</td><td>Model used to synthesise search results. Click 🔄 to load, ⚡ to speed-test.</td></tr>
-              <tr><td>Additional instructions</td><td>—</td><td>Optional extra instructions appended to the synthesis agent's system prompt.</td></tr>
-              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 🔍 metrics message after each web search (tokens, latency, model).</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Web UI — Agents → Weather</h3>
-          <p>Configure the built-in Weather sub-agent, powered by <a href="https://open-meteo.com" target="_blank">Open-Meteo</a> (free, no API key required). A green dot in the sidebar indicates the agent is active. When enabled, DRADIS automatically calls <code>get_weather</code> when the user asks about current weather, forecasts, temperature, rain, wind, or UV index — in any language. The tool fetches current conditions and a 3-day forecast; a synthesis LLM formats the data into a clear response.</p>
-          <table>
-            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td>Enabled</td><td><code>false</code></td><td>Activate weather lookup delegation. No API key required.</td></tr>
-              <tr><td>Test connection</td><td>—</td><td>Pings Open-Meteo and reports the current temperature in Rome as a sanity check.</td></tr>
-              <tr><td>LLM Provider</td><td><code>openrouter</code></td><td>Provider for the synthesis LLM (independent from DRADIS).</td></tr>
-              <tr><td>Model</td><td>—</td><td>Model used to synthesise weather data. Click 🔄 to load, ⚡ to speed-test.</td></tr>
-              <tr><td>Additional instructions</td><td>—</td><td>Optional extra instructions appended to the synthesis agent's system prompt.</td></tr>
-              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 🌤 metrics message after each weather lookup (tokens, latency, model).</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Web UI — Agents → Voice</h3>
-          <p>Configure voice message transcription, powered by <a href="https://console.groq.com" target="_blank">Groq Whisper</a>. When enabled, DRADIS accepts Telegram voice messages (OGG audio), transcribes them using the Groq Whisper API, and passes the transcribed text to the main agent as if the user had typed it. A green dot in the sidebar indicates the agent is active. <strong>Requires <code>groq_api_key</code></strong> in the Configuration tab — the Enabled toggle is disabled automatically when the key is missing.</p>
-          <table>
-            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td>Enabled</td><td><code>false</code></td><td>Activate voice transcription. Requires <code>groq_api_key</code> in the Configuration tab.</td></tr>
-              <tr><td>Test connection</td><td>—</td><td>Verifies the Groq API key can reach the Whisper models endpoint.</td></tr>
-              <tr><td>Whisper Model</td><td><code>whisper-large-v3-turbo</code></td><td>Click 🔄 to fetch available Whisper models from Groq (separate list from LLM models).</td></tr>
-              <tr><td>Language</td><td><code>it</code></td><td>Transcription language — select from the dropdown (40 languages, ISO 639-1 codes).</td></tr>
-              <tr><td>Send transcription</td><td><code>true</code></td><td>Echo the transcribed text to Telegram as <code>🎙️ &lt;text&gt;</code> before the agent replies.</td></tr>
-              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 🎙️ metrics message with transcription latency and model name.</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Web UI — Agents → Google Calendar</h3>
-          <p>Connect DRADIS to your primary Google Calendar. When enabled, the agent automatically calls the appropriate calendar tool when the user asks about their schedule or wants to manage events. <strong>Requires <code>google_client_id</code> and <code>google_client_secret</code></strong> in the Configuration tab — see setup steps above. Three tools are available:</p>
-          <table>
-            <thead><tr><th>Tool</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td><code>get_calendar_events</code></td><td>Fetches events for the next N days (default: 7). Returns each event with its ID so it can be referenced for deletion.</td></tr>
-              <tr><td><code>create_calendar_event</code></td><td>Creates a new event with title, start/end datetime (ISO 8601 with timezone), and an optional description. If the user does not specify a duration, defaults to 1 hour.</td></tr>
-              <tr><td><code>delete_calendar_event</code></td><td>Deletes an event by ID. DRADIS always calls <code>get_calendar_events</code> first to retrieve the ID before deleting.</td></tr>
-            </tbody>
-          </table>
-          <p>A calendar sub-agent formats the raw API response using the configured LLM model before replying to the user.</p>
-          <table>
-            <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td>Enabled</td><td><code>false</code></td><td>Activate calendar access. The toggle is disabled when credentials are not configured.</td></tr>
-              <tr><td>Authentication status</td><td>—</td><td>Shows whether the OAuth2 token is present. If not authenticated, send <code>/gcalauth</code> to the bot and follow the steps.</td></tr>
-              <tr><td>LLM Provider</td><td><code>openrouter</code></td><td>Provider for the calendar formatting sub-agent (independent from DRADIS).</td></tr>
-              <tr><td>Model</td><td>—</td><td>Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test.</td></tr>
-              <tr><td>Additional instructions</td><td>—</td><td>Optional extra instructions appended to the calendar sub-agent's system prompt.</td></tr>
-              <tr><td>Show metrics</td><td><code>false</code></td><td>Send a separate 📅 metrics message after each calendar operation (tokens, latency, model).</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Web UI — Tasks</h3>
-          <p>Create recurring automated tasks that DRADIS executes on a cron schedule and delivers to your Telegram chat. Tasks are stored in <code>/data/tasks.json</code>. Click <code>+</code> in the Tasks sidebar header to create a new task.</p>
-          <table>
-            <thead><tr><th>Field</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td>Name</td><td>Display name shown in the sidebar.</td></tr>
-              <tr><td>Enabled</td><td>Toggle — a green dot in the sidebar shows the task is active.</td></tr>
-              <tr><td>Schedule preset</td><td>Dropdown of common schedules: Every minute, Every hour, Daily at 8:00, Daily at 20:00, Every Monday at 9:00, Weekdays 9–18 every hour.</td></tr>
-              <tr><td>Cron expression</td><td>Raw 5-part cron field. Editing it directly sets the preset to "Custom…" and shows a live human-readable description below the field.</td></tr>
-              <tr><td>Instructions</td><td>What DRADIS should do at this time — passed directly to the main agent, which automatically selects the right tools as needed.</td></tr>
-            </tbody>
-          </table>
-          <p>When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no add-on restart required.</p>
-
-          <h3>Telegram Commands</h3>
-          <table>
-            <thead><tr><th>Command</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td><code>/info</code></td><td>Show status and configuration of all agents (provider, model, metrics, history, sub-agents)</td></tr>
-              <tr><td><code>/menu</code></td><td>List all available commands</td></tr>
-              <tr><td><code>/gcalauth</code></td><td>Start Google Calendar OAuth2 authorization. Send without arguments for the automatic redirect flow; send <code>/gcalauth &lt;url&gt;</code> to manually paste the redirect URL (fallback for HA on a separate device).</td></tr>
-            </tbody>
-          </table>
-
-          <h3>Conversation History</h3>
-          <p>When <strong>Conversation history</strong> is enabled, the last N exchanges (configurable via <strong>Conversation history depth</strong>) are prepended to each request as context. This buffer is in-memory and resets on restart. To give DRADIS persistent knowledge about the user (name, preferences, language, etc.), add it directly to the <strong>Agent instructions</strong> field.</p>
-
-          <h3>Agent Label</h3>
-          <p>Every DRADIS response includes an italic footer indicating which agent(s) processed the request:</p>
-          <ul>
-            <li><code>🤖 DRADIS</code> — standard reply</li>
-            <li><code>🤖 DRADIS · Web Search</code> — reply involved the web search sub-agent</li>
-            <li><code>🤖 DRADIS · Weather</code> — reply involved the weather sub-agent</li>
-            <li><code>🤖 DRADIS · Google Calendar</code> — reply involved the Google Calendar sub-agent</li>
-            <li>Multiple labels are combined, e.g. <code>🤖 DRADIS · Web Search · Weather</code></li>
-            <li>For scheduled tasks the task name is appended: <code>🤖 DRADIS · &lt;task name&gt;</code></li>
-          </ul>
-
-          <h3>Persistent Data</h3>
-          <table>
-            <thead><tr><th>File</th><th>Content</th></tr></thead>
-            <tbody>
-              <tr><td><code>/data/options.json</code></td><td>Add-on configuration managed by HA (API keys, etc.)</td></tr>
-              <tr><td><code>/data/dradis_settings.json</code></td><td>Runtime settings edited from the Web UI</td></tr>
-              <tr><td><code>/data/agents.json</code></td><td>Custom sub-agent configuration (managed from Web UI)</td></tr>
-              <tr><td><code>/data/tasks.json</code></td><td>Scheduled task configuration (managed from Web UI)</td></tr>
-              <tr><td><code>/data/google_calendar_token.json</code></td><td>Google Calendar OAuth2 token (auto-refreshed)</td></tr>
-            </tbody>
-          </table>
-
-        </div>
-      </div>
-    </div>
 
   </div><!-- #content -->
 </div><!-- #app -->
@@ -2436,6 +2177,7 @@ function renderTaskForm(task) {
 
       <div class="btn-row">
         <button class="btn-save" id="btn-save-task">Save</button>
+        <button class="btn-save" id="btn-run-task" style="background:var(--accent)">&#9654; Test Task</button>
         <button class="btn-save" id="btn-delete-task" style="background:var(--danger,#e53935)">Delete</button>
       </div>
     </div>
@@ -2466,6 +2208,7 @@ function renderTaskForm(task) {
   });
 
   document.getElementById("btn-save-task").onclick = saveTask;
+  document.getElementById("btn-run-task").onclick = runTask;
   document.getElementById("btn-delete-task").onclick = deleteTask;
 }
 
@@ -2507,6 +2250,21 @@ async function deleteTask() {
     showToast("Deleted");
   } catch {
     showToast("Error deleting", true);
+  }
+}
+
+async function runTask() {
+  const btn = document.getElementById("btn-run-task");
+  btn.disabled = true;
+  btn.textContent = "Running…";
+  try {
+    await api("POST", `/api/tasks/${selectedTaskId}/run`);
+    showToast("Task started — result will arrive on Telegram");
+  } catch (err) {
+    showToast(err.message || "Error running task", true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = "&#9654; Test Task";
   }
 }
 

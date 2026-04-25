@@ -126,6 +126,7 @@ def save_tasks(tasks: list[dict]):
 
 
 _on_tasks_changed: Callable | None = None
+_run_task_fn: Callable | None = None
 
 
 def register_tasks_changed_callback(fn: Callable):
@@ -136,6 +137,11 @@ def register_tasks_changed_callback(fn: Callable):
 def _notify_tasks_changed():
     if _on_tasks_changed:
         _on_tasks_changed()
+
+
+def register_run_task_callback(fn: Callable):
+    global _run_task_fn
+    _run_task_fn = fn
 
 
 SETTINGS_DEFAULTS = {
@@ -374,6 +380,19 @@ async def delete_task(task_id: str):
     tasks = [t for t in tasks if t["id"] != task_id]
     save_tasks(tasks)
     _notify_tasks_changed()
+    return {"ok": True}
+
+
+@app.post("/api/tasks/{task_id}/run")
+async def run_task_now(task_id: str):
+    if not _run_task_fn:
+        raise HTTPException(status_code=503, detail="Task runner not available")
+    task = next((t for t in load_tasks() if t["id"] == task_id), None)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not task.get("instructions", "").strip():
+        raise HTTPException(status_code=400, detail="Task has no instructions")
+    asyncio.create_task(_run_task_fn(task))
     return {"ok": True}
 
 

@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## [2.4.0] - 2026-04-25
+- **Fix — tzlocal warning at boot**: added `ENV TZ=UTC` to Dockerfile. Alpine has no `/etc/localtime` or `/etc/timezone`, so `tzlocal` (used internally by APScheduler) could not detect the system timezone and emitted a `UserWarning` on every start. Setting the `TZ` environment variable is read first by `tzlocal` and silences the warning. UTC remains the correct default — the user-facing timezone for scheduled tasks is configurable from the Web UI.
+- **Fix — tool call loop (Gmail 10+ LLM calls)**: added `tool_call_limit` parameter to `create_agent()` in `agent_core.py`. Without a limit, Agno's tool-use loop could cycle indefinitely when a sub-agent had multiple tools available. Limits applied: `4` for Gmail and Google Calendar (complex multi-step tasks), `2` for Weather and Web Search (single-tool agents). This caps the worst-case LLM calls per sub-agent and prevents runaway token consumption.
+- **Web UI — removed Documentation panel**: the inline docs tab has been removed from the Web UI sidebar. Documentation is maintained in `DOCS.md` and the GitHub Wiki.
+
+## [2.3.0] - 2026-04-25
+- **Bug fix — `tot:0` display**: `format_metrics` was reading `RunMetrics.total_tokens`, a field agno never writes to (always stays 0). Fixed by computing total as `input_tokens + output_tokens` directly.
+- **Performance — pre-fetch + inject pattern**: each request now checks the user message for intent keywords before building the Team. When a match is found (e.g. calendar keywords detected), DRADIS pre-fetches the raw API data in Python (all detected members run in parallel), then injects the data into the member agent's system prompt and removes the fetch tool. This reduces each matched member from **2 LLM calls** (tool-decision + formatting) to **1 LLM call** (formatting only). Members without a keyword match fall back to the tool-based path (no regression).
+- **New helpers**: `_prefetch_context(message, settings)` orchestrator; `_extract_weather_location(text)` regex extractor; `_safe_sum(a, b)` for robust integer addition; keyword sets `_WEATHER_KW`, `_WS_KW`, `_GCAL_KW`, `_GMAIL_KW`.
+- **Agent file changes**: each agent module now exposes a standalone async fetch function (`fetch_weather`, `fetch_web_search`, `fetch_gcal_events`, `fetch_gmail_inbox`) callable from `main.py`; factory functions accept an optional `prefetched_data` parameter.
+
+## [2.2.0] - 2026-04-24
+- **Agent Team architecture**: migrated from single-agent-with-tools to agno `Team` (coordinate mode). When one or more sub-agents are enabled, DRADIS creates a `Team` with each enabled sub-agent as an independent `Agent` member; with no sub-agents the legacy single-agent path is used unchanged.
+- **Parallel execution**: with `mode="coordinate"` agno runs multiple members concurrently — e.g. a request needing both weather and calendar triggers both members in parallel instead of sequentially.
+- **Scalable architecture**: adding a new member requires only creating a new agent factory file and appending it to `_build_members()` — no changes to `handle_message`, `run_scheduled_task`, metrics, or token tracking.
+- **Additional instructions preserved**: each member's system prompt still includes the per-agent `*_instructions` setting from the Web UI exactly as before.
+- **Token tracking refactor**: `_add_tokens` is now called per member via `team_response.member_responses` (with `store_member_responses=True`); per-agent token counters in `/tokens` are unchanged.
+- **Metrics refactor**: per-member metrics use `RunMetrics.duration` from agno when available; `format_metrics` falls back to manual wall-clock time.
+- **Code cleanup**: removed `create_calendar_tools`, `create_gmail_tools`, `create_weather_tool`, `create_web_search_tool` factory functions (replaced by `create_*_agent`); removed internal sub-agent creation inside tool functions; removed `ws_metrics`/`weather_metrics`/`gcal_metrics`/`gmail_metrics` mutable-list pattern.
+
+## [2.1.0] - 2026-04-23
+- **Test Task button**: each task in the Web UI now has a "▶ Test Task" button that triggers immediate one-off execution without modifying the cron schedule. The result is delivered to Telegram exactly as a scheduled run would. New backend endpoint `POST /api/tasks/{task_id}/run` dispatches the task asynchronously via `asyncio.create_task`.
+
+## [2.0.0] - 2026-04-23
+- **Refactor — agents/ folder**: all sub-agent code extracted from `main.py` into dedicated modules (`agents/gcal.py`, `agents/gmail.py`, `agents/weather.py`, `agents/web_search.py`). `main.py` now contains only Telegram handlers, the cron scheduler, and OAuth flows.
+- **New `agent_core.py`**: shared utilities (`create_agent`, provider helpers, `_now_str`, token tracking) moved to a single module imported by both `main.py` and all agent files, eliminating circular imports.
+- **Token optimisation — tool docstrings**: removed `*_HIDDEN_INSTRUCTIONS` constants injected into DRADIS's system prompt. Routing logic (trigger phrases, call conditions) moved into each tool's docstring, which agno passes to the LLM as the tool description. Saves ~200–400 tokens per call when all agents are enabled.
+- **Docs — Architecture section**: added hub-and-spoke diagram and source-layout table to `DOCS.md`.
+
 ## [1.9.0] - 2026-04-21
 - **Bug fix — metrics call count**: `_count_tool_calls` was incorrectly excluding assistant messages that contained only a tool call (no text), so the call counter showed 1 instead of 2 when a sub-agent was used. Renamed to `_count_model_calls` and now counts all assistant messages.
 - **Bug fix — token display**: `_val_metric` now sums list values (agno can return token counts as a per-step list); previously the raw list was displayed instead of the total.

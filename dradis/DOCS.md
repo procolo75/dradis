@@ -10,6 +10,64 @@ DRADIS displays a radar-sweep icon in the Home Assistant add-on dashboard (`icon
 
 ---
 
+## Architecture
+
+DRADIS uses an **agno Team** design (`coordinate` mode): a DRADIS leader agent orchestrates a team of specialist member agents. When the user sends a message the leader decides which members to invoke, runs them **in parallel**, and synthesises their responses into a single reply. If no sub-agents are enabled, DRADIS falls back to a single-agent path with no overhead.
+
+### Tool call limit (v2.4.0)
+
+Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use loops: **4** for Gmail and Google Calendar (which may need multiple sequential tool calls for complex tasks such as search-then-send or fetch-then-delete), **2** for Weather and Web Search (single-tool agents). The limit is enforced by agno's `Agent.tool_call_limit` parameter and caps the worst-case LLM calls per sub-agent regardless of model behaviour.
+
+### Pre-fetch + inject pattern (v2.3.0)
+
+Before building the Team, DRADIS scans the user message for intent keywords. When a match is found, it pre-fetches API data in Python (all detected members run **in parallel**), then injects the data directly into the matching member's system prompt and removes its fetch tool. This reduces each matched member from **2 LLM calls** (tool-decision + formatting) to **1 LLM call** (formatting only). Members without a keyword match fall back to the tool-based path.
+
+```
+User message
+      │
+      ▼
+┌─────────────────────────────────────────────────────────┐
+│  _prefetch_context()  — keyword matching + parallel     │
+│  API fetch (Open-Meteo / Tavily / GCal / Gmail)         │
+└──────┬──────────┬──────────┬──────────┬─────────────────┘
+       │          │          │          │
+       ▼          ▼          ▼          ▼
+   weather     web      gcal data   gmail
+   data        results  (injected)  inbox
+  (injected) (injected)           (injected)
+       │
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│  DRADIS Team Leader  (coordinator LLM)                  │
+│  Routes request → invokes relevant members in parallel  │
+│  Synthesises responses → single Telegram reply          │
+└──────┬──────────┬──────────┬──────────┬─────────────────┘
+       │          │          │          │
+  ┌────┴───┐ ┌────┴───┐ ┌────┴───┐ ┌───┴────┐
+  │Weather │ │  Web   │ │  GCal  │ │ Gmail  │
+  │(1 call)│ │(1 call)│ │(1 call)│ │(1 call)│
+  └────────┘ └────────┘ └────────┘ └────────┘
+```
+
+**Routing** is driven by each member's system prompt description (when data is pre-fetched) or tool docstrings (fallback path). No hidden text is injected into the leader's system prompt.
+
+**Additional instructions**: each member still applies its own per-agent `*_instructions` setting from the Web UI. These are appended to the member's system prompt at runtime.
+
+**Extensibility**: adding a new member requires creating a new `create_X_agent(settings)` factory file and registering it in `_build_members()` in `main.py`. No changes to message handling, metrics, or token tracking are needed.
+
+**Source layout:**
+
+| File | Responsibility |
+|------|---------------|
+| `main.py` | Telegram bot, message handlers, cron scheduler, OAuth flows, pre-fetch orchestration, team assembly |
+| `agent_core.py` | `create_agent()`, `create_team()`, provider helpers, token tracking |
+| `agents/web_search.py` | Web Search member agent — `fetch_web_search()` + `create_web_search_agent()` |
+| `agents/weather.py` | Weather member agent — `fetch_weather()` + `create_weather_agent()` |
+| `agents/gmail.py` | Gmail member agent — `fetch_gmail_inbox()` + `create_gmail_agent()` + OAuth token management |
+| `agents/gcal.py` | Google Calendar member agent — `fetch_gcal_events()` + `create_gcal_agent()` + OAuth token management |
+
+---
+
 ## Requirements
 
 - Home Assistant with Supervisor (HAOS or Supervised)
@@ -218,6 +276,8 @@ Click `+` in the Tasks sidebar header to create a new task. Each task has:
 
 When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no add-on restart required.
 
+**Testing a task manually:** each task form includes a **▶ Test Task** button. Clicking it triggers an immediate one-off execution of the task without altering the cron schedule. The result is delivered to Telegram exactly as a scheduled run would. This is useful for verifying instructions before enabling a task or debugging an existing one — no need to modify the cron expression to `* * * * *` just for a quick check.
+
 ---
 
 ## Usage Examples
@@ -308,6 +368,19 @@ Every Monday morning DRADIS delivers a summary of the previous week's emails.
 | Instructions | `Search for emails received in the last 7 days. Summarise the most important ones by sender and topic, and send the report to Telegram.` |
 
 *Requires: Gmail sub-agent enabled.*
+
+---
+
+### Email-to-calendar sync *(scheduled task)*
+
+Every 12 hours DRADIS scans recent emails for deadlines or appointments and creates the corresponding Google Calendar events.
+
+| Field | Value |
+|-------|-------|
+| Cron | `0 */12 * * *` |
+| Instructions | `Read all emails received in the last 12 hours, including those with no subject. Ignore any automated notifications sent by Google Calendar itself. For each email that mentions a deadline, meeting, appointment, or event with a specific date and time, create the corresponding event in Google Calendar. Do not send any summary to Telegram — just create the events silently.` |
+
+*Requires: Gmail sub-agent and Google Calendar sub-agent both enabled.*
 
 ---
 
