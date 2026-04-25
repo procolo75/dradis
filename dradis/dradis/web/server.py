@@ -55,13 +55,17 @@ GEMINI_MODELS = [
 ]
 
 SETTINGS_KEYS = [
-    "provider", "agent_instructions", "model",
+    "provider", "agent_instructions", "model", "fallback_provider", "fallback_model",
     "show_metrics", "history_enabled", "history_depth", "startup_message", "timezone",
     "ws_enabled", "ws_provider", "ws_model", "ws_instructions", "ws_show_metrics",
+    "ws_fallback_provider", "ws_fallback_model",
     "weather_enabled", "weather_provider", "weather_model", "weather_instructions", "weather_show_metrics",
+    "weather_fallback_provider", "weather_fallback_model",
     "voice_enabled", "voice_provider", "voice_model", "voice_language", "voice_send_transcription", "voice_metrics",
     "gcal_enabled", "gcal_provider", "gcal_model", "gcal_instructions", "gcal_show_metrics",
+    "gcal_fallback_provider", "gcal_fallback_model",
     "gmail_enabled", "gmail_provider", "gmail_model", "gmail_instructions", "gmail_show_metrics",
+    "gmail_fallback_provider", "gmail_fallback_model",
 ]
 
 # Maps old key names to current names for transparent migration.
@@ -179,6 +183,16 @@ SETTINGS_DEFAULTS = {
     "gmail_model":              "nvidia/nemotron-3-nano-30b-a3b:free",
     "gmail_instructions":       "",
     "gmail_show_metrics":       False,
+    "fallback_provider":             "",
+    "fallback_model":                "",
+    "ws_fallback_provider":          "",
+    "ws_fallback_model":             "",
+    "weather_fallback_provider":     "",
+    "weather_fallback_model":        "",
+    "gcal_fallback_provider":        "",
+    "gcal_fallback_model":           "",
+    "gmail_fallback_provider":       "",
+    "gmail_fallback_model":          "",
 }
 
 def load_settings() -> dict:
@@ -245,6 +259,16 @@ class SettingsPayload(BaseModel):
     gmail_model:              str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     gmail_instructions:       str  = ""
     gmail_show_metrics:       bool = False
+    fallback_provider:             str = ""
+    fallback_model:                str = ""
+    ws_fallback_provider:          str = ""
+    ws_fallback_model:             str = ""
+    weather_fallback_provider:     str = ""
+    weather_fallback_model:        str = ""
+    gcal_fallback_provider:        str = ""
+    gcal_fallback_model:           str = ""
+    gmail_fallback_provider:       str = ""
+    gmail_fallback_model:          str = ""
 
 
 @app.get("/", response_class=HTMLResponse)

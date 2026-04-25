@@ -14,6 +14,26 @@ DRADIS displays a radar-sweep icon in the Home Assistant add-on dashboard (`icon
 
 DRADIS uses an **agno Team** design (`coordinate` mode): a DRADIS leader agent orchestrates a team of specialist member agents. When the user sends a message the leader decides which members to invoke, runs them **in parallel**, and synthesises their responses into a single reply. If no sub-agents are enabled, DRADIS falls back to a single-agent path with no overhead.
 
+### Fallback model (v2.5.0)
+
+Each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail) supports an independent fallback provider and model. When an API call fails, DRADIS:
+
+1. Sends a Telegram warning: *"⚠️ Model error — retrying with fallback model…"*
+2. Rebuilds the executor (and any sub-agents) using the fallback settings
+3. Retries the request
+4. If the fallback also fails, sends a final ❌ Telegram notification
+
+Fallback settings are configured from the Web UI. Leaving the fallback model blank disables the feature for that agent.
+
+### Telegram API error notifications (v2.5.0)
+
+All API call failures now send a Telegram notification:
+
+- **Sub-agent prefetch errors** (previously silent): if `fetch_weather`, `fetch_web_search`, `fetch_gcal_events`, or `fetch_gmail_inbox` raises an exception during pre-fetch, a `⚠️ Sub-agent <name> prefetch failed` message is sent to the user via the shared `_send_error_telegram()` helper.
+- **Primary model failure**: if `executor.arun()` raises, a warning is sent before the fallback retry (or the error is surfaced directly if no fallback is configured).
+- **Fallback model failure**: a separate ❌ notification is sent if the fallback also fails.
+- **Scheduled task failures**: the same logic applies during cron-scheduled task execution.
+
 ### Tool call limit (v2.4.0)
 
 Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use loops: **4** for Gmail and Google Calendar (which may need multiple sequential tool calls for complex tasks such as search-then-send or fetch-then-delete), **2** for Weather and Web Search (single-tool agents). The limit is enforced by agno's `Agent.tool_call_limit` parameter and caps the worst-case LLM calls per sub-agent regardless of model behaviour.
@@ -153,6 +173,8 @@ Lets you edit all non-sensitive DRADIS settings at runtime without restarting th
 |-------|---------|-------------|
 | Provider | `openrouter` | LLM provider: OpenRouter, OpenAI, GitHub Models, Gemini, or Groq. Select the provider whose API key is configured in the Configuration tab. |
 | Model | *(see below)* | Model for the selected provider. Click 🔄 to fetch the available list, then ⚡ to speed-test all models in parallel (measures tok/s) and keep the top 5 sorted fastest first. Changing the provider clears the model list. |
+| Fallback Provider | *(blank)* | Provider to use when the primary model call fails. Leave blank to use the same provider as the primary. |
+| Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. Click 🔄 to load models for the fallback provider, ⚡ to speed-test. |
 | Agent instructions | `You are DRADIS, a versatile AI assistant.` | System prompt — defines the agent's role, behaviour, and any persistent facts about the user (name, preferences, language, etc.). |
 | Startup message | `✅ DRADIS online and ready.` | Telegram message sent when the add-on starts. |
 | Conversation history | `true` | Prepend the last N exchanges as context to each request. |
@@ -182,6 +204,8 @@ When enabled, DRADIS automatically decides when to call `search_web` — no prom
 | Test connection | — | Sends a test query to Tavily and reports the result inline. |
 | LLM Provider | `openrouter` | Provider for the synthesis LLM (independent from DRADIS). |
 | Model | — | Model used to synthesise search results. Click 🔄 to load, ⚡ to speed-test. |
+| Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
+| Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
 | Show metrics | `false` | Send a separate 🔍 metrics message after each web search (tokens, latency, model). |
 
@@ -197,6 +221,8 @@ When enabled, DRADIS automatically calls `get_weather` when the user asks about 
 | Test connection | — | Pings Open-Meteo and reports the current temperature in Rome as a sanity check. |
 | LLM Provider | `openrouter` | Provider for the synthesis LLM (independent from DRADIS). |
 | Model | — | Model used to synthesise weather data. Click 🔄 to load, ⚡ to speed-test. |
+| Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
+| Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
 | Show metrics | `false` | Send a separate 🌤 metrics message after each weather lookup (tokens, latency, model). |
 
@@ -233,6 +259,8 @@ A calendar sub-agent formats the raw API response using the configured LLM model
 | Authentication status | — | Shows whether the OAuth2 token is present. If not authenticated, send `/gcalauth` to the bot and follow the steps. |
 | LLM Provider | `openrouter` | Provider for the calendar formatting sub-agent (independent from DRADIS). |
 | Model | — | Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test. |
+| Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
+| Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the calendar sub-agent's system prompt. |
 | Show metrics | `false` | Send a separate 📅 metrics message after each calendar operation (tokens, latency, model). |
 
@@ -257,6 +285,8 @@ A synthesis sub-agent formats the raw email data using the configured LLM model 
 | Authentication status | — | Shows whether the Gmail OAuth2 token is present. If not authenticated, send `/gmailauth` to the bot and follow the steps. |
 | LLM Provider | `openrouter` | Provider for the email formatting sub-agent (independent from DRADIS). |
 | Model | — | Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test. |
+| Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
+| Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the Gmail sub-agent's system prompt. |
 | Show metrics | `false` | Send a separate 📧 metrics message after each Gmail operation (tokens, latency, model). |
 

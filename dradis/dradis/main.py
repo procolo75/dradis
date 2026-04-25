@@ -92,6 +92,40 @@ _groq_client: GroqClient | None = (
 _scheduler: AsyncIOScheduler = AsyncIOScheduler()
 _telegram_bot = None
 
+
+async def _send_error_telegram(msg: str):
+    global _telegram_bot
+    if _telegram_bot:
+        try:
+            await _telegram_bot.send_message(
+                chat_id=ALLOWED_CHAT_ID,
+                text=msg,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as ex:
+            print(f"[DRADIS] Could not send error notification: {ex}")
+
+
+_FALLBACK_MAP = {
+    "model":         ("fallback_model",         "provider",         "fallback_provider"),
+    "ws_model":      ("ws_fallback_model",       "ws_provider",      "ws_fallback_provider"),
+    "weather_model": ("weather_fallback_model",  "weather_provider", "weather_fallback_provider"),
+    "gcal_model":    ("gcal_fallback_model",     "gcal_provider",    "gcal_fallback_provider"),
+    "gmail_model":   ("gmail_fallback_model",    "gmail_provider",   "gmail_fallback_provider"),
+}
+
+
+def _apply_fallback_settings(settings: dict) -> dict:
+    s = dict(settings)
+    for pm_key, (fb_m_key, pv_key, fb_pv_key) in _FALLBACK_MAP.items():
+        fb_model = (s.get(fb_m_key) or "").strip()
+        fb_prov  = (s.get(fb_pv_key) or "").strip()
+        if fb_model:
+            s[pm_key] = fb_model
+            if fb_prov:
+                s[pv_key] = fb_prov
+    return s
+
 # ── Markdown → HTML ───────────────────────────────────────────────────────────
 
 _FUNCTION_TAG_RE = re.compile(r'<function=[^>]+>.*?</function>', re.DOTALL)
@@ -241,7 +275,16 @@ async def _prefetch_context(user_message: str, settings: dict) -> dict[str, str]
         return {}
 
     results = await asyncio.gather(*coros.values(), return_exceptions=True)
-    return {k: v for k, v in zip(coros.keys(), results) if isinstance(v, str)}
+    output  = {}
+    for k, v in zip(coros.keys(), results):
+        if isinstance(v, str):
+            output[k] = v
+        elif isinstance(v, Exception):
+            print(f"[DRADIS] Prefetch error for '{k}': {v}")
+            asyncio.create_task(_send_error_telegram(
+                f"⚠️ Sub-agent <b>{html.escape(k)}</b> prefetch failed: {html.escape(str(v))}"
+            ))
+    return output
 
 
 def _build_members(settings: dict, prefetched: dict | None = None) -> list:
@@ -424,12 +467,30 @@ async def run_scheduled_task(task: dict):
     try:
         response = await executor.arun(instructions)
     except Exception as e:
-        await _telegram_bot.send_message(
-            chat_id=ALLOWED_CHAT_ID,
-            text=f"❌ Scheduled task <b>{html.escape(task_name)}</b> failed: {html.escape(str(e))}",
-            parse_mode=ParseMode.HTML,
-        )
-        return
+        fb_model = (settings.get("fallback_model") or "").strip()
+        if fb_model:
+            await _send_error_telegram(
+                f"⚠️ Task <b>{html.escape(task_name)}</b> model error (<code>{html.escape(model)}</code>): {html.escape(str(e))}\n"
+                "🔄 Retrying with fallback model…"
+            )
+            fb_settings = _apply_fallback_settings(settings)
+            fb_model_id = fb_settings.get("model", model)
+            fb_provider = fb_settings.get("provider", provider)
+            fb_members  = _build_members(fb_settings, prefetched)
+            fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members)
+            print(f"[DRADIS] Task fallback: model={fb_model_id} provider={fb_provider}")
+            try:
+                response = await fb_executor.arun(instructions)
+            except Exception as e2:
+                await _send_error_telegram(
+                    f"❌ Task <b>{html.escape(task_name)}</b> fallback also failed (<code>{html.escape(fb_model_id)}</code>): {html.escape(str(e2))}"
+                )
+                return
+        else:
+            await _send_error_telegram(
+                f"❌ Scheduled task <b>{html.escape(task_name)}</b> failed: {html.escape(str(e))}"
+            )
+            return
     duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)
     _track_tokens(response, member_responses)
@@ -497,11 +558,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = await executor.arun(prompt)
     except Exception as e:
         print(f"[DRADIS] arun error: {e}")
-        await update.message.reply_text(
-            f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(e))}",
-            parse_mode=ParseMode.HTML,
-        )
-        return
+        fb_model = (settings.get("fallback_model") or "").strip()
+        if fb_model:
+            await _send_error_telegram(
+                f"⚠️ Model error (<code>{html.escape(model)}</code>): {html.escape(str(e))}\n"
+                "🔄 Retrying with fallback model…"
+            )
+            fb_settings = _apply_fallback_settings(settings)
+            fb_model_id = fb_settings.get("model", model)
+            fb_provider = fb_settings.get("provider", provider)
+            fb_members  = _build_members(fb_settings, prefetched)
+            fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members)
+            print(f"[DRADIS] Fallback: model={fb_model_id} provider={fb_provider}")
+            try:
+                response = await fb_executor.arun(prompt)
+            except Exception as e2:
+                await _send_error_telegram(
+                    f"❌ Fallback also failed (<code>{html.escape(fb_model_id)}</code>): {html.escape(str(e2))}"
+                )
+                await update.message.reply_text(
+                    f"❌ Both primary and fallback models failed.\n"
+                    f"Fallback error (<code>{html.escape(fb_model_id)}</code>): {html.escape(str(e2))}",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+        else:
+            await update.message.reply_text(
+                f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(e))}",
+                parse_mode=ParseMode.HTML,
+            )
+            return
     duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)
     _track_tokens(response, member_responses)

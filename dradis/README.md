@@ -12,6 +12,8 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
+- **Fallback model** — each agent has a configurable fallback provider and model; on API error DRADIS automatically retries with the fallback and notifies via Telegram
+- **Telegram error notifications** — all API failures (including silent sub-agent prefetch errors) are reported via Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
 - **Conversation history** with configurable depth
 - **Token counter** — `/tokens` shows cumulative input/output usage per agent; `/tokens_reset` resets

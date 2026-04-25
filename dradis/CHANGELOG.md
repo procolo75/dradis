@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [2.5.0] - 2026-04-25
+- **Telegram API error notifications**: all API call failures now send a Telegram message to the user. Errors during sub-agent prefetch (previously silent) are now reported via `_send_error_telegram`. Errors in `handle_message` and `run_scheduled_task` use a shared helper for consistency.
+- **Fallback model**: each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail) now supports a configurable fallback provider and model. When an API call fails and a fallback model is set, DRADIS automatically rebuilds the executor with fallback settings and retries. If the fallback also fails, the user receives a Telegram notification. New settings keys: `fallback_provider`, `fallback_model`, `ws_fallback_provider`, `ws_fallback_model`, `weather_fallback_provider`, `weather_fallback_model`, `gcal_fallback_provider`, `gcal_fallback_model`, `gmail_fallback_provider`, `gmail_fallback_model`.
+- **Web UI**: "Fallback Provider" and "Fallback Model" fields added to each agent panel (DRADIS Settings, Web Search, Weather, Google Calendar, Gmail). Leave blank to disable fallback.
+
 ## [2.4.0] - 2026-04-25
 - **Fix — tzlocal warning at boot**: added `ENV TZ=UTC` to Dockerfile. Alpine has no `/etc/localtime` or `/etc/timezone`, so `tzlocal` (used internally by APScheduler) could not detect the system timezone and emitted a `UserWarning` on every start. Setting the `TZ` environment variable is read first by `tzlocal` and silences the warning. UTC remains the correct default — the user-facing timezone for scheduled tasks is configurable from the Web UI.
 - **Fix — tool call loop (Gmail 10+ LLM calls)**: added `tool_call_limit` parameter to `create_agent()` in `agent_core.py`. Without a limit, Agno's tool-use loop could cycle indefinitely when a sub-agent had multiple tools available. Limits applied: `4` for Gmail and Google Calendar (complex multi-step tasks), `2` for Weather and Web Search (single-tool agents). This caps the worst-case LLM calls per sub-agent and prevents runaway token consumption.

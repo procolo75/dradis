@@ -354,6 +354,23 @@
         </div>
 
         <div class="form-group">
+          <label for="s-fallback-provider">Fallback Provider <span style="font-size:0.8em; color:var(--text-muted)">(used on API error)</span></label>
+          <select id="s-fallback-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="s-fallback-model">Fallback Model</label>
+          <div class="model-row">
+            <select id="s-fallback-model">
+              <option value="">— none / disabled —</option>
+            </select>
+            <button class="btn-icon" id="btn-s-fallback-load" title="Load models for fallback provider">🔄</button>
+            <button class="btn-icon" id="btn-s-fallback-speedtest" title="Speed test fallback models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="s-fallback-model-hint"></div>
+        </div>
+
+        <div class="form-group">
           <label for="s-instructions">Agent instructions</label>
           <textarea id="s-instructions" placeholder="Describe the agent's role and behaviour..."></textarea>
         </div>
@@ -520,6 +537,23 @@
         </div>
 
         <div class="form-group">
+          <label for="ws-fallback-provider">Fallback Provider <span style="font-size:0.8em; color:var(--text-muted)">(used on API error)</span></label>
+          <select id="ws-fallback-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="ws-fallback-model">Fallback Model</label>
+          <div class="model-row">
+            <select id="ws-fallback-model">
+              <option value="">— none / disabled —</option>
+            </select>
+            <button class="btn-icon" id="btn-ws-fallback-load" title="Load models for fallback provider">🔄</button>
+            <button class="btn-icon" id="btn-ws-fallback-speedtest" title="Speed test fallback models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="ws-fallback-model-hint"></div>
+        </div>
+
+        <div class="form-group">
           <label for="ws-instructions">Additional instructions</label>
           <textarea id="ws-instructions" placeholder="Optional: extra instructions for the web search sub-agent..."></textarea>
         </div>
@@ -581,6 +615,23 @@
             <button class="btn-icon" id="btn-weather-speedtest" title="Speed test loaded models" disabled>⚡</button>
           </div>
           <div class="model-hint" id="weather-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="weather-fallback-provider">Fallback Provider <span style="font-size:0.8em; color:var(--text-muted)">(used on API error)</span></label>
+          <select id="weather-fallback-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="weather-fallback-model">Fallback Model</label>
+          <div class="model-row">
+            <select id="weather-fallback-model">
+              <option value="">— none / disabled —</option>
+            </select>
+            <button class="btn-icon" id="btn-weather-fallback-load" title="Load models for fallback provider">🔄</button>
+            <button class="btn-icon" id="btn-weather-fallback-speedtest" title="Speed test fallback models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="weather-fallback-model-hint"></div>
         </div>
 
         <div class="form-group">
@@ -760,6 +811,23 @@
         </div>
 
         <div class="form-group">
+          <label for="gcal-fallback-provider">Fallback Provider <span style="font-size:0.8em; color:var(--text-muted)">(used on API error)</span></label>
+          <select id="gcal-fallback-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="gcal-fallback-model">Fallback Model</label>
+          <div class="model-row">
+            <select id="gcal-fallback-model">
+              <option value="">— none / disabled —</option>
+            </select>
+            <button class="btn-icon" id="btn-gcal-fallback-load" title="Load models for fallback provider">🔄</button>
+            <button class="btn-icon" id="btn-gcal-fallback-speedtest" title="Speed test fallback models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="gcal-fallback-model-hint"></div>
+        </div>
+
+        <div class="form-group">
           <label for="gcal-instructions">Additional instructions</label>
           <textarea id="gcal-instructions" placeholder="Optional: extra instructions for the calendar sub-agent…"></textarea>
         </div>
@@ -850,6 +918,23 @@
             <button class="btn-icon" id="btn-gmail-speedtest" title="Speed test loaded models" disabled>⚡</button>
           </div>
           <div class="model-hint" id="gmail-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="gmail-fallback-provider">Fallback Provider <span style="font-size:0.8em; color:var(--text-muted)">(used on API error)</span></label>
+          <select id="gmail-fallback-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="gmail-fallback-model">Fallback Model</label>
+          <div class="model-row">
+            <select id="gmail-fallback-model">
+              <option value="">— none / disabled —</option>
+            </select>
+            <button class="btn-icon" id="btn-gmail-fallback-load" title="Load models for fallback provider">🔄</button>
+            <button class="btn-icon" id="btn-gmail-fallback-speedtest" title="Speed test fallback models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="gmail-fallback-model-hint"></div>
         </div>
 
         <div class="form-group">
@@ -996,6 +1081,17 @@ async function loadSettings() {
   }
   if (savedModel) sel.value = savedModel;
 
+  const fbProvOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("s-fallback-provider").innerHTML = fbProvOptions;
+  const savedFbModel = s.fallback_model || "";
+  const fbSel = document.getElementById("s-fallback-model");
+  if (savedFbModel && ![...fbSel.options].some(o => o.value === savedFbModel)) {
+    fbSel.innerHTML = `<option value="${savedFbModel}">${savedFbModel}</option>` + fbSel.innerHTML;
+  }
+  if (savedFbModel) fbSel.value = savedFbModel;
+
   document.getElementById("s-instructions").value    = s.agent_instructions || "";
   document.getElementById("s-startup").value         = s.startup_message    || "";
   document.getElementById("s-history").checked       = s.history_enabled    !== false;
@@ -1039,6 +1135,138 @@ document.getElementById("ws-provider").addEventListener("change", () =>
 );
 document.getElementById("weather-provider").addEventListener("change", () =>
   _onProviderChange("weather-provider", "weather-model", "weather-model-hint", "btn-weather-load-models", "btn-weather-speedtest")
+);
+
+// ── Fallback model helpers (shared by all agents) ─────────────────────────────
+
+const sFbModels       = [];
+const wsFbModels      = [];
+const weatherFbModels = [];
+const gcalFbModels    = [];
+const gmailFbModels   = [];
+
+async function _loadFallbackModels(provSelId, modelSelId, hintId, loadBtnId, speedBtnId, modelsList) {
+  const btn      = document.getElementById(loadBtnId);
+  const hint     = document.getElementById(hintId);
+  const current  = document.getElementById(modelSelId).value;
+  const provider = document.getElementById(provSelId).value;
+  const label    = _providerLabel(provider);
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Loading models from ${label}…`;
+
+  try {
+    const models = await api("GET", `/api/models?provider=${provider}`);
+    modelsList.splice(0, modelsList.length, ...models);
+    const sel  = document.getElementById(modelSelId);
+    let list   = [...models];
+    if (current && !list.find(m => m.id === current)) list.unshift({ id: current, name: current });
+    sel.innerHTML = `<option value="">— none / disabled —</option>` + list.map(m =>
+      `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}</option>`
+    ).join("");
+    if (current) sel.value = current;
+    document.getElementById(speedBtnId).disabled = models.length === 0;
+    hint.textContent = `${models.length} models from ${label} — click ⚡ to speed test`;
+  } catch {
+    hint.textContent = "Error loading models";
+    showToast("Error loading models", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "🔄";
+  }
+}
+
+async function _runFallbackSpeedTest(provSelId, modelSelId, hintId, loadBtnId, speedBtnId, modelsList) {
+  if (!modelsList.length) return;
+  const btn      = document.getElementById(speedBtnId);
+  const hint     = document.getElementById(hintId);
+  const current  = document.getElementById(modelSelId).value;
+  const provider = document.getElementById(provSelId).value;
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Testing ${modelsList.length} models… (may take 30–60 s)`;
+
+  try {
+    const results = await api("POST", `/api/speedtest?provider=${provider}`, { models: modelsList.map(m => m.id) });
+    const resMap  = {};
+    results.forEach(r => { resMap[r.id] = r; });
+    modelsList.splice(0, modelsList.length,
+      ...modelsList
+        .filter(m => results.map(r => r.id).includes(m.id))
+        .map(m => ({ ...m, tok_s: resMap[m.id]?.tok_s ?? null, ok: resMap[m.id]?.ok ?? false }))
+        .sort((a, b) => (b.tok_s ?? -1) - (a.tok_s ?? -1))
+    );
+    const sel = document.getElementById(modelSelId);
+    sel.innerHTML = `<option value="">— none / disabled —</option>` + modelsList.map(m => {
+      const tag = m.tok_s != null ? ` — ⚡ ${m.tok_s} tok/s` : m.ok === false ? " — ❌" : "";
+      return `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}${tag}</option>`;
+    }).join("");
+    if (current) sel.value = current;
+    hint.textContent = `Speed test done — sorted fastest first`;
+  } catch {
+    hint.textContent = "Speed test failed";
+    showToast("Speed test failed", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "⚡";
+  }
+}
+
+// DRADIS fallback
+document.getElementById("s-fallback-provider").addEventListener("change", () =>
+  _onProviderChange("s-fallback-provider", "s-fallback-model", "s-fallback-model-hint", "btn-s-fallback-load", "btn-s-fallback-speedtest")
+);
+document.getElementById("btn-s-fallback-load").addEventListener("click", () =>
+  _loadFallbackModels("s-fallback-provider", "s-fallback-model", "s-fallback-model-hint", "btn-s-fallback-load", "btn-s-fallback-speedtest", sFbModels)
+);
+document.getElementById("btn-s-fallback-speedtest").addEventListener("click", () =>
+  _runFallbackSpeedTest("s-fallback-provider", "s-fallback-model", "s-fallback-model-hint", "btn-s-fallback-load", "btn-s-fallback-speedtest", sFbModels)
+);
+
+// Web Search fallback
+document.getElementById("ws-fallback-provider").addEventListener("change", () =>
+  _onProviderChange("ws-fallback-provider", "ws-fallback-model", "ws-fallback-model-hint", "btn-ws-fallback-load", "btn-ws-fallback-speedtest")
+);
+document.getElementById("btn-ws-fallback-load").addEventListener("click", () =>
+  _loadFallbackModels("ws-fallback-provider", "ws-fallback-model", "ws-fallback-model-hint", "btn-ws-fallback-load", "btn-ws-fallback-speedtest", wsFbModels)
+);
+document.getElementById("btn-ws-fallback-speedtest").addEventListener("click", () =>
+  _runFallbackSpeedTest("ws-fallback-provider", "ws-fallback-model", "ws-fallback-model-hint", "btn-ws-fallback-load", "btn-ws-fallback-speedtest", wsFbModels)
+);
+
+// Weather fallback
+document.getElementById("weather-fallback-provider").addEventListener("change", () =>
+  _onProviderChange("weather-fallback-provider", "weather-fallback-model", "weather-fallback-model-hint", "btn-weather-fallback-load", "btn-weather-fallback-speedtest")
+);
+document.getElementById("btn-weather-fallback-load").addEventListener("click", () =>
+  _loadFallbackModels("weather-fallback-provider", "weather-fallback-model", "weather-fallback-model-hint", "btn-weather-fallback-load", "btn-weather-fallback-speedtest", weatherFbModels)
+);
+document.getElementById("btn-weather-fallback-speedtest").addEventListener("click", () =>
+  _runFallbackSpeedTest("weather-fallback-provider", "weather-fallback-model", "weather-fallback-model-hint", "btn-weather-fallback-load", "btn-weather-fallback-speedtest", weatherFbModels)
+);
+
+// GCal fallback
+document.getElementById("gcal-fallback-provider").addEventListener("change", () =>
+  _onProviderChange("gcal-fallback-provider", "gcal-fallback-model", "gcal-fallback-model-hint", "btn-gcal-fallback-load", "btn-gcal-fallback-speedtest")
+);
+document.getElementById("btn-gcal-fallback-load").addEventListener("click", () =>
+  _loadFallbackModels("gcal-fallback-provider", "gcal-fallback-model", "gcal-fallback-model-hint", "btn-gcal-fallback-load", "btn-gcal-fallback-speedtest", gcalFbModels)
+);
+document.getElementById("btn-gcal-fallback-speedtest").addEventListener("click", () =>
+  _runFallbackSpeedTest("gcal-fallback-provider", "gcal-fallback-model", "gcal-fallback-model-hint", "btn-gcal-fallback-load", "btn-gcal-fallback-speedtest", gcalFbModels)
+);
+
+// Gmail fallback
+document.getElementById("gmail-fallback-provider").addEventListener("change", () =>
+  _onProviderChange("gmail-fallback-provider", "gmail-fallback-model", "gmail-fallback-model-hint", "btn-gmail-fallback-load", "btn-gmail-fallback-speedtest")
+);
+document.getElementById("btn-gmail-fallback-load").addEventListener("click", () =>
+  _loadFallbackModels("gmail-fallback-provider", "gmail-fallback-model", "gmail-fallback-model-hint", "btn-gmail-fallback-load", "btn-gmail-fallback-speedtest", gmailFbModels)
+);
+document.getElementById("btn-gmail-fallback-speedtest").addEventListener("click", () =>
+  _runFallbackSpeedTest("gmail-fallback-provider", "gmail-fallback-model", "gmail-fallback-model-hint", "btn-gmail-fallback-load", "btn-gmail-fallback-speedtest", gmailFbModels)
 );
 
 function _rebuildModelSelect(models, currentId) {
@@ -1161,6 +1389,8 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     provider:           document.getElementById("s-provider").value,
     agent_instructions: document.getElementById("s-instructions").value.trim(),
     model:              document.getElementById("s-model").value.trim(),
+    fallback_provider:  document.getElementById("s-fallback-provider").value,
+    fallback_model:     document.getElementById("s-fallback-model").value.trim(),
     startup_message:    document.getElementById("s-startup").value.trim(),
     history_enabled:    document.getElementById("s-history").checked,
     show_metrics:       document.getElementById("s-metrics").checked,
@@ -1288,6 +1518,17 @@ async function loadWsSettings() {
   document.getElementById("ws-instructions").value = s.ws_instructions  || "";
   document.getElementById("ws-metrics").checked   = !!s.ws_show_metrics;
 
+  const wsFbProvOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.ws_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("ws-fallback-provider").innerHTML = wsFbProvOptions;
+  const savedWsFbModel = s.ws_fallback_model || "";
+  const wsFbSel = document.getElementById("ws-fallback-model");
+  if (savedWsFbModel && ![...wsFbSel.options].some(o => o.value === savedWsFbModel)) {
+    wsFbSel.innerHTML = `<option value="${savedWsFbModel}">${savedWsFbModel}</option>` + wsFbSel.innerHTML;
+  }
+  if (savedWsFbModel) wsFbSel.value = savedWsFbModel;
+
   const wsDot = document.getElementById("ws-dot");
   if (wsDot) wsDot.classList.toggle("on", !!s.ws_enabled);
 }
@@ -1391,11 +1632,13 @@ document.getElementById("btn-save-ws").addEventListener("click", async () => {
   try { current = await api("GET", "/api/settings"); } catch {}
   const payload = {
     ...current,
-    ws_enabled:      document.getElementById("ws-enabled").checked,
-    ws_provider:     document.getElementById("ws-provider").value,
-    ws_model:        document.getElementById("ws-model").value.trim(),
-    ws_instructions: document.getElementById("ws-instructions").value.trim(),
-    ws_show_metrics: document.getElementById("ws-metrics").checked,
+    ws_enabled:           document.getElementById("ws-enabled").checked,
+    ws_provider:          document.getElementById("ws-provider").value,
+    ws_model:             document.getElementById("ws-model").value.trim(),
+    ws_fallback_provider: document.getElementById("ws-fallback-provider").value,
+    ws_fallback_model:    document.getElementById("ws-fallback-model").value.trim(),
+    ws_instructions:      document.getElementById("ws-instructions").value.trim(),
+    ws_show_metrics:      document.getElementById("ws-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -1429,6 +1672,17 @@ async function loadWeatherSettings() {
   document.getElementById("weather-enabled").checked      = !!s.weather_enabled;
   document.getElementById("weather-instructions").value   = s.weather_instructions || "";
   document.getElementById("weather-metrics").checked      = !!s.weather_show_metrics;
+
+  const weatherFbProvOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.weather_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("weather-fallback-provider").innerHTML = weatherFbProvOptions;
+  const savedWeatherFbModel = s.weather_fallback_model || "";
+  const weatherFbSel = document.getElementById("weather-fallback-model");
+  if (savedWeatherFbModel && ![...weatherFbSel.options].some(o => o.value === savedWeatherFbModel)) {
+    weatherFbSel.innerHTML = `<option value="${savedWeatherFbModel}">${savedWeatherFbModel}</option>` + weatherFbSel.innerHTML;
+  }
+  if (savedWeatherFbModel) weatherFbSel.value = savedWeatherFbModel;
 
   const weatherDot = document.getElementById("weather-dot");
   if (weatherDot) weatherDot.classList.toggle("on", !!s.weather_enabled);
@@ -1533,11 +1787,13 @@ document.getElementById("btn-save-weather").addEventListener("click", async () =
   try { current = await api("GET", "/api/settings"); } catch {}
   const payload = {
     ...current,
-    weather_enabled:      document.getElementById("weather-enabled").checked,
-    weather_provider:     document.getElementById("weather-provider").value,
-    weather_model:        document.getElementById("weather-model").value.trim(),
-    weather_instructions: document.getElementById("weather-instructions").value.trim(),
-    weather_show_metrics: document.getElementById("weather-metrics").checked,
+    weather_enabled:           document.getElementById("weather-enabled").checked,
+    weather_provider:          document.getElementById("weather-provider").value,
+    weather_model:             document.getElementById("weather-model").value.trim(),
+    weather_fallback_provider: document.getElementById("weather-fallback-provider").value,
+    weather_fallback_model:    document.getElementById("weather-fallback-model").value.trim(),
+    weather_instructions:      document.getElementById("weather-instructions").value.trim(),
+    weather_show_metrics:      document.getElementById("weather-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -1721,6 +1977,17 @@ async function loadGcalSettings() {
   document.getElementById("gcal-instructions").value = s.gcal_instructions || "";
   document.getElementById("gcal-metrics").checked    = !!s.gcal_show_metrics;
 
+  const gcalFbProvOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.gcal_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("gcal-fallback-provider").innerHTML = gcalFbProvOptions;
+  const savedGcalFbModel = s.gcal_fallback_model || "";
+  const gcalFbSel = document.getElementById("gcal-fallback-model");
+  if (savedGcalFbModel && ![...gcalFbSel.options].some(o => o.value === savedGcalFbModel)) {
+    gcalFbSel.innerHTML = `<option value="${savedGcalFbModel}">${savedGcalFbModel}</option>` + gcalFbSel.innerHTML;
+  }
+  if (savedGcalFbModel) gcalFbSel.value = savedGcalFbModel;
+
   const gcalDot = document.getElementById("gcal-dot");
   if (gcalDot) gcalDot.classList.toggle("on", !!s.gcal_enabled && status.authenticated);
 }
@@ -1809,8 +2076,10 @@ document.getElementById("btn-save-gcal").addEventListener("click", async () => {
     gcal_enabled:      document.getElementById("gcal-enabled").checked,
     gcal_provider:     document.getElementById("gcal-provider").value,
     gcal_model:        document.getElementById("gcal-model").value.trim(),
-    gcal_instructions: document.getElementById("gcal-instructions").value.trim(),
-    gcal_show_metrics: document.getElementById("gcal-metrics").checked,
+    gcal_fallback_provider: document.getElementById("gcal-fallback-provider").value,
+    gcal_fallback_model:    document.getElementById("gcal-fallback-model").value.trim(),
+    gcal_instructions:      document.getElementById("gcal-instructions").value.trim(),
+    gcal_show_metrics:      document.getElementById("gcal-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -1865,6 +2134,17 @@ async function loadGmailSettings() {
 
   document.getElementById("gmail-instructions").value = s.gmail_instructions || "";
   document.getElementById("gmail-metrics").checked    = !!s.gmail_show_metrics;
+
+  const gmailFbProvOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.gmail_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("gmail-fallback-provider").innerHTML = gmailFbProvOptions;
+  const savedGmailFbModel = s.gmail_fallback_model || "";
+  const gmailFbSel = document.getElementById("gmail-fallback-model");
+  if (savedGmailFbModel && ![...gmailFbSel.options].some(o => o.value === savedGmailFbModel)) {
+    gmailFbSel.innerHTML = `<option value="${savedGmailFbModel}">${savedGmailFbModel}</option>` + gmailFbSel.innerHTML;
+  }
+  if (savedGmailFbModel) gmailFbSel.value = savedGmailFbModel;
 
   const gmailDot = document.getElementById("gmail-dot");
   if (gmailDot) gmailDot.classList.toggle("on", !!s.gmail_enabled && status.authenticated);
@@ -1951,11 +2231,13 @@ document.getElementById("btn-save-gmail").addEventListener("click", async () => 
   try { current = await api("GET", "/api/settings"); } catch {}
   const payload = {
     ...current,
-    gmail_enabled:      document.getElementById("gmail-enabled").checked,
-    gmail_provider:     document.getElementById("gmail-provider").value,
-    gmail_model:        document.getElementById("gmail-model").value.trim(),
-    gmail_instructions: document.getElementById("gmail-instructions").value.trim(),
-    gmail_show_metrics: document.getElementById("gmail-metrics").checked,
+    gmail_enabled:           document.getElementById("gmail-enabled").checked,
+    gmail_provider:          document.getElementById("gmail-provider").value,
+    gmail_model:             document.getElementById("gmail-model").value.trim(),
+    gmail_fallback_provider: document.getElementById("gmail-fallback-provider").value,
+    gmail_fallback_model:    document.getElementById("gmail-fallback-model").value.trim(),
+    gmail_instructions:      document.getElementById("gmail-instructions").value.trim(),
+    gmail_show_metrics:      document.getElementById("gmail-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
