@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [2.5.2] - 2026-04-25
+- **Feature — `/tasks` Telegram command**: send `/tasks` to see a list of all enabled tasks as Telegram inline buttons. Tapping a button launches the task immediately and DRADIS replies with a `▶️ Launching task …` confirmation. The task then runs exactly like a scheduled execution (same AI model, same sub-agents, result delivered to Telegram).
+
+## [2.5.1] - 2026-04-25
+- **Fix — `open_url` hallucination in web_search agent**: some models (e.g. `openai/gpt-oss-20b`) are trained on web-browsing patterns where `search_web` is paired with a companion `open_url` tool. When results contained URLs, the model attempted to call `open_url`, which is not registered in DRADIS, causing an intermittent 400 error. Fixed by adding an explicit constraint in the web_search agent's system prompt (`"You have exactly ONE tool available: search_web. Do NOT call open_url or any other tool — they do not exist."`) and updating the `search_web` docstring to clarify that full content is already returned with no URL fetching needed.
+
 ## [2.5.0] - 2026-04-25
 - **Telegram API error notifications**: all API call failures now send a Telegram message to the user. Errors during sub-agent prefetch (previously silent) are now reported via `_send_error_telegram`. Errors in `handle_message` and `run_scheduled_task` use a shared helper for consistency.
 - **Fallback model**: each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail) now supports a configurable fallback provider and model. When an API call fails and a fallback model is set, DRADIS automatically rebuilds the executor with fallback settings and retries. If the fallback also fails, the user receives a Telegram notification. New settings keys: `fallback_provider`, `fallback_model`, `ws_fallback_provider`, `ws_fallback_model`, `weather_fallback_provider`, `weather_fallback_model`, `gcal_fallback_provider`, `gcal_fallback_model`, `gmail_fallback_provider`, `gmail_fallback_model`.

@@ -56,6 +56,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 |---------|-------------|
 | `/info` | Status and configuration of all agents |
 | `/menu` | List all available commands |
+| `/tasks` | List enabled tasks as inline buttons — tap one to run it immediately |
 | `/tokens` | Show cumulative token usage (input/output/total) per agent |
 | `/tokens_reset` | Reset token counters to zero |
 | `/gcalauth` | Connect Google Calendar (OAuth2) |

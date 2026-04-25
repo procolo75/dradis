@@ -422,6 +422,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 |---------|-------------|
 | `/info` | Show status and configuration of all agents (provider, model, metrics, history, sub-agents) |
 | `/menu` | List all available commands |
+| `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
 | `/tokens` | Show cumulative token usage (input / output / total) broken down by agent: DRADIS, Weather, Web Search, Calendar, Gmail |
 | `/tokens_reset` | Reset all token counters to zero |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |

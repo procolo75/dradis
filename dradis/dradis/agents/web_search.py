@@ -19,8 +19,11 @@ def create_web_search_agent(settings: dict, tavily_api_key: str, prefetched_data
 
     base_prompt = (
         f"It is {_now_str(tz_name)} ({tz_name}). "
-        "You are a web research assistant. Synthesise ONLY the information "
-        "present in the search results into a clear, concise answer. "
+        "You are a web research assistant. "
+        "You have exactly ONE tool available: search_web. "
+        "Do NOT call open_url or any other tool — they do not exist. "
+        "Each search_web call already returns full content; no URL opening is needed. "
+        "Synthesise ONLY the information present in the search results into a clear, concise answer. "
         "If the results do not contain enough information, say so explicitly. "
         "Never invent or assume facts not present in the results. "
         + settings.get("ws_instructions", "")
@@ -40,11 +43,10 @@ def create_web_search_agent(settings: dict, tavily_api_key: str, prefetched_data
     tavily_client = TavilyClient(api_key=tavily_api_key)
 
     async def search_web(query: str) -> str:
-        """Search the web for current information and return raw search results.
-        Call this when the user asks for current news, prices, stock values, or recent events,
-        or uses phrases like 'search for', 'look up', 'find online', 'latest on',
-        or when you need information that may have changed since your training cutoff.
-        Pass a concise, optimised search query."""
+        """Search the web and return complete content from top results.
+        Returns title, full content, and URL for each result — no further URL fetching needed.
+        Call this when the user asks for current news, prices, stock values, weather forecasts,
+        sports fixtures, or recent events. Pass a concise, optimised search query."""
         raw     = tavily_client.search(query=query, max_results=5)
         results = raw.get("results", [])
         if not results:

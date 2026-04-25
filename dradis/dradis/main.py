@@ -9,10 +9,11 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import uvicorn
 from groq import Groq as GroqClient
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     MessageHandler,
     CommandHandler,
     filters,
@@ -850,6 +851,7 @@ async def cmd_gmailauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
 COMMANDS = [
     BotCommand("info",         "Status and configuration of all agents"),
     BotCommand("menu",         "List all available commands"),
+    BotCommand("tasks",        "List and run enabled tasks"),
     BotCommand("tokens",       "Show total token usage"),
     BotCommand("tokens_reset", "Reset token counters"),
     BotCommand("gcalauth",     "Connect Google Calendar (OAuth2)"),
@@ -897,16 +899,50 @@ async def cmd_tokens_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Token counters reset.")
 
 
+async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ALLOWED_CHAT_ID:
+        return
+    tasks = [t for t in load_tasks() if t.get("enabled")]
+    if not tasks:
+        await update.message.reply_text("No enabled tasks. Enable tasks from the Web UI.")
+        return
+    keyboard = [[InlineKeyboardButton(t["name"], callback_data=f"task:{t['id']}")] for t in tasks]
+    await update.message.reply_text(
+        "Select a task to run:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    task_id = query.data.removeprefix("task:")
+    task    = next((t for t in load_tasks() if t["id"] == task_id), None)
+    await query.answer()
+    if not task:
+        await query.message.reply_text("❌ Task not found.")
+        return
+    await query.message.reply_text(
+        f"▶️ Launching task <b>{html.escape(task['name'])}</b>…",
+        parse_mode=ParseMode.HTML,
+    )
+    asyncio.create_task(run_scheduled_task(task))
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def build_telegram_app():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("info",         cmd_info))
     app.add_handler(CommandHandler("menu",         cmd_menu))
+    app.add_handler(CommandHandler("tasks",        cmd_tasks))
     app.add_handler(CommandHandler("tokens",       cmd_tokens))
     app.add_handler(CommandHandler("tokens_reset", cmd_tokens_reset))
     app.add_handler(CommandHandler("gcalauth",     cmd_gcalauth))
     app.add_handler(CommandHandler("gmailauth",    cmd_gmailauth))
+    app.add_handler(CallbackQueryHandler(handle_task_callback, pattern=r"^task:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     return app
@@ -931,7 +967,7 @@ async def main():
     )
     async with telegram_app:
         await telegram_app.start()
-        await telegram_app.updater.start_polling()
+        await telegram_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         await _register_commands(telegram_app.bot)
         _telegram_bot = telegram_app.bot
         _scheduler.start()
