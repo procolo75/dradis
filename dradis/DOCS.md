@@ -1,12 +1,12 @@
 # DRADIS Agentic AI for Home Assistant — Documentation
 
-DRADIS is a Home Assistant add-on that exposes a conversational AI agent controllable via Telegram. All settings are managed from the built-in Web UI and the HA Configuration tab — no code changes required.
+DRADIS is a Home Assistant app that exposes a conversational AI agent controllable via Telegram. All settings are managed from the built-in Web UI and the HA Configuration tab — no code changes required.
 
 ---
 
 ## Icon
 
-DRADIS displays a radar-sweep icon in the Home Assistant add-on dashboard (`icon.png`) and in the Web UI sidebar header, matching the dark/cyan color scheme.
+DRADIS displays a radar-sweep icon in the Home Assistant app dashboard (`icon.png`) and in the Web UI sidebar header, matching the dark/cyan color scheme.
 
 ---
 
@@ -101,11 +101,11 @@ User message
 
 ## Installation
 
-1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**
+1. In Home Assistant go to **Settings → Apps → Install App → ⋮ → Repositories**
 2. Add the repository URL: `https://github.com/procolo75/dradis`
 3. Find **DRADIS** in the store and click **Install**
 4. Fill in the **Configuration** tab with your credentials
-5. Start the add-on
+5. Start the app
 
 ---
 
@@ -147,7 +147,7 @@ Fill in at least one LLM provider key. The active provider is selected from the 
   4. Still in consent screen → **Test users** → add your own Google account email → save
   5. **Credentials → Create credentials → OAuth client ID → Desktop app** → any name → **Create**
   6. Copy the **Client ID** and **Client Secret** from the dialog
-  7. Paste them in the add-on Configuration tab (`google_client_id`, `google_client_secret`) and **restart the add-on**
+  7. Paste them in the app Configuration tab (`google_client_id`, `google_client_secret`) and **restart the app**
 
   **Part 2 — Authorize each service (run once per service):**
   - **Calendar**: send `/gcalauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Google Calendar in the Web UI and save.
@@ -161,13 +161,13 @@ Fill in at least one LLM provider key. The active provider is selected from the 
 
 ## Web UI
 
-After startup, the add-on exposes a web panel accessible directly from the Home Assistant sidebar (via HA Ingress — no external port required).
+After startup, the app exposes a web panel accessible directly from the Home Assistant sidebar (via HA Ingress — no external port required).
 
 The UI uses a **vertical left sidebar** with four sections: **Settings**, **Agents**, **Tasks**, and **Other**.
 
 ### Settings → DRADIS
 
-Lets you edit all non-sensitive DRADIS settings at runtime without restarting the add-on. Changes are saved to `/data/dradis_settings.json` and take effect immediately on the next message.
+Lets you edit all non-sensitive DRADIS settings at runtime without restarting the app. Changes are saved to `/data/dradis_settings.json` and take effect immediately on the next message.
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -176,7 +176,7 @@ Lets you edit all non-sensitive DRADIS settings at runtime without restarting th
 | Fallback Provider | *(blank)* | Provider to use when the primary model call fails. Leave blank to use the same provider as the primary. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. Click 🔄 to load models for the fallback provider, ⚡ to speed-test. |
 | Agent instructions | `You are DRADIS, a versatile AI assistant.` | System prompt — defines the agent's role, behaviour, and any persistent facts about the user (name, preferences, language, etc.). |
-| Startup message | `✅ DRADIS online and ready.` | Telegram message sent when the add-on starts. |
+| Startup message | `✅ DRADIS online and ready.` | Telegram message sent when the app starts. |
 | Conversation history | `true` | Prepend the last N exchanges as context to each request. |
 | Show metrics | `false` | Send token usage and response time after each reply. |
 | Conversation history depth | `2` | Number of past exchanges kept in context (resets on restart). |
@@ -304,7 +304,7 @@ Click `+` in the Tasks sidebar header to create a new task. Each task has:
 | Cron expression | Raw 5-part cron field (minute hour day month weekday). Editing it directly sets the preset to "Custom…" and shows a live human-readable description below the field. |
 | Instructions | What DRADIS should do at this time — passed directly to the main agent, which automatically selects the right tools (Web Search, Weather, Google Calendar, etc.) as needed. |
 
-When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no add-on restart required.
+When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no app restart required.
 
 **Testing a task manually:** each task form includes a **▶ Test Task** button. Clicking it triggers an immediate one-off execution of the task without altering the cron schedule. The result is delivered to Telegram exactly as a scheduled run would. This is useful for verifying instructions before enabling a task or debugging an existing one — no need to modify the cron expression to `* * * * *` just for a quick check.
 
@@ -454,11 +454,11 @@ Every DRADIS response includes an italic footer indicating which agent(s) proces
 
 ## Persistent Data
 
-All persistent data is stored in the Supervisor `/data/` folder, which survives restarts and add-on updates.
+All persistent data is stored in the Supervisor `/data/` folder, which survives restarts and app updates.
 
 | File | Content |
 |------|---------|
-| `/data/options.json` | Add-on configuration managed by HA (API keys, etc.) |
+| `/data/options.json` | App configuration managed by HA (API keys, etc.) |
 | `/data/dradis_settings.json` | Runtime settings edited from the Web UI |
 | `/data/agents.json` | Custom sub-agent configuration (managed from Web UI) |
 | `/data/tasks.json` | Scheduled task configuration (managed from Web UI) |

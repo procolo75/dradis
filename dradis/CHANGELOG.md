@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.5.3] - 2026-04-26
+- **Docs — terminology update**: replaced "add-on" with "app" across all documentation (README.md, DOCS.md, index.html, CHANGELOG.md) and updated HA navigation paths to the new UI (`Settings → Apps → Install App → ⋮ → Repositories`)
+
 ## [2.5.2] - 2026-04-25
 - **Feature — `/tasks` Telegram command**: send `/tasks` to see a list of all enabled tasks as Telegram inline buttons. Tapping a button launches the task immediately and DRADIS replies with a `▶️ Launching task …` confirmation. The task then runs exactly like a scheduled execution (same AI model, same sub-agents, result delivered to Telegram).
 
@@ -52,13 +55,13 @@
 - **Docs & Wiki**: added Gmail scheduled task examples (morning digest, evening inbox summary, weekly report) to DOCS.md, README.md, and GitHub Wiki; fixed missing `google_gmail_token.json` entry in Persistent Data table; updated icon description
 
 ## [1.8.6] - 2026-04-20
-- **Icon update**: replaced add-on icon with new DRADIS AI branded artwork; added `panel_icon: mdi:radar` to config.yaml for the HA sidebar
+- **Icon update**: replaced app icon with new DRADIS AI branded artwork; added `panel_icon: mdi:radar` to config.yaml for the HA sidebar
 
 ## [1.8.5] - 2026-04-20
 - **Timezone-aware datetime for all agents**: all sub-agents (Gmail, Calendar, Weather, Web Search) and the main agent now receive the current date **and time** in the configured IANA timezone (e.g. `It is 20 April 2026, 14:35 (Europe/Rome).`) instead of only the date in server local time. Added `_now_str(tz_name)` helper using `zoneinfo`.
 
 ## [1.8.4] - 2026-04-20
-- **Icon**: added radar-sweep icon (`icon.png`) for the Home Assistant add-on dashboard and a matching inline SVG logo in the Web UI sidebar header
+- **Icon**: added radar-sweep icon (`icon.png`) for the Home Assistant app dashboard and a matching inline SVG logo in the Web UI sidebar header
 
 ## [1.8.3] - 2026-04-20
 - **`/info` command**: Google Calendar and Gmail sections now show Provider and Model when enabled
@@ -78,7 +81,7 @@
 - **Docs**: added usage examples to README, DOCS, and GitHub Wiki (voice appointment, weather, web search, scheduled tasks)
 
 ## [1.7.8] - 2026-04-19
-- **Rename**: add-on display name changed to "DRADIS Agentic AI for Home Assistant" across config.yaml, README, DOCS, and Web UI
+- **Rename**: app display name changed to "DRADIS Agentic AI for Home Assistant" across config.yaml, README, DOCS, and Web UI
 
 ## [1.7.7] - 2026-04-19
 - **Timezone dropdown**: replaced free-text input with a grouped `<select>` covering ~60 IANA timezones across Europe, Americas, Asia, Africa, and Pacific; legacy free-text values are preserved as a custom option if not found in the list
@@ -126,7 +129,7 @@
 - Added **Google Calendar** integration: DRADIS can read and create events on the user's primary Google Calendar
 - Two tools: `get_calendar_events(days_ahead)` and `create_calendar_event(title, start_datetime, end_datetime, description)`
 - OAuth2 authentication via `/gcalauth` Telegram command: sends auth URL, user grants access in browser, pastes the redirect URL back — token saved to `/data/google_calendar_token.json` and auto-refreshed
-- `google_client_id` (str) and `google_client_secret` (password) added to the add-on Configuration tab
+- `google_client_id` (str) and `google_client_secret` (password) added to the app Configuration tab
 - New Web UI sidebar item **Google Calendar** under Agents: enable toggle, auth status indicator, and setup guide
 - `/info` command shows Google Calendar status and auth state
 - `google-auth-oauthlib` and `google-api-python-client` added to `requirements.txt`
@@ -224,7 +227,7 @@
 
 ## [0.8.0] - 2026-04-18
 - Added Web Search sub-agent powered by Tavily: DRADIS can now delegate web searches to a dedicated sub-agent with its own LLM (provider + model configurable independently)
-- New `tavily_api_key` field in add-on Configuration tab (type: password)
+- New `tavily_api_key` field in app Configuration tab (type: password)
 - New "Web Search" tab in the Web UI with: enabled toggle, Tavily connection test button, LLM provider/model selector (with 🔄 load), additional instructions textarea, show metrics toggle
 - `WS_HIDDEN_INSTRUCTIONS` injected into DRADIS system prompt when web search is enabled — tells the orchestrator when to call `search_web` (not visible in UI)
 - Web search metrics sent as a separate Telegram message prefixed with 🔍 (same pattern as DRADIS metrics)
@@ -291,7 +294,7 @@
 - Added `[DRADIS] show_metrics=...` log line on every message to diagnose metrics state
 
 ## [0.5.2] - 2026-04-17
-- **Critical fix**: Web UI API calls were using root-relative paths (`/api/...`) which hit the HA API instead of the add-on backend when accessed via HA Ingress. All fetch calls now use `API_BASE` computed from `window.location.pathname`, so they correctly resolve through the ingress proxy regardless of the access path.
+- **Critical fix**: Web UI API calls were using root-relative paths (`/api/...`) which hit the HA API instead of the app backend when accessed via HA Ingress. All fetch calls now use `API_BASE` computed from `window.location.pathname`, so they correctly resolve through the ingress proxy regardless of the access path.
 
 ## [0.5.1] - 2026-04-17
 - Fixed Web UI form not loading when `/api/agents` or `/api/config` failed: each API call now has its own fallback, settings load independently
@@ -356,4 +359,4 @@
 - Added `startup_message` option in config.yaml (default: "✅ DRADIS online and ready.")
 
 ## [0.1.3] - initial
-- Telegram message on add-on startup
+- Telegram message on app startup

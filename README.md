@@ -1,10 +1,10 @@
 # DRADIS Agentic AI for Home Assistant
 
-DRADIS is a Home Assistant add-on that exposes a conversational AI agent controllable via Telegram. The agent is fully configurable from the built-in Web UI and the HA Configuration tab — no code changes required.
+DRADIS is a Home Assistant app that exposes a conversational AI agent controllable via Telegram. The agent is fully configurable from the built-in Web UI and the HA Configuration tab — no code changes required.
 
 ## Features
 
-- **Branded icon**: custom DRADIS AI icon in the HA add-on dashboard and sidebar
+- **Branded icon**: custom DRADIS AI icon in the HA app dashboard and sidebar
 - **Multi-provider LLM**: OpenRouter, OpenAI, GitHub Models, Gemini, Groq
 - **Web Search** sub-agent powered by Tavily (optional)
 - **Weather** sub-agent powered by Open-Meteo (free, no API key)
@@ -21,7 +21,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 ## Installation
 
-1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**
+1. In Home Assistant go to **Settings → Apps → Install App → ⋮ → Repositories**
 2. Add: `https://github.com/procolo75/dradis`
 3. Find **DRADIS** in the store and click **Install**
 
@@ -64,4 +64,4 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 ## Documentation
 
-Full documentation is available in the **Documentation** tab of the add-on page in Home Assistant and on the [GitHub Wiki](https://github.com/procolo75/dradis/wiki).
+Full documentation is available in the **Documentation** tab of the app page in Home Assistant and on the [GitHub Wiki](https://github.com/procolo75/dradis/wiki).
