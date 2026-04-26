@@ -37,20 +37,89 @@ from agents.web_search import create_web_search_agent, fetch_web_search
 
 WEB_PORT = 8099
 
-# Keyword sets used for intent-based pre-fetching (avoids LLM tool-decision call)
-_WEATHER_KW = {"weather","meteo","forecast","temperatura","previsioni","pioggia","vento","sole","caldo","freddo","neve","umidità","uv"}
-_WS_KW      = {"search","cerca","news","notizie","trova","recenti","internet","latest","aggiornamenti","article","articolo"}
-_GCAL_KW    = {"calendar","agenda","appuntamento","evento","schedule","meeting","riunione","domani","settimana","oggi","eventi","impegni"}
-_GMAIL_KW   = {"email","mail","inbox","posta","messaggio","gmail","unread","non lette","mittente","oggetto"}
+# Keyword sets used for intent-based pre-fetching (avoids LLM tool-decision call).
+# Only Italian and English are supported — messages in other languages will fall
+# back to the standard 2-call tool path (keyword not matched → no pre-fetch).
+_WEATHER_KW = {
+    # Italian
+    "meteo", "previsioni", "temperatura", "pioggia", "vento", "sole",
+    "caldo", "freddo", "neve", "umidità", "uv", "tempo", "nuvoloso",
+    "nebbia", "grandine", "temporale", "allerta", "precipitazioni",
+    # English
+    "weather", "forecast", "temperature", "rain", "wind", "sunny",
+    "hot", "cold", "snow", "humidity", "cloud", "cloudy", "storm",
+    "thunderstorm", "fog", "hail", "precipitation", "outlook",
+}
+_WS_KW = {
+    # Italian
+    "cerca", "notizie", "trova", "recenti", "internet", "aggiornamenti",
+    "articolo", "ricerca", "ultime", "novità", "web",
+    # English
+    "search", "news", "find", "latest", "article", "update",
+    "browse", "online",
+}
+_GCAL_KW = {
+    # Italian
+    "agenda", "appuntamento", "evento", "riunione", "impegni",
+    "domani", "settimana", "oggi", "eventi", "orario", "quando",
+    "incontro", "promemoria", "scadenza",
+    # English
+    "calendar", "schedule", "meeting", "appointment", "event",
+    "tomorrow", "today", "week", "reminder", "deadline", "booking",
+}
+_GMAIL_KW = {
+    # Italian
+    "email", "mail", "posta", "messaggio", "gmail", "non lette",
+    "mittente", "oggetto", "ricevuto", "risposta", "invia", "scrivi",
+    # English
+    "inbox", "unread", "sender", "subject", "received",
+    "reply", "send", "write", "compose",
+}
 
+# Matches location from natural phrases in both Italian and English.
+# Patterns covered:
+#   "meteo a Roma", "weather in London", "che tempo fa a Bacoli",
+#   "previsioni per Napoli", "forecast for Paris tomorrow",
+#   "piove a Milano?", "nevica a Torino?"
 _WEATHER_LOCATION_RE = re.compile(
-    r'(?:meteo|weather|forecast|previsioni)\s+(?:a|in|di|for|at)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{1,30}?)(?:\s*[?!,.]|\s+(?:oggi|domani|this|tomorrow|next)|\s*$)',
+    r'(?:'
+    r'(?:meteo|previsioni|temperatura|forecast|weather|temperature|outlook)'
+    r'\s+(?:a|in|di|per|for|at|of)\s+'
+    r'|'
+    r'(?:che\s+)?tempo\s+fa\s+a\s+'
+    r'|'
+    r'(?:piove|nevica|grandina)\s+a\s+'
+    r')'
+    r'([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{1,30}?)'
+    r'(?:\s*[?!,.]|\s+(?:oggi|domani|this|tomorrow|next|ora|now)|\s*$)',
     re.IGNORECASE,
 )
 
 
 def _extract_weather_location(text: str) -> str | None:
     m = _WEATHER_LOCATION_RE.search(text)
+    return m.group(1).strip() if m else None
+
+
+# Matches home location from agent instructions.
+# Patterns covered:
+#   "vivo a Bacoli", "abito a Napoli", "sono di Roma",
+#   "I live in London", "I'm based in Paris", "located in Berlin"
+_HOME_LOCATION_RE = re.compile(
+    r'(?:vivo|abito|risiedo|sono di|mi trovo a|sono a'
+    r'|live in|based in|located in|I am in|I\'m in'
+    r'|home is|home city is)'
+    r'\s+(?:a|in|di)?\s*'
+    r'([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{1,30}?)'
+    r'(?:\s*[.,;!?]|\s+e\s+|\s+and\s+|\s*$)',
+    re.IGNORECASE,
+)
+
+
+def _extract_location_from_instructions(text: str) -> str | None:
+    """Extract a home/default location from DRADIS agent instructions.
+    Used as fallback when the user asks about weather without specifying a city."""
+    m = _HOME_LOCATION_RE.search(text)
     return m.group(1).strip() if m else None
 
 
@@ -260,6 +329,12 @@ async def _prefetch_context(user_message: str, settings: dict) -> dict[str, str]
 
     if settings.get("weather_enabled") and any(kw in lower for kw in _WEATHER_KW):
         loc = _extract_weather_location(user_message)
+        if not loc:
+            # Fallback: extract location from agent instructions
+            # (e.g. user wrote "vivo a Bacoli" in the agent instructions)
+            loc = _extract_location_from_instructions(
+                settings.get("agent_instructions", "")
+            )
         if loc:
             coros["weather"] = fetch_weather(loc)
 

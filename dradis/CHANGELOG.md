@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [2.5.5] - 2026-04-26
+- **Feature — weather location fallback from agent instructions**: when the user asks about weather without specifying a city (e.g. *"che tempo fa?"*), DRADIS now attempts to extract a home location from the agent instructions configured in the Web UI. Phrases like *"vivo a Bacoli"*, *"abito a Napoli"*, *"I live in London"*, *"based in Berlin"* are recognised and used as the default city for the Weather pre-fetch. If no city is found in either the message or the instructions, the sub-agent falls back to the standard 2-call tool path. New helper: `_extract_location_from_instructions(text)` with `_HOME_LOCATION_RE` regex.
+- **Docs**: updated weather location extraction section in `DOCS.md` to document the instructions fallback and its recognised phrase patterns.
+
+## [2.5.4] - 2026-04-26
+- **Fix — pre-fetch keyword sets (Italian + English)**: expanded all four keyword sets (`_WEATHER_KW`, `_WS_KW`, `_GCAL_KW`, `_GMAIL_KW`) with natural Italian and English phrases that were previously missing. Key additions: `tempo`, `nuvoloso`, `nebbia`, `grandine`, `temporale`, `allerta`, `precipitazioni`, `rain`, `wind`, `sunny`, `storm`, `thunderstorm`, `fog`, `hail`, `outlook` for Weather; `ricerca`, `ultime`, `novità`, `find`, `browse`, `online` for Web Search; `orario`, `quando`, `incontro`, `promemoria`, `scadenza`, `reminder`, `deadline`, `booking` for Calendar; `ricevuto`, `risposta`, `invia`, `scrivi`, `sender`, `subject`, `received`, `reply`, `send`, `write`, `compose` per Gmail.
+- **Fix — weather location regex**: extended `_WEATHER_LOCATION_RE` to recognise natural Italian phrases: `"che tempo fa a <city>"`, `"tempo fa a <city>"`, `"piove/nevica/grandina a <city>"`. Previously only `"meteo a ..."` and `"weather in ..."` patterns were matched, so common Italian questions like *"che tempo fa a Bacoli?"* did not trigger pre-fetch and fell back to the slower 2-call path.
+- **Docs — pre-fetch keyword reference**: added detailed documentation of the keyword matching system to `DOCS.md`, including per-agent keyword tables (Italian + English), weather location extraction patterns, and a note that only Italian and English are supported for pre-fetch optimisation.
+
 ## [2.5.3] - 2026-04-26
 - **Docs — terminology update**: replaced "add-on" with "app" across all documentation (README.md, DOCS.md, index.html, CHANGELOG.md) and updated HA navigation paths to the new UI (`Settings → Apps → Install App → ⋮ → Repositories`)
 

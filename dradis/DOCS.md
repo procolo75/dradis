@@ -38,7 +38,7 @@ All API call failures now send a Telegram notification:
 
 Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use loops: **4** for Gmail and Google Calendar (which may need multiple sequential tool calls for complex tasks such as search-then-send or fetch-then-delete), **2** for Weather and Web Search (single-tool agents). The limit is enforced by agno's `Agent.tool_call_limit` parameter and caps the worst-case LLM calls per sub-agent regardless of model behaviour.
 
-### Pre-fetch + inject pattern (v2.3.0)
+### Pre-fetch + inject pattern (v2.3.0, updated v2.5.4)
 
 Before building the Team, DRADIS scans the user message for intent keywords. When a match is found, it pre-fetches API data in Python (all detected members run **in parallel**), then injects the data directly into the matching member's system prompt and removes its fetch tool. This reduces each matched member from **2 LLM calls** (tool-decision + formatting) to **1 LLM call** (formatting only). Members without a keyword match fall back to the tool-based path.
 
@@ -70,6 +70,42 @@ User message
 ```
 
 **Routing** is driven by each member's system prompt description (when data is pre-fetched) or tool docstrings (fallback path). No hidden text is injected into the leader's system prompt.
+
+#### How pre-fetch keyword matching works
+
+DRADIS scans each incoming message (lowercased) for **exact substring matches** against four keyword sets — one per sub-agent. The match is intentionally simple and fast: no NLP, no LLM involved. If any keyword in the set appears anywhere in the message, the corresponding API fetch is queued.
+
+> ⚠️ **Language support:** keyword matching only covers **Italian and English**. Messages in other languages will not trigger pre-fetch and will fall back to the standard 2-call tool path — the sub-agent still works, it just takes one extra LLM call to decide which tool to invoke.
+
+| Sub-agent | Italian keywords | English keywords |
+|-----------|-----------------|------------------|
+| **Weather** | meteo, previsioni, temperatura, pioggia, vento, sole, caldo, freddo, neve, umidità, uv, tempo, nuvoloso, nebbia, grandine, temporale, allerta, precipitazioni | weather, forecast, temperature, rain, wind, sunny, hot, cold, snow, humidity, cloud, cloudy, storm, thunderstorm, fog, hail, precipitation, outlook |
+| **Web Search** | cerca, notizie, trova, recenti, internet, aggiornamenti, articolo, ricerca, ultime, novità, web | search, news, find, latest, article, update, browse, online |
+| **Google Calendar** | agenda, appuntamento, evento, riunione, impegni, domani, settimana, oggi, eventi, orario, quando, incontro, promemoria, scadenza | calendar, schedule, meeting, appointment, event, tomorrow, today, week, reminder, deadline, booking |
+| **Gmail** | email, mail, posta, messaggio, gmail, non lette, mittente, oggetto, ricevuto, risposta, invia, scrivi | inbox, unread, sender, subject, received, reply, send, write, compose |
+
+#### Weather location extraction
+
+For the Weather sub-agent, matching a keyword is not enough — DRADIS also needs to know *which city* to fetch data for. A second regex runs on the message to extract the location name. The following phrase patterns are recognised:
+
+| Pattern | Example |
+|---------|---------|
+| `meteo/previsioni/temperatura a/in/per <city>` | *"meteo a Roma"*, *"previsioni per Napoli"* |
+| `weather/forecast in/at/for <city>` | *"weather in London"*, *"forecast for Paris"* |
+| `che tempo fa a <city>` | *"che tempo fa a Bacoli?"* |
+| `tempo fa a <city>` | *"tempo fa a Milano domani"* |
+| `piove/nevica/grandina a <city>` | *"piove a Torino?"* |
+
+If the city cannot be extracted from the message (e.g. *"che tempo fa?"* with no city), the Weather pre-fetch tries a second extraction from the **DRADIS agent instructions**. If the instructions contain a home location phrase (e.g. *"vivo a Bacoli"*, *"I live in London"*), that city is used as the default. The following instruction patterns are recognised:
+
+| Pattern | Example |
+|---------|---------|
+| `vivo/abito/risiedo a <city>` | *"vivo a Bacoli"* |
+| `sono di/mi trovo a <city>` | *"sono di Roma"* |
+| `live in/based in/located in <city>` | *"I live in London"* |
+| `I am in/I'm in <city>` | *"I'm in Berlin"* |
+
+If no city is found in either the message or the instructions, the Weather pre-fetch does **not** run and the sub-agent falls back to the 2-call tool path where the LLM itself calls `get_weather(location)`.
 
 **Additional instructions**: each member still applies its own per-agent `*_instructions` setting from the Web UI. These are appended to the member's system prompt at runtime.
 
