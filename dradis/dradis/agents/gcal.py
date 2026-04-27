@@ -27,12 +27,20 @@ def _build_gcal_flow(client_id: str, client_secret: str):
 def _get_gcal_creds():
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request as GoogleRequest
+    from google.auth.exceptions import RefreshError
     if not GCAL_TOKEN_FILE.exists():
         return None
     creds = Credentials.from_authorized_user_file(str(GCAL_TOKEN_FILE), GCAL_SCOPES)
     if creds.expired and creds.refresh_token:
-        creds.refresh(GoogleRequest())
-        GCAL_TOKEN_FILE.write_text(creds.to_json())
+        try:
+            creds.refresh(GoogleRequest())
+            GCAL_TOKEN_FILE.write_text(creds.to_json())
+        except RefreshError as e:
+            # Token revoked or expired (invalid_grant): delete it so the user
+            # gets a clean re-auth prompt instead of a cryptic crash.
+            print(f"[DRADIS] GCal token refresh failed ({e}), deleting token file.")
+            GCAL_TOKEN_FILE.unlink(missing_ok=True)
+            return None
     return creds
 
 

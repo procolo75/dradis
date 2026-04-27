@@ -1,6 +1,6 @@
 name: DRADIS Agentic AI for Home Assistant
 description: AI orchestrator agent controlled via Telegram
-version: "2.5.5"
+version: "2.5.6"
 slug: dradis
 init: false
 arch:

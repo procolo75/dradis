@@ -856,7 +856,9 @@
                 Then search <em>Gmail API</em> → <strong>Enable</strong>.<br>
                 <em style="font-size:0.78rem;">(Enable only the ones you need — both are free.)</em></li>
             <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
-            <li>Still in the consent screen → <strong>Test users</strong> → add your own Google account email → save.</li>
+            <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
+              <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days and you will need to re-authenticate repeatedly. Publishing makes the token permanent. No Google review is required for personal use.</em>
+            </li>
             <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
             <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
             <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
@@ -966,7 +968,9 @@
                 Then search <em>Gmail API</em> → <strong>Enable</strong>.<br>
                 <em style="font-size:0.78rem;">(Enable only the ones you need — both are free.)</em></li>
             <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
-            <li>Still in the consent screen → <strong>Test users</strong> → add your own Google account email → save.</li>
+            <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
+              <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days and you will need to re-authenticate repeatedly. Publishing makes the token permanent. No Google review is required for personal use.</em>
+            </li>
             <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
             <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
             <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>

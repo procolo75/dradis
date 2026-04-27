@@ -14,6 +14,18 @@ GMAIL_SCOPES       = [
 GMAIL_REDIRECT_URI = "http://localhost:8099/gmailauth/callback"
 
 
+async def _notify_token_expired(service: str, cmd: str):
+    """Send a Telegram notification when a Google token has been revoked."""
+    try:
+        import main as _main  # imported lazily to avoid circular imports
+        await _main._send_error_telegram(
+            f"🔑 <b>{service} token scaduto o revocato.</b>\n"
+            f"Invia <code>{cmd}</code> per riconnetterti."
+        )
+    except Exception as ex:
+        print(f"[DRADIS] Could not send token-expired notification: {ex}")
+
+
 def _build_gmail_flow(client_id: str, client_secret: str):
     from google_auth_oauthlib.flow import Flow
     client_config = {
@@ -31,12 +43,27 @@ def _build_gmail_flow(client_id: str, client_secret: str):
 def _get_gmail_creds():
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request as GoogleRequest
+    from google.auth.exceptions import RefreshError
     if not GMAIL_TOKEN_FILE.exists():
         return None
     creds = Credentials.from_authorized_user_file(str(GMAIL_TOKEN_FILE), GMAIL_SCOPES)
     if creds.expired and creds.refresh_token:
-        creds.refresh(GoogleRequest())
-        GMAIL_TOKEN_FILE.write_text(creds.to_json())
+        try:
+            creds.refresh(GoogleRequest())
+            GMAIL_TOKEN_FILE.write_text(creds.to_json())
+        except RefreshError as e:
+            # Token revoked or expired (invalid_grant): delete it so the user
+            # gets a clean re-auth prompt instead of a cryptic crash.
+            print(f"[DRADIS] Gmail token refresh failed ({e}), deleting token file.")
+            GMAIL_TOKEN_FILE.unlink(missing_ok=True)
+            import asyncio as _aio
+            try:
+                loop = _aio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(_notify_token_expired("Gmail", "/gmailauth"))
+            except Exception:
+                pass
+            return None
     return creds
 
 

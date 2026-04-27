@@ -180,7 +180,10 @@ Fill in at least one LLM provider key. The active provider is selected from the 
   1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create or select a project
   2. **APIs & Services → Library** → search *Google Calendar API* → **Enable**. Then search *Gmail API* → **Enable**. *(Enable only the ones you need — both are free.)*
   3. **APIs & Services → OAuth consent screen** → choose **External** → fill in app name (e.g. *DRADIS*) and your email → save
-  4. Still in consent screen → **Test users** → add your own Google account email → save
+  4. Still in the consent screen → **Publishing status** → click **Publish app** → confirm
+
+     > ⚠️ **This step is essential.** If the app stays in **Testing** mode, Google automatically revokes the refresh token every 7 days, forcing you to re-authenticate repeatedly. Publishing makes the token permanent. No Google review is required for personal use.
+
   5. **Credentials → Create credentials → OAuth client ID → Desktop app** → any name → **Create**
   6. Copy the **Client ID** and **Client Secret** from the dialog
   7. Paste them in the app Configuration tab (`google_client_id`, `google_client_secret`) and **restart the app**

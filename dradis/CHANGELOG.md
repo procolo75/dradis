@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.5.6] - 2026-04-27
+- **Fix — Google OAuth token expiration**: if the OAuth app is left in *Testing* mode, Google revokes the refresh token every 7 days. Updated setup docs (`DOCS.md`, `index.html`) to instruct users to publish the app to Production (no Google review required for personal use). Added graceful `RefreshError` handling in `gcal.py` and `gmail.py`: when a token is revoked, the token file is deleted so the user gets a clean re-auth prompt (`/gcalauth` or `/gmailauth`) instead of a cryptic crash. Gmail agent also sends a Telegram notification when the token needs to be renewed.
+
 ## [2.5.5] - 2026-04-26
 - **Feature — weather location fallback from agent instructions**: when the user asks about weather without specifying a city (e.g. *"che tempo fa?"*), DRADIS now attempts to extract a home location from the agent instructions configured in the Web UI. Phrases like *"vivo a Bacoli"*, *"abito a Napoli"*, *"I live in London"*, *"based in Berlin"* are recognised and used as the default city for the Weather pre-fetch. If no city is found in either the message or the instructions, the sub-agent falls back to the standard 2-call tool path. New helper: `_extract_location_from_instructions(text)` with `_HOME_LOCATION_RE` regex.
 - **Docs**: updated weather location extraction section in `DOCS.md` to document the instructions fallback and its recognised phrase patterns.
