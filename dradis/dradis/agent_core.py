@@ -34,7 +34,7 @@ def _now_str(tz_name: str | None = None) -> str:
         tz = ZoneInfo(tz_name or "UTC")
     except ZoneInfoNotFoundError:
         tz = ZoneInfo("UTC")
-    return datetime.now(tz).strftime("%d %B %Y, %H:%M")
+    return datetime.now(tz).strftime("%A %d %B %Y, %H:%M")
 
 
 def create_agent(

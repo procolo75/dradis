@@ -14,23 +14,24 @@ DRADIS displays a radar-sweep icon in the Home Assistant app dashboard (`icon.pn
 
 DRADIS uses an **agno Team** design (`coordinate` mode): a DRADIS leader agent orchestrates a team of specialist member agents. When the user sends a message the leader decides which members to invoke, runs them **in parallel**, and synthesises their responses into a single reply. If no sub-agents are enabled, DRADIS falls back to a single-agent path with no overhead.
 
-### Fallback model (v2.5.0)
+### Fallback model (v2.5.0 — improved in v2.7.0, v2.8.3–2.8.4)
 
 Each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail) supports an independent fallback provider and model. When an API call fails, DRADIS:
 
-1. Sends a Telegram warning: *"⚠️ Model error — retrying with fallback model…"*
-2. Rebuilds the executor (and any sub-agents) using the fallback settings
-3. Retries the request
-4. If the fallback also fails, sends a final ❌ Telegram notification
+1. Detects the failure — agno never re-raises model errors; instead it sets `response.status = "ERROR"` and puts the error message in `response.content`. DRADIS checks both `status == "ERROR"` and empty content to catch all failure modes (rate limits, provider errors, context-window exceeded, etc.)
+2. Sends a Telegram warning: *"⚠️ Primary model failed — replied via fallback ✅"* if the fallback succeeds
+3. Rebuilds the executor (and any sub-agents) using the fallback settings and retries
+4. If the fallback also fails, sends a final `❌ Both primary and fallback models failed` Telegram notification with both model names
+
+The logic is centralised in the `_run_with_fallback()` helper, shared by both `handle_message` and `run_scheduled_task`.
 
 Fallback settings are configured from the Web UI. Leaving the fallback model blank disables the feature for that agent.
 
 ### Telegram API error notifications (v2.5.0)
 
-All API call failures now send a Telegram notification:
+All API call failures send a Telegram notification:
 
-- **Sub-agent prefetch errors** (previously silent): if `fetch_weather`, `fetch_web_search`, `fetch_gcal_events`, or `fetch_gmail_inbox` raises an exception during pre-fetch, a `⚠️ Sub-agent <name> prefetch failed` message is sent to the user via the shared `_send_error_telegram()` helper.
-- **Primary model failure**: if `executor.arun()` raises, a warning is sent before the fallback retry (or the error is surfaced directly if no fallback is configured).
+- **Primary model failure**: if the primary model returns an error or empty response, a warning is sent before the fallback retry (or the error is surfaced directly if no fallback is configured).
 - **Fallback model failure**: a separate ❌ notification is sent if the fallback also fails.
 - **Scheduled task failures**: the same logic applies during cron-scheduled task execution.
 
@@ -38,76 +39,9 @@ All API call failures now send a Telegram notification:
 
 Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use loops: **4** for Gmail and Google Calendar (which may need multiple sequential tool calls for complex tasks such as search-then-send or fetch-then-delete), **2** for Weather and Web Search (single-tool agents). The limit is enforced by agno's `Agent.tool_call_limit` parameter and caps the worst-case LLM calls per sub-agent regardless of model behaviour.
 
-### Pre-fetch + inject pattern (v2.3.0, updated v2.5.4)
+**Routing** is driven by each member's tool docstrings — the team leader LLM decides which members to invoke based on the user message and the tool descriptions. No keyword matching or hidden text is injected.
 
-Before building the Team, DRADIS scans the user message for intent keywords. When a match is found, it pre-fetches API data in Python (all detected members run **in parallel**), then injects the data directly into the matching member's system prompt and removes its fetch tool. This reduces each matched member from **2 LLM calls** (tool-decision + formatting) to **1 LLM call** (formatting only). Members without a keyword match fall back to the tool-based path.
-
-```
-User message
-      │
-      ▼
-┌─────────────────────────────────────────────────────────┐
-│  _prefetch_context()  — keyword matching + parallel     │
-│  API fetch (Open-Meteo / Tavily / GCal / Gmail)         │
-└──────┬──────────┬──────────┬──────────┬─────────────────┘
-       │          │          │          │
-       ▼          ▼          ▼          ▼
-   weather     web      gcal data   gmail
-   data        results  (injected)  inbox
-  (injected) (injected)           (injected)
-       │
-       ▼
-┌─────────────────────────────────────────────────────────┐
-│  DRADIS Team Leader  (coordinator LLM)                  │
-│  Routes request → invokes relevant members in parallel  │
-│  Synthesises responses → single Telegram reply          │
-└──────┬──────────┬──────────┬──────────┬─────────────────┘
-       │          │          │          │
-  ┌────┴───┐ ┌────┴───┐ ┌────┴───┐ ┌───┴────┐
-  │Weather │ │  Web   │ │  GCal  │ │ Gmail  │
-  │(1 call)│ │(1 call)│ │(1 call)│ │(1 call)│
-  └────────┘ └────────┘ └────────┘ └────────┘
-```
-
-**Routing** is driven by each member's system prompt description (when data is pre-fetched) or tool docstrings (fallback path). No hidden text is injected into the leader's system prompt.
-
-#### How pre-fetch keyword matching works
-
-DRADIS scans each incoming message (lowercased) for **exact substring matches** against four keyword sets — one per sub-agent. The match is intentionally simple and fast: no NLP, no LLM involved. If any keyword in the set appears anywhere in the message, the corresponding API fetch is queued.
-
-> ⚠️ **Language support:** keyword matching only covers **Italian and English**. Messages in other languages will not trigger pre-fetch and will fall back to the standard 2-call tool path — the sub-agent still works, it just takes one extra LLM call to decide which tool to invoke.
-
-| Sub-agent | Italian keywords | English keywords |
-|-----------|-----------------|------------------|
-| **Weather** | meteo, previsioni, temperatura, pioggia, vento, sole, caldo, freddo, neve, umidità, uv, tempo, nuvoloso, nebbia, grandine, temporale, allerta, precipitazioni | weather, forecast, temperature, rain, wind, sunny, hot, cold, snow, humidity, cloud, cloudy, storm, thunderstorm, fog, hail, precipitation, outlook |
-| **Web Search** | cerca, notizie, trova, recenti, internet, aggiornamenti, articolo, ricerca, ultime, novità, web | search, news, find, latest, article, update, browse, online |
-| **Google Calendar** | agenda, appuntamento, evento, riunione, impegni, domani, settimana, oggi, eventi, orario, quando, incontro, promemoria, scadenza | calendar, schedule, meeting, appointment, event, tomorrow, today, week, reminder, deadline, booking |
-| **Gmail** | email, mail, posta, messaggio, gmail, non lette, mittente, oggetto, ricevuto, risposta, invia, scrivi | inbox, unread, sender, subject, received, reply, send, write, compose |
-
-#### Weather location extraction
-
-For the Weather sub-agent, matching a keyword is not enough — DRADIS also needs to know *which city* to fetch data for. A second regex runs on the message to extract the location name. The following phrase patterns are recognised:
-
-| Pattern | Example |
-|---------|---------|
-| `meteo/previsioni/temperatura a/in/per <city>` | *"meteo a Roma"*, *"previsioni per Napoli"* |
-| `weather/forecast in/at/for <city>` | *"weather in London"*, *"forecast for Paris"* |
-| `che tempo fa a <city>` | *"che tempo fa a Bacoli?"* |
-| `tempo fa a <city>` | *"tempo fa a Milano domani"* |
-| `piove/nevica/grandina a <city>` | *"piove a Torino?"* |
-
-If the city cannot be extracted from the message (e.g. *"che tempo fa?"* with no city), the Weather pre-fetch tries a second extraction from the **DRADIS agent instructions**. If the instructions contain a home location phrase (e.g. *"vivo a Bacoli"*, *"I live in London"*), that city is used as the default. The following instruction patterns are recognised:
-
-| Pattern | Example |
-|---------|---------|
-| `vivo/abito/risiedo a <city>` | *"vivo a Bacoli"* |
-| `sono di/mi trovo a <city>` | *"sono di Roma"* |
-| `live in/based in/located in <city>` | *"I live in London"* |
-| `I am in/I'm in <city>` | *"I'm in Berlin"* |
-
-If no city is found in either the message or the instructions, the Weather pre-fetch does **not** run and the sub-agent falls back to the 2-call tool path where the LLM itself calls `get_weather(location)`.
-
-**Additional instructions**: each member still applies its own per-agent `*_instructions` setting from the Web UI. These are appended to the member's system prompt at runtime.
+**Additional instructions**: each member applies its own per-agent `*_instructions` setting from the Web UI, appended to the member's system prompt at runtime.
 
 **Extensibility**: adding a new member requires creating a new `create_X_agent(settings)` factory file and registering it in `_build_members()` in `main.py`. No changes to message handling, metrics, or token tracking are needed.
 
@@ -115,12 +49,13 @@ If no city is found in either the message or the instructions, the Weather pre-f
 
 | File | Responsibility |
 |------|---------------|
-| `main.py` | Telegram bot, message handlers, cron scheduler, OAuth flows, pre-fetch orchestration, team assembly |
+| `main.py` | Telegram bot, message handlers, cron scheduler, OAuth flows, team assembly |
 | `agent_core.py` | `create_agent()`, `create_team()`, provider helpers, token tracking |
-| `agents/web_search.py` | Web Search member agent — `fetch_web_search()` + `create_web_search_agent()` |
+| `agents/web_search.py` | Web Search member agent — `create_web_search_agent()` |
 | `agents/weather.py` | Weather member agent — `fetch_weather()` + `create_weather_agent()` |
-| `agents/gmail.py` | Gmail member agent — `fetch_gmail_inbox()` + `create_gmail_agent()` + OAuth token management |
-| `agents/gcal.py` | Google Calendar member agent — `fetch_gcal_events()` + `create_gcal_agent()` + OAuth token management |
+| `agents/gmail.py` | Gmail member agent — `create_gmail_agent()` + OAuth token management |
+| `agents/gcal.py` | Google Calendar member agent — `create_gcal_agent()` + OAuth token management |
+| `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
 
 ---
 
@@ -248,11 +183,11 @@ When enabled, DRADIS automatically decides when to call `search_web` — no prom
 | Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
 | Show metrics | `false` | Send a separate 🔍 metrics message after each web search (tokens, latency, model). |
 
-### Agents → Weather
+### Agents -> Weather
 
 Configure the built-in Weather sub-agent, powered by [Open-Meteo](https://open-meteo.com) (free, no API key required). A green dot in the sidebar indicates the agent is active.
 
-When enabled, DRADIS automatically calls `get_weather` when the user asks about current weather, forecasts, temperature, rain, wind, or UV index — in any language. The tool fetches current conditions and a 3-day forecast; a synthesis LLM formats the data into a clear response.
+When enabled, DRADIS automatically calls `get_weather` when the user asks about current weather, forecasts, temperature, rain, wind, or UV index — in any language. The tool fetches current conditions and up to 16 days of forecast; a synthesis LLM formats the data into a clear response.
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -264,6 +199,20 @@ When enabled, DRADIS automatically calls `get_weather` when the user asks about 
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
 | Show metrics | `false` | Send a separate 🌤 metrics message after each weather lookup (tokens, latency, model). |
+
+#### Weather variables fetched
+
+| Resolution | Variables |
+|---|---|
+| **Current** | temperature, humidity, precipitation, wind speed & gusts, weather code, cloud cover |
+| **Hourly** | temperature, humidity, dew point, precipitation probability, precipitation, showers, weather code, wind speed & gusts, cloud cover — summarised by time band (night/morning/afternoon/evening) |
+| **Daily** | temp max/min, precipitation sum, weather code, wind speed & gusts max, precipitation probability max |
+
+> **Thunderstorm risk** is handled by the dedicated **Thunderstorm risk monitor** (Monitors section) — it fetches CAPE, Lifted Index, CIN, and other convective variables from Open-Meteo and computes a risk score entirely in Python, with no LLM call and no token cost.
+
+#### Team routing
+
+When both Weather and Web Search sub-agents are active, DRADIS injects an explicit routing rule into the team leader system prompt: weather and meteorological queries are delegated exclusively to the Weather member. Web Search is never called for weather questions.
 
 ### Agents → Voice
 
@@ -329,6 +278,54 @@ A synthesis sub-agent formats the raw email data using the configured LLM model 
 | Additional instructions | — | Optional extra instructions appended to the Gmail sub-agent's system prompt. |
 | Show metrics | `false` | Send a separate 📧 metrics message after each Gmail operation (tokens, latency, model). |
 
+### Monitors
+
+Create LLM-free scheduled monitors that fetch data from external APIs and compute results entirely in Python. Monitors run on a cron schedule and deliver results to your Telegram chat. No model is invoked — output is deterministic and costs no tokens. Monitors are stored in `/data/monitors.json`.
+
+Click `+` in the Monitors sidebar header to create a new monitor. Each monitor has:
+
+| Field | Description |
+|-------|-------------|
+| Name | Display name shown in the sidebar. |
+| Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
+| Monitor type | Type of data source. Currently: **⛈️ Thunderstorm risk (Open-Meteo)**. |
+| Response language | Language of the Telegram report: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
+| Location | City name or geographic description (e.g. *Bacoli*, *Naples*, *Rome*). Resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and coordinates as you type. |
+| Forecast days | Number of days to fetch (1–7, default 2). |
+| Schedule preset | Dropdown of common schedules. |
+| Cron expression | Raw 5-part cron with live validation and next-fire preview. |
+
+#### Thunderstorm risk monitor
+
+Fetches atmospheric instability data from [Open-Meteo](https://open-meteo.com) (free, no API key required) and computes a risk score for each time band of each forecast day. No LLM is used — all computation happens in Python.
+
+**Variables fetched (hourly):** CAPE, Lifted Index, Convective Inhibition (CIN), Wind Gusts, Precipitation Probability.
+
+**Risk score formula (0–10):**
+
+| Component | Weight | Rationale |
+|---|---|---|
+| CAPE (normalised to 3000 J/kg) | 35% | Primary energy driver |
+| Lifted Index (mapped from +4 to -8 K) | 30% | Atmospheric instability indicator |
+| Precipitation probability | 15% | Proxy for moisture and trigger |
+| Wind gusts (normalised to 100 km/h) | 10% | Convective intensity indicator |
+| CIN inverted (normalised to 200 J/kg) | 10% | High CIN suppresses storms |
+
+**Risk levels:**
+
+| Score | Level |
+|---|---|
+| 0.0 – 2.5 | 🟢 LOW |
+| 2.5 – 5.0 | 🟡 MODERATE |
+| 5.0 – 7.5 | 🟠 HIGH |
+| 7.5 – 10.0 | 🔴 SEVERE |
+
+The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–12, AFTERNOON 12–18, EVENING 18–24) with the raw parameter values and the computed risk label, plus a daily maximum at the end of each day.
+
+**Testing a monitor manually:** each monitor form includes a **▶ Test Monitor** button that triggers an immediate execution. The result is delivered to Telegram within seconds.
+
+---
+
 ### Tasks
 
 Create recurring automated tasks that DRADIS executes on a cron schedule and delivers to your Telegram chat. Tasks are stored in `/data/tasks.json`.
@@ -364,7 +361,7 @@ DRADIS transcribes the audio via Groq Whisper, interprets the request, creates t
 ### Weather query
 > *"What's the weather in Milan tomorrow?"*
 
-DRADIS calls the Weather sub-agent (Open-Meteo, no API key needed) and replies with current conditions and a 3-day forecast including temperature, rain probability, wind, and UV index.
+DRADIS calls the Weather sub-agent (Open-Meteo, no API key needed) and replies with current conditions and a multi-day forecast including temperature, rain probability, wind, and UV index.
 
 ---
 
@@ -372,6 +369,21 @@ DRADIS calls the Weather sub-agent (Open-Meteo, no API key needed) and replies w
 > *"What are the latest Home Assistant announcements?"*
 
 DRADIS routes the request to the Web Search sub-agent (Tavily), retrieves up to 5 results, and sends a concise summarised answer.
+
+---
+
+### Daily thunderstorm risk digest *(monitor)*
+
+Every morning DRADIS fetches atmospheric instability data for the next 2 days and sends a convective risk summary divided by time band — with no LLM call, no token cost, and deterministic output.
+
+| Field | Value |
+|-------|-------|
+| Monitor type | ⛈️ Thunderstorm risk (Open-Meteo) |
+| Location | your city (e.g. *Bacoli*) |
+| Forecast days | 2 |
+| Cron | `0 7 * * *` |
+
+The Telegram message shows one line per time band (NIGHT / MORNING / AFTERNOON / EVENING) with CAPE, Lifted Index, CIN, wind gusts, precipitation probability, and a risk level (🟢 LOW · 🟡 MODERATE · 🟠 HIGH · 🔴 SEVERE).
 
 ---
 
@@ -462,6 +474,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/info` | Show status and configuration of all agents (provider, model, metrics, history, sub-agents) |
 | `/menu` | List all available commands |
 | `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
+| `/monitors` | List all enabled monitors as Telegram inline buttons. Tap a button to run the monitor immediately — result is delivered to Telegram within seconds. |
 | `/tokens` | Show cumulative token usage (input / output / total) broken down by agent: DRADIS, Weather, Web Search, Calendar, Gmail |
 | `/tokens_reset` | Reset all token counters to zero |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
@@ -501,6 +514,7 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/dradis_settings.json` | Runtime settings edited from the Web UI |
 | `/data/agents.json` | Custom sub-agent configuration (managed from Web UI) |
 | `/data/tasks.json` | Scheduled task configuration (managed from Web UI) |
+| `/data/monitors.json` | Monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |
 | `/data/dradis_token_stats.json` | Cumulative token usage counters (input/output per agent, persisted across restarts) |

@@ -133,13 +133,7 @@ def _sync_send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to} — Subject: {subject}"
 
 
-async def fetch_gmail_inbox(max_results: int = 10) -> str:
-    import asyncio as _asyncio
-    loop = _asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync_get_emails, max_results)
-
-
-def create_gmail_agent(settings: dict, prefetched_data: str | None = None):
+def create_gmail_agent(settings: dict):
     tz_name = settings.get("timezone", "UTC") or "UTC"
     _not_auth_msg = "Gmail not authenticated. Send /gmailauth to connect."
 
@@ -171,16 +165,6 @@ def create_gmail_agent(settings: dict, prefetched_data: str | None = None):
         if result == "NOT_AUTHENTICATED":
             return _not_auth_msg
         return result
-
-    if prefetched_data:
-        return create_agent(
-            system_prompt=base_prompt + f"\n\nPre-fetched inbox:\n{prefetched_data}",
-            model=settings.get("gmail_model", SETTINGS_DEFAULTS["gmail_model"]),
-            provider=settings.get("gmail_provider", SETTINGS_DEFAULTS["gmail_provider"]),
-            tools=[search_emails, send_email],
-            name="gmail",
-            tool_call_limit=4,
-        )
 
     async def get_emails(max_results: int = 10) -> str:
         """Get the latest emails from Gmail inbox.

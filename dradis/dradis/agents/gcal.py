@@ -97,12 +97,7 @@ def _sync_create_raw_event(title: str, start_dt: str, end_dt: str, description: 
     return f"Event created: {title} ({start_dt} → {end_dt}). Link: {event.get('htmlLink', '')}"
 
 
-async def fetch_gcal_events(days_ahead: int = 7) -> str:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync_get_raw_events, days_ahead)
-
-
-def create_gcal_agent(settings: dict, prefetched_data: str | None = None):
+def create_gcal_agent(settings: dict):
     tz_name = settings.get("timezone", "UTC") or "UTC"
     _not_auth_msg = "Google Calendar not authenticated. Send /gcalauth to connect."
 
@@ -143,16 +138,6 @@ def create_gcal_agent(settings: dict, prefetched_data: str | None = None):
         if result == "NOT_AUTHENTICATED":
             return _not_auth_msg
         return result
-
-    if prefetched_data:
-        return create_agent(
-            system_prompt=base_prompt + f"\n\nPre-fetched calendar events:\n{prefetched_data}",
-            model=settings.get("gcal_model", SETTINGS_DEFAULTS["gcal_model"]),
-            provider=settings.get("gcal_provider", SETTINGS_DEFAULTS["gcal_provider"]),
-            tools=[create_calendar_event, delete_calendar_event],
-            name="gcal",
-            tool_call_limit=4,
-        )
 
     async def get_calendar_events(days_ahead: int = 7) -> str:
         """Get Google Calendar events for the next N days (default: 7). Returns event IDs needed for deletion.

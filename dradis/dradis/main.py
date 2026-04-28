@@ -26,102 +26,18 @@ from web.server import (
     SETTINGS_DEFAULTS, SETTINGS_FILE, PROVIDERS,
     save_settings, SETTINGS_KEYS,
     register_tasks_changed_callback, register_run_task_callback, load_tasks,
+    register_monitors_changed_callback, register_run_monitor_callback, load_monitors,
     set_gcal_code_event, pop_gcal_pending_code,
     set_gmail_code_event, pop_gmail_pending_code,
 )
 import agent_core
-from agents.gcal import GCAL_TOKEN_FILE, _build_gcal_flow, create_gcal_agent, fetch_gcal_events
-from agents.gmail import GMAIL_TOKEN_FILE, _build_gmail_flow, create_gmail_agent, fetch_gmail_inbox
-from agents.weather import create_weather_agent, fetch_weather
-from agents.web_search import create_web_search_agent, fetch_web_search
+from agents.gcal import GCAL_TOKEN_FILE, _build_gcal_flow, create_gcal_agent
+from agents.gmail import GMAIL_TOKEN_FILE, _build_gmail_flow, create_gmail_agent
+from agents.weather import create_weather_agent
+from agents.web_search import create_web_search_agent
+from agents.thunderstorm_monitor import run_thunderstorm_monitor
 
 WEB_PORT = 8099
-
-# Keyword sets used for intent-based pre-fetching (avoids LLM tool-decision call).
-# Only Italian and English are supported — messages in other languages will fall
-# back to the standard 2-call tool path (keyword not matched → no pre-fetch).
-_WEATHER_KW = {
-    # Italian
-    "meteo", "previsioni", "temperatura", "pioggia", "vento", "sole",
-    "caldo", "freddo", "neve", "umidità", "uv", "tempo", "nuvoloso",
-    "nebbia", "grandine", "temporale", "allerta", "precipitazioni",
-    # English
-    "weather", "forecast", "temperature", "rain", "wind", "sunny",
-    "hot", "cold", "snow", "humidity", "cloud", "cloudy", "storm",
-    "thunderstorm", "fog", "hail", "precipitation", "outlook",
-}
-_WS_KW = {
-    # Italian
-    "cerca", "notizie", "trova", "recenti", "internet", "aggiornamenti",
-    "articolo", "ricerca", "ultime", "novità", "web",
-    # English
-    "search", "news", "find", "latest", "article", "update",
-    "browse", "online",
-}
-_GCAL_KW = {
-    # Italian
-    "agenda", "appuntamento", "evento", "riunione", "impegni",
-    "domani", "settimana", "oggi", "eventi", "orario", "quando",
-    "incontro", "promemoria", "scadenza",
-    # English
-    "calendar", "schedule", "meeting", "appointment", "event",
-    "tomorrow", "today", "week", "reminder", "deadline", "booking",
-}
-_GMAIL_KW = {
-    # Italian
-    "email", "mail", "posta", "messaggio", "gmail", "non lette",
-    "mittente", "oggetto", "ricevuto", "risposta", "invia", "scrivi",
-    # English
-    "inbox", "unread", "sender", "subject", "received",
-    "reply", "send", "write", "compose",
-}
-
-# Matches location from natural phrases in both Italian and English.
-# Patterns covered:
-#   "meteo a Roma", "weather in London", "che tempo fa a Bacoli",
-#   "previsioni per Napoli", "forecast for Paris tomorrow",
-#   "piove a Milano?", "nevica a Torino?"
-_WEATHER_LOCATION_RE = re.compile(
-    r'(?:'
-    r'(?:meteo|previsioni|temperatura|forecast|weather|temperature|outlook)'
-    r'\s+(?:a|in|di|per|for|at|of)\s+'
-    r'|'
-    r'(?:che\s+)?tempo\s+fa\s+a\s+'
-    r'|'
-    r'(?:piove|nevica|grandina)\s+a\s+'
-    r')'
-    r'([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{1,30}?)'
-    r'(?:\s*[?!,.]|\s+(?:oggi|domani|this|tomorrow|next|ora|now)|\s*$)',
-    re.IGNORECASE,
-)
-
-
-def _extract_weather_location(text: str) -> str | None:
-    m = _WEATHER_LOCATION_RE.search(text)
-    return m.group(1).strip() if m else None
-
-
-# Matches home location from agent instructions.
-# Patterns covered:
-#   "vivo a Bacoli", "abito a Napoli", "sono di Roma",
-#   "I live in London", "I'm based in Paris", "located in Berlin"
-_HOME_LOCATION_RE = re.compile(
-    r'(?:vivo|abito|risiedo|sono di|mi trovo a|sono a'
-    r'|live in|based in|located in|I am in|I\'m in'
-    r'|home is|home city is)'
-    r'\s+(?:a|in|di)?\s*'
-    r'([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{1,30}?)'
-    r'(?:\s*[.,;!?]|\s+e\s+|\s+and\s+|\s*$)',
-    re.IGNORECASE,
-)
-
-
-def _extract_location_from_instructions(text: str) -> str | None:
-    """Extract a home/default location from DRADIS agent instructions.
-    Used as fallback when the user asks about weather without specifying a city."""
-    m = _HOME_LOCATION_RE.search(text)
-    return m.group(1).strip() if m else None
-
 
 # Maps Team member agent names to token-tracking categories
 _MEMBER_TOKEN_MAP = {
@@ -323,62 +239,38 @@ def format_metrics(response, duration: float) -> str:
 
 # ── Team / agent builder ──────────────────────────────────────────────────────
 
-async def _prefetch_context(user_message: str, settings: dict) -> dict[str, str]:
-    lower = user_message.lower()
-    coros: dict = {}
 
-    if settings.get("weather_enabled") and any(kw in lower for kw in _WEATHER_KW):
-        loc = _extract_weather_location(user_message)
-        if not loc:
-            # Fallback: extract location from agent instructions
-            # (e.g. user wrote "vivo a Bacoli" in the agent instructions)
-            loc = _extract_location_from_instructions(
-                settings.get("agent_instructions", "")
-            )
-        if loc:
-            coros["weather"] = fetch_weather(loc)
-
-    if settings.get("ws_enabled") and TAVILY_API_KEY and any(kw in lower for kw in _WS_KW):
-        coros["web_search"] = fetch_web_search(user_message, TAVILY_API_KEY)
-
-    if settings.get("gcal_enabled") and GCAL_TOKEN_FILE.exists() and any(kw in lower for kw in _GCAL_KW):
-        coros["gcal"] = fetch_gcal_events()
-
-    if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists() and any(kw in lower for kw in _GMAIL_KW):
-        coros["gmail"] = fetch_gmail_inbox()
-
-    if not coros:
-        return {}
-
-    results = await asyncio.gather(*coros.values(), return_exceptions=True)
-    output  = {}
-    for k, v in zip(coros.keys(), results):
-        if isinstance(v, str):
-            output[k] = v
-        elif isinstance(v, Exception):
-            print(f"[DRADIS] Prefetch error for '{k}': {v}")
-            asyncio.create_task(_send_error_telegram(
-                f"⚠️ Sub-agent <b>{html.escape(k)}</b> prefetch failed: {html.escape(str(v))}"
-            ))
-    return output
-
-
-def _build_members(settings: dict, prefetched: dict | None = None) -> list:
-    pf = prefetched or {}
+def _build_members(settings: dict) -> list:
     members = []
     if settings.get("ws_enabled") and TAVILY_API_KEY:
-        members.append(create_web_search_agent(settings, TAVILY_API_KEY, pf.get("web_search")))
+        members.append(create_web_search_agent(settings, TAVILY_API_KEY))
     if settings.get("weather_enabled"):
-        members.append(create_weather_agent(settings, pf.get("weather")))
+        members.append(create_weather_agent(settings))
     if settings.get("gcal_enabled") and GCAL_TOKEN_FILE.exists():
-        members.append(create_gcal_agent(settings, pf.get("gcal")))
+        members.append(create_gcal_agent(settings))
     if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists():
-        members.append(create_gmail_agent(settings, pf.get("gmail")))
+        members.append(create_gmail_agent(settings))
     return members
 
 
 def _build_executor(system_prompt: str, model: str, provider: str, members: list):
+    # Inject routing rules into the team leader system prompt to prevent
+    # the leader from calling irrelevant members (e.g. Web Search for weather).
     if members:
+        member_names = {m.name for m in members}
+        routing_rules = []
+        if "weather" in member_names and "web_search" in member_names:
+            routing_rules.append(
+                "- If the user asks about weather, forecasts, temperature, rain, wind, "
+                "thunderstorm risk or any meteorological topic, delegate ONLY to the "
+                "Weather member. Do NOT call Web Search for weather questions."
+            )
+        if routing_rules:
+            rules_text = (
+                "\n\nROUTING RULES (follow strictly):\n"
+                + "\n".join(routing_rules)
+            )
+            system_prompt = system_prompt + rules_text
         return agent_core.create_team(system_prompt, model, provider, members)
     return agent_core.create_agent(system_prompt, model, provider)
 
@@ -403,6 +295,96 @@ def _track_tokens(response, member_responses: list):
         cat = _MEMBER_TOKEN_MAP.get(mr.agent_name, "")
         if cat:
             agent_core._add_tokens(cat, mr)
+
+
+def _is_failed_response(response) -> bool:
+    """Return True when agno returned a failed or empty response.
+
+    Agno never re-raises model errors (rate limit, provider errors, etc.) —
+    it catches them internally, sets response.status = "ERROR", puts the error
+    message in response.content, and returns normally. We must detect both cases:
+    - status == "ERROR": explicit agno error (rate limit, provider error, …)
+    - empty content: agno swallowed the error without setting status
+
+    IMPORTANT: RunStatus is class RunStatus(str, Enum) with error = "ERROR".
+    str(RunStatus.error) returns "RunStatus.error" in Python < 3.11, so we
+    must compare directly via == or check .value — never use str() conversion.
+    """
+    try:
+        status = getattr(response, "status", None)
+        if status is not None:
+            # Direct == uses str.__eq__ on the mixin value ("ERROR") — works on all Python versions
+            if status == "ERROR" or getattr(status, "value", None) == "ERROR":
+                return True
+        return not (response.content or "").strip()
+    except Exception:
+        return True
+
+
+async def _run_with_fallback(
+    executor,
+    prompt: str,
+    settings: dict,
+    system_prompt: str,
+    primary_model: str,
+    primary_provider: str,
+    context_label: str = "DRADIS",
+) -> tuple:
+    """Run *executor* with *prompt*; on exception OR empty response retry with
+    the configured fallback model.
+
+    Returns (response, used_fallback: bool, error: Exception|None).
+    *error* is set only when both primary and fallback fail.
+    """
+    response      = None
+    primary_error = None
+
+    # ── Primary attempt ───────────────────────────────────────────────────────
+    try:
+        response = await executor.arun(prompt)
+    except Exception as e:
+        primary_error = e
+        print(f"[DRADIS] {context_label} primary arun exception: {e}")
+
+    # Agno never re-raises model errors — detect via status=="ERROR" or empty content
+    if response is not None and primary_error is None and _is_failed_response(response):
+        status = getattr(response, "status", None)
+        is_error_status = status is not None and (status == "ERROR" or getattr(status, "value", None) == "ERROR")
+        reason = f"status={getattr(status, 'value', status)}" if is_error_status else "empty content"
+        primary_error = RuntimeError(
+            f"Model {primary_model!r} failed ({reason}): {(response.content or '').strip()[:200]}"
+        )
+        print(f"[DRADIS] {context_label} failed response ({reason}) — triggering fallback")
+
+    if primary_error is None:
+        return response, False, None
+
+    # ── Fallback attempt ──────────────────────────────────────────────────────
+    fb_model = (settings.get("fallback_model") or "").strip()
+    if not fb_model:
+        return None, False, primary_error
+
+    fb_settings = _apply_fallback_settings(settings)
+    fb_model_id = fb_settings.get("model", primary_model)
+    fb_provider = fb_settings.get("provider", primary_provider)
+    fb_members  = _build_members(fb_settings)
+    fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members)
+    print(f"[DRADIS] {context_label} fallback: model={fb_model_id} provider={fb_provider}")
+
+    try:
+        response = await fb_executor.arun(prompt)
+        if _is_failed_response(response):
+            status = getattr(response, "status", None)
+            is_error_status = status is not None and (status == "ERROR" or getattr(status, "value", None) == "ERROR")
+            reason = f"status={getattr(status, 'value', status)}" if is_error_status else "empty content"
+            raise RuntimeError(
+                f"Fallback model {fb_model_id!r} also failed ({reason}): "
+                f"{(response.content or '').strip()[:200]}"
+            )
+        return response, True, None
+    except Exception as e2:
+        print(f"[DRADIS] {context_label} fallback arun exception: {e2}")
+        return None, True, e2
 
 
 def _build_metrics_parts(response, duration: float, member_responses: list, settings: dict) -> list:
@@ -534,39 +516,46 @@ async def run_scheduled_task(task: dict):
     model         = settings.get("model",    SETTINGS_DEFAULTS["model"])
     provider      = settings.get("provider", SETTINGS_DEFAULTS["provider"])
 
-    prefetched = await _prefetch_context(instructions, settings)
-    members    = _build_members(settings, prefetched)
-    executor   = _build_executor(system_prompt, model, provider, members)
-    print(f"[DRADIS] Scheduled task '{task_name}': model={model} members={[m.name for m in members]} prefetched={list(prefetched)}")
+    members  = _build_members(settings)
+    executor = _build_executor(system_prompt, model, provider, members)
+    print(f"[DRADIS] Scheduled task '{task_name}': model={model} members={[m.name for m in members]}")
 
     start_time = time.time()
-    try:
-        response = await executor.arun(instructions)
-    except Exception as e:
-        fb_model = (settings.get("fallback_model") or "").strip()
-        if fb_model:
+    await _send_error_telegram(
+        f"⚠️ Task <b>{html.escape(task_name)}</b> starting with model <code>{html.escape(model)}</code>…"
+    ) if False else None  # placeholder — removed; real notifications below
+
+    response, used_fallback, error = await _run_with_fallback(
+        executor       = executor,
+        prompt         = instructions,
+        settings       = settings,
+        system_prompt  = system_prompt,
+        primary_model    = model,
+        primary_provider = provider,
+        context_label    = f"Task '{task_name}'",
+    )
+
+    if error is not None:
+        fb_model_id = _apply_fallback_settings(settings).get("model", model) if used_fallback else model
+        if used_fallback:
             await _send_error_telegram(
-                f"⚠️ Task <b>{html.escape(task_name)}</b> model error (<code>{html.escape(model)}</code>): {html.escape(str(e))}\n"
-                "🔄 Retrying with fallback model…"
+                f"❌ Task <b>{html.escape(task_name)}</b> — primary (<code>{html.escape(model)}</code>) "
+                f"and fallback (<code>{html.escape(fb_model_id)}</code>) both failed: {html.escape(str(error))}"
             )
-            fb_settings = _apply_fallback_settings(settings)
-            fb_model_id = fb_settings.get("model", model)
-            fb_provider = fb_settings.get("provider", provider)
-            fb_members  = _build_members(fb_settings, prefetched)
-            fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members)
-            print(f"[DRADIS] Task fallback: model={fb_model_id} provider={fb_provider}")
-            try:
-                response = await fb_executor.arun(instructions)
-            except Exception as e2:
-                await _send_error_telegram(
-                    f"❌ Task <b>{html.escape(task_name)}</b> fallback also failed (<code>{html.escape(fb_model_id)}</code>): {html.escape(str(e2))}"
-                )
-                return
         else:
             await _send_error_telegram(
-                f"❌ Scheduled task <b>{html.escape(task_name)}</b> failed: {html.escape(str(e))}"
+                f"❌ Task <b>{html.escape(task_name)}</b> failed (<code>{html.escape(model)}</code>): "
+                f"{html.escape(str(error))}\n<i>No fallback model configured.</i>"
             )
-            return
+        return
+
+    if used_fallback:
+        fb_model_id = _apply_fallback_settings(settings).get("model", model)
+        await _send_error_telegram(
+            f"⚠️ Task <b>{html.escape(task_name)}</b>: primary model <code>{html.escape(model)}</code> failed — "
+            f"responded via fallback <code>{html.escape(fb_model_id)}</code> ✅"
+        )
+
     duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)
     _track_tokens(response, member_responses)
@@ -591,7 +580,10 @@ async def run_scheduled_task(task: dict):
 
 def reload_task_jobs():
     tz = read_settings().get("timezone", "UTC") or "UTC"
-    _scheduler.remove_all_jobs()
+    # Remove only task jobs (monitors have id prefixed with 'monitor:')
+    for job in list(_scheduler.get_jobs()):
+        if not job.id.startswith("monitor:"):
+            job.remove()
     for task in load_tasks():
         if task.get("enabled") and task.get("cron"):
             try:
@@ -606,6 +598,69 @@ def reload_task_jobs():
                 print(f"[DRADIS] Scheduled task '{task['name']}' cron={task['cron']} tz={tz}")
             except Exception as e:
                 print(f"[DRADIS] WARNING: invalid cron for task '{task.get('name')}': {e}")
+
+
+# ── Monitors runner ──────────────────────────────────────────────────────────
+
+_MONITOR_RUNNERS = {
+    "thunderstorm": run_thunderstorm_monitor,
+}
+
+
+async def run_scheduled_monitor(monitor: dict):
+    global _telegram_bot
+    if not _telegram_bot:
+        return
+    monitor_name = monitor.get("name", "Monitor")
+    monitor_type = monitor.get("type", "thunderstorm")
+    runner = _MONITOR_RUNNERS.get(monitor_type)
+    if not runner:
+        await _send_error_telegram(
+            f"⚠️ Monitor <b>{html.escape(monitor_name)}</b>: unknown type '{html.escape(monitor_type)}'"
+        )
+        return
+
+    settings = read_settings()
+    tz_name  = settings.get("timezone", "UTC") or "UTC"
+    print(f"[DRADIS] Monitor '{monitor_name}' type={monitor_type} location={monitor.get('location')}")
+
+    try:
+        text = await runner(monitor, tz_name=tz_name)
+    except Exception as e:
+        print(f"[DRADIS] Monitor '{monitor_name}' error: {e}")
+        await _send_error_telegram(
+            f"❌ Monitor <b>{html.escape(monitor_name)}</b> failed: {html.escape(str(e))}"
+        )
+        return
+
+    if text:
+        await _telegram_bot.send_message(
+            chat_id=ALLOWED_CHAT_ID,
+            text=text,
+            parse_mode=ParseMode.HTML,
+        )
+
+
+def reload_monitor_jobs():
+    tz = read_settings().get("timezone", "UTC") or "UTC"
+    # Remove only monitor jobs (tasks are prefixed differently)
+    for job in list(_scheduler.get_jobs()):
+        if job.id.startswith("monitor:"):
+            job.remove()
+    for monitor in load_monitors():
+        if monitor.get("enabled") and monitor.get("cron"):
+            try:
+                _scheduler.add_job(
+                    run_scheduled_monitor,
+                    CronTrigger.from_crontab(monitor["cron"], timezone=tz),
+                    args=[monitor],
+                    id=f"monitor:{monitor['id']}",
+                    replace_existing=True,
+                    misfire_grace_time=60,
+                )
+                print(f"[DRADIS] Scheduled monitor '{monitor['name']}' cron={monitor['cron']} tz={tz}")
+            except Exception as e:
+                print(f"[DRADIS] WARNING: invalid cron for monitor '{monitor.get('name')}': {e}")
 
 
 # ── Telegram handlers ─────────────────────────────────────────────────────────
@@ -624,46 +679,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     model    = settings.get("model",    SETTINGS_DEFAULTS["model"])
     provider = settings.get("provider", SETTINGS_DEFAULTS["provider"])
 
-    prefetched = await _prefetch_context(question, settings)
-    members    = _build_members(settings, prefetched)
-    executor   = _build_executor(system_prompt, model, provider, members)
-    print(f"[DRADIS] model: {model} | members: {[m.name for m in members]} | prefetched: {list(prefetched)}")
+    members  = _build_members(settings)
+    executor = _build_executor(system_prompt, model, provider, members)
+    print(f"[DRADIS] model: {model} | members: {[m.name for m in members]}")
 
     start_time = time.time()
-    try:
-        response = await executor.arun(prompt)
-    except Exception as e:
-        print(f"[DRADIS] arun error: {e}")
-        fb_model = (settings.get("fallback_model") or "").strip()
-        if fb_model:
-            await _send_error_telegram(
-                f"⚠️ Model error (<code>{html.escape(model)}</code>): {html.escape(str(e))}\n"
-                "🔄 Retrying with fallback model…"
+
+    response, used_fallback, error = await _run_with_fallback(
+        executor         = executor,
+        prompt           = prompt,
+        settings         = settings,
+        system_prompt    = system_prompt,
+        primary_model    = model,
+        primary_provider = provider,
+        context_label    = "handle_message",
+    )
+
+    if error is not None:
+        fb_model_id = _apply_fallback_settings(settings).get("model", model) if used_fallback else model
+        if used_fallback:
+            err_msg = (
+                f"❌ Both primary (<code>{html.escape(model)}</code>) and "
+                f"fallback (<code>{html.escape(fb_model_id)}</code>) models failed: "
+                f"{html.escape(str(error))}"
             )
-            fb_settings = _apply_fallback_settings(settings)
-            fb_model_id = fb_settings.get("model", model)
-            fb_provider = fb_settings.get("provider", provider)
-            fb_members  = _build_members(fb_settings, prefetched)
-            fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members)
-            print(f"[DRADIS] Fallback: model={fb_model_id} provider={fb_provider}")
-            try:
-                response = await fb_executor.arun(prompt)
-            except Exception as e2:
-                await _send_error_telegram(
-                    f"❌ Fallback also failed (<code>{html.escape(fb_model_id)}</code>): {html.escape(str(e2))}"
-                )
-                await update.message.reply_text(
-                    f"❌ Both primary and fallback models failed.\n"
-                    f"Fallback error (<code>{html.escape(fb_model_id)}</code>): {html.escape(str(e2))}",
-                    parse_mode=ParseMode.HTML,
-                )
-                return
+            await _send_error_telegram(err_msg)
+            await update.message.reply_text(err_msg, parse_mode=ParseMode.HTML)
         else:
             await update.message.reply_text(
-                f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(e))}",
+                f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(error))}\n"
+                "<i>No fallback model configured.</i>",
                 parse_mode=ParseMode.HTML,
             )
-            return
+        return
+
+    if used_fallback:
+        fb_model_id = _apply_fallback_settings(settings).get("model", model)
+        await _send_error_telegram(
+            f"⚠️ Primary model <code>{html.escape(model)}</code> failed — "
+            f"replied via fallback <code>{html.escape(fb_model_id)}</code> ✅"
+        )
+
     duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)
     _track_tokens(response, member_responses)
@@ -681,7 +737,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             md_to_html(text) + f"\n\n<i>{agents_label}</i>",
             parse_mode=ParseMode.HTML,
         )
-    elif not response.content:
+    else:
         await update.message.reply_text(
             f"⚠️ Model <code>{html.escape(model)}</code> returned no text (tool-call only response).\n\n<i>{agents_label}</i>",
             parse_mode=ParseMode.HTML,
@@ -927,6 +983,7 @@ COMMANDS = [
     BotCommand("info",         "Status and configuration of all agents"),
     BotCommand("menu",         "List all available commands"),
     BotCommand("tasks",        "List and run enabled tasks"),
+    BotCommand("monitors",     "List and run enabled monitors"),
     BotCommand("tokens",       "Show total token usage"),
     BotCommand("tokens_reset", "Reset token counters"),
     BotCommand("gcalauth",     "Connect Google Calendar (OAuth2)"),
@@ -988,6 +1045,26 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ALLOWED_CHAT_ID:
+        return
+    monitors = [m for m in load_monitors() if m.get("enabled")]
+    if not monitors:
+        await update.message.reply_text("No enabled monitors. Enable monitors from the Web UI.")
+        return
+    keyboard = [
+        [InlineKeyboardButton(
+            f"{m['name']} ({m.get('location', '?')})",
+            callback_data=f"monitor:{m['id']}"
+        )]
+        for m in monitors
+    ]
+    await update.message.reply_text(
+        "Select a monitor to run now:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 async def handle_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != ALLOWED_CHAT_ID:
@@ -1006,6 +1083,25 @@ async def handle_task_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     asyncio.create_task(run_scheduled_task(task))
 
 
+async def handle_monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    monitor_id = query.data.removeprefix("monitor:")
+    monitor    = next((m for m in load_monitors() if m["id"] == monitor_id), None)
+    await query.answer()
+    if not monitor:
+        await query.message.reply_text("❌ Monitor not found.")
+        return
+    await query.message.reply_text(
+        f"▶️ Launching monitor <b>{html.escape(monitor['name'])}</b> "
+        f"({html.escape(monitor.get('location', '?'))})…",
+        parse_mode=ParseMode.HTML,
+    )
+    asyncio.create_task(run_scheduled_monitor(monitor))
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def build_telegram_app():
@@ -1013,11 +1109,13 @@ def build_telegram_app():
     app.add_handler(CommandHandler("info",         cmd_info))
     app.add_handler(CommandHandler("menu",         cmd_menu))
     app.add_handler(CommandHandler("tasks",        cmd_tasks))
+    app.add_handler(CommandHandler("monitors",     cmd_monitors))
     app.add_handler(CommandHandler("tokens",       cmd_tokens))
     app.add_handler(CommandHandler("tokens_reset", cmd_tokens_reset))
     app.add_handler(CommandHandler("gcalauth",     cmd_gcalauth))
     app.add_handler(CommandHandler("gmailauth",    cmd_gmailauth))
-    app.add_handler(CallbackQueryHandler(handle_task_callback, pattern=r"^task:"))
+    app.add_handler(CallbackQueryHandler(handle_task_callback,    pattern=r"^task:"))
+    app.add_handler(CallbackQueryHandler(handle_monitor_callback, pattern=r"^monitor:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     return app
@@ -1047,8 +1145,11 @@ async def main():
         _telegram_bot = telegram_app.bot
         _scheduler.start()
         reload_task_jobs()
+        reload_monitor_jobs()
         register_tasks_changed_callback(reload_task_jobs)
         register_run_task_callback(run_scheduled_task)
+        register_monitors_changed_callback(reload_monitor_jobs)
+        register_run_monitor_callback(run_scheduled_monitor)
         settings    = read_settings()
         startup_msg = settings.get("startup_message", SETTINGS_DEFAULTS["startup_message"])
         await telegram_app.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=startup_msg)

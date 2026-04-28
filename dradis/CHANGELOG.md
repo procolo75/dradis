@@ -1,5 +1,70 @@
 # CHANGELOG
 
+## [2.8.6] - 2026-04-28
+- **Fix — wrong weekday name in weather forecast**: the weather agent was passing only ISO date strings (`2026-04-28`) to the LLM, which then computed the day of the week incorrectly. Fixed by adding the English weekday name to each day's entry in `_summarise_hourly` and to the `daily` block in `fetch_weather`. Also updated `_now_str` in `agent_core.py` to include the weekday in the system-prompt timestamp so the model always knows what day today is.
+
+## [2.8.5] - 2026-04-28
+- **Refactor — dead code cleanup + weather simplification**: removed all fetch-layer dead code left over from the prefetch removal (v2.8.2). `fetch_web_search`, `fetch_gcal_events`, `fetch_gmail_inbox` removed from their agent files (only ever called by the now-deleted prefetch layer; internal tools use `_sync_*` helpers and `TavilyClient` directly). Removed corresponding unused imports from `main.py`. In `agents/weather.py`: removed instability mode entirely (`_band_mean`, `_band_max`, `_build_instability_raw_report`, `instability` parameter from `fetch_weather` and `get_weather` tool, all convective variables CAPE/LI/CIN/LPI/minutely_15). `fetch_weather(location, days)` and `get_weather` tool now handle only standard forecasts (current + hourly bands + daily).
+
+## [2.8.4] - 2026-04-28
+- **Fix — fallback status check broken on Python < 3.11**: `_is_failed_response()` in v2.8.3 used `str(RunStatus.error).upper() == "ERROR"` to detect agno error responses. `RunStatus` is `class RunStatus(str, Enum)` — on Python < 3.11, `str(RunStatus.error)` returns `"RunStatus.error"` (the enum name), not `"ERROR"` (the value), so the check always returned `False` and the fallback never triggered. Fixed by using direct comparison `status == "ERROR"` (which uses `str.__eq__` through the mixin and compares the underlying string value correctly on all Python versions) plus `getattr(status, "value", None) == "ERROR"` as a secondary guard. Same fix applied to the two inline `reason` log-string builders.
+
+## [2.8.3] - 2026-04-28
+- **Fix — fallback not triggered on rate limit / provider errors**: agno never re-raises model errors — it catches them internally, sets `response.status = "ERROR"`, puts the error message in `response.content`, and returns the response object normally. The previous `_is_empty_response()` check only looked at empty content and therefore missed these failures (content was non-empty — it contained the error string). Replaced with `_is_failed_response()` which first checks `response.status == "ERROR"` and then falls back to the empty-content check. The fallback model now correctly triggers on rate limit, TPD exhaustion, and any other provider error that agno surfaces via `ModelProviderError`.
+
+## [2.8.2] - 2026-04-28
+- **Refactor — remove prefetch architecture**: eliminated the intent-based pre-fetching layer (`_prefetch_context`, all keyword sets `_WEATHER_KW` / `_WS_KW` / `_GCAL_KW` / `_GMAIL_KW` / `_INSTABILITY_KW`, regex patterns `_WEATHER_LOCATION_RE` / `_HOME_LOCATION_RE`, and helper functions `_extract_weather_location`, `_extract_location_from_instructions`, `_extract_days_from_message`). Sub-agents (weather, web search, gcal, gmail) now always use their tool-call path — data is fetched on demand by the agent when the model decides to call the tool, rather than speculatively before team construction. `_build_members()` and `_run_with_fallback()` signatures simplified (no `prefetched` parameter).
+
+## [2.8.1] - 2026-04-28
+- **Feature — Monitor language**: added a **Response language** selector (🇮🇹 Italiano / 🇬🇧 English) to the monitor configuration form. The selection is persisted in `monitors.json` as a `language` field (default `"it"`) and passed to `run_thunderstorm_monitor`. All report strings (band labels, risk levels, field labels, header, footer) are rendered in the chosen language.
+
+## [2.8.0] - 2026-04-28
+- **Feature — Monitors**: introduced a new category of scheduled automation distinct from Tasks. Monitors are LLM-free jobs that fetch data from external APIs and compute results entirely in Python — no model call, no token cost, deterministic output.
+- **First monitor: Thunderstorm Risk** (`type: thunderstorm`): fetches atmospheric instability data from Open-Meteo (CAPE, Lifted Index, CIN, wind gusts, precipitation probability) for a configurable location and computes an hourly risk score (0–10) per time band (00–06, 06–12, 12–18, 18–24). Risk levels: 🟢 LOW <2.5 · 🟡 MODERATE 2.5–5.0 · 🟠 HIGH 5.0–7.5 · 🔴 SEVERE >7.5. Weighted formula: CAPE 35% + Lifted Index 30% + Precip probability 15% + Wind gusts 10% + CIN (inverted) 10%.
+- **Web UI — Monitors section**: new sidebar section with `+` button. Monitor form includes: name, enabled toggle, monitor type dropdown, location field with **live geocoding validation** (resolves city to coordinates on the fly), forecast days (1–7), cron expression with preset dropdown and live validation.
+- **Backend — Monitors API**: `GET/POST /api/monitors`, `GET/PUT/DELETE /api/monitors/{id}`, `POST /api/monitors/{id}/run`, `GET /api/monitors/geocode`. Data persisted to `/data/monitors.json`.
+- **Telegram — `/monitors` command**: lists enabled monitors as inline buttons; tapping runs the monitor immediately and delivers the result to Telegram.
+- **Scheduler**: monitor jobs coexist with task jobs in the same APScheduler instance using a `monitor:` ID prefix. `reload_task_jobs()` no longer calls `remove_all_jobs()` — it removes only non-monitor jobs, preventing monitor jobs from being destroyed on task edits.
+- **New file**: `monitors/thunderstorm.py` — self-contained module with `run_thunderstorm_monitor(monitor, tz_name)` entry point; uses only `httpx`, `statistics`, and `zoneinfo` (all already in the container).
+
+- **Fix — fallback model not triggered on rate limit**: introduced the centralised `_run_with_fallback()` helper used by both `handle_message` and `run_scheduled_task`. The previous code only triggered the fallback on an explicit exception from `executor.arun()`, but agno often swallows rate-limit errors internally and returns `response.content = ""` without propagating anything — the fallback never fired. The new helper also detects empty responses and treats them as errors, correctly triggering the fallback model.
+- **Improved Telegram notifications**: when the fallback succeeds the user receives `⚠️ Primary model failed — replied via fallback ✅`. If the fallback also fails, the message is `❌ Both primary and fallback models failed` with both model names. Scheduled tasks follow the same logic.
+
+## [2.6.8] - 2026-04-27
+- **Feature — raw data report in instability mode**: `fetch_weather()` in instability mode now builds a pre-formatted raw data block (`_build_instability_raw_report()`) computed entirely in Python from open-meteo values. The block contains exact CAPE, LI, CIN, raffica max, WMO code and precip probability per time band per day, clearly labelled. The model receives explicit instructions to copy the 📡 lines verbatim and add only the risk assessment — preventing hallucination of values. Removed debug log block added in v2.6.7.
+
+## [2.6.6] - 2026-04-27
+- **Fix — explicit date not parsed for forecast days**: `_extract_days_from_message()` now handles explicit dates in natural language: `"30 aprile"`, `"il 30"`, `"30/04"`. Calculates the delta from today and requests exactly enough days to cover that date (capped at 16). Previously instability queries with a specific date (e.g. *"rischio temporali a Bacoli per il 30 aprile"*) defaulted to 2 days and missed the target date entirely.
+
+## [2.6.5] - 2026-04-27
+- **Fix — weekday name extracted as city**: `_extract_weather_location()` now rejects any candidate location that is a weekday name (lunedì, martedì, …, monday, tuesday, …). Previously "previsioni per giovedì" caused `loc='giovedi'` which made Open-Meteo geocoding fail silently and the weather agent receive no data.
+
+## [2.6.4] - 2026-04-27
+- **Debug — weather pre-fetch logging**: added explicit `print` statements in `_prefetch_context()` to log location extraction result, days, instability flag, and skip reason when no location is found. Visible in HA logs as `[DRADIS] Weather prefetch: loc=... days=... instability=...`.
+
+## [2.6.3] - 2026-04-27
+- **Fix — Web Search called for weather queries**: `_build_executor()` in `main.py` now injects explicit routing rules into the team leader system prompt when both Weather and Web Search members are active. The leader is instructed not to call Web Search for any meteorological topic (weather, forecasts, temperature, rain, wind, thunderstorm risk).
+
+## [2.6.2] - 2026-04-27
+- **Feature — smart forecast days extraction**: `_extract_days_from_message()` added to `main.py`. The pre-fetch now infers how many days to request from the natural language message instead of always fetching 7 days. Supported patterns: named weekday ("venerdì" → days until Friday), "oggi" (1), "domani" (2), "oggi e domani" (2), "prossimi N giorni" / "next N days" (N, capped at 7), "settimana" / "week" (7). Instability queries without explicit timeframe default to 2 days. Standard queries default to 3.
+- **Feature — exclusive variable sets per mode**: `fetch_weather()` now uses fully separate API variable sets for standard vs instability mode. Instability mode fetches only convective parameters (CAPE, LI, CIN, freezing level, BL height, gusts, precip probability, LPI) with no temperature/humidity/dew point noise. Standard mode fetches only temperature, humidity, dew point, precip, wind, cloud cover with no convective parameters.
+
+## [2.6.1] - 2026-04-27
+- **Fix — token overflow on small-context models (Groq 8k)**: raw hourly JSON for 7 days (168 rows × 10+ variables) was too large for Groq and caused models like OpenRouter to silently ignore the data and hallucinate. Added `_summarise_hourly()` in `weather.py`: collapses hourly arrays into per-day, per-time-band (night/morning/afternoon/evening) mean/max dicts. Output is ~10x smaller and fits any model context.
+- **Fix — instability not passed in pre-fetch**: `_prefetch_context()` in `main.py` was calling `fetch_weather(loc)` without `instability=True` even for convective queries. Added `_INSTABILITY_KW` keyword set; when matched, `fetch_weather(loc, instability=True)` is called so CAPE/LI/CIN/LPI are already in the pre-fetched context.
+- **Fix — task city extraction**: `_WEATHER_LOCATION_RE` regex now also matches `"giorni? a <city>"` (e.g. *"prossimi 2 giorni a Bacoli"*) and convective phrases (*"rischio temporali a Bacoli"*, *"grandine a Napoli"*, *"allerta a ..."*) so scheduled tasks with those patterns correctly extract the location.
+- **Fix — LPI trimmed**: 15-minutely LPI data is trimmed to the first 96 slots (24h) to avoid bloating the context with sub-hourly data for multiple days.
+
+## [2.6.0] - 2026-04-27
+- **Feature — atmospheric instability parameters in Weather agent**: `fetch_weather()` and `get_weather()` now accept an `instability` flag. When set to `True`, the Open-Meteo request is enriched with convective/thunderstorm variables:
+  - **Hourly**: `cape`, `lifted_index`, `convective_inhibition`, `freezing_level_height`, `boundary_layer_height`
+  - **Daily**: `cape_mean`, `cape_max`, `updraft_max`
+  - **15-minutely** (Central Europe ICON-D2 + North America HRRR only): `cape`, `lightning_potential` (LPI)
+- **Improved base hourly variables**: all standard weather calls now fetch `hourly` data (previously only `current` + `daily`), adding `dew_point_2m`, `precipitation_probability`, `showers`, `cloud_cover`, `wind_gusts_10m`.
+- **Improved base daily variables**: standard calls now include `wind_speed_10m_max`, `wind_gusts_10m_max`, `precipitation_probability_max`.
+- **Tool docstring routing**: `get_weather` docstring now lists Italian and English trigger phrases for convective queries (`rischio temporali`, `grandine`, `instabilità`, `CAPE`, `supercella`, `thunderstorm risk`, `allerta`, etc.) so the LLM automatically sets `instability=True` for those requests.
+- **Fix — forecast days**: default raised from 3 to 7 days; maximum is 16 (open-meteo limit). Previous hardcoded `forecast_days=3` caused failures when the user asked for more than 3 days.
+
 ## [2.5.6] - 2026-04-27
 - **Fix — Google OAuth token expiration**: if the OAuth app is left in *Testing* mode, Google revokes the refresh token every 7 days. Updated setup docs (`DOCS.md`, `index.html`) to instruct users to publish the app to Production (no Google review required for personal use). Added graceful `RefreshError` handling in `gcal.py` and `gmail.py`: when a token is revoked, the token file is deleted so the user gets a clean re-auth prompt (`/gcalauth` or `/gmailauth`) instead of a cryptic crash. Gmail agent also sends a Telegram notification when the token needs to be renewed.
 

@@ -325,6 +325,14 @@
       <ul class="nav-list" id="sidebar-tasks"></ul>
     </div>
 
+    <div class="nav-section">
+      <span class="nav-section-label" style="display:flex;align-items:center;justify-content:space-between;">
+        Monitors
+        <button id="btn-new-monitor" title="New monitor" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
+      </span>
+      <ul class="nav-list" id="sidebar-monitors"></ul>
+    </div>
+
 
   </nav>
 
@@ -2310,6 +2318,13 @@ async function init() {
     console.error("loadTasks:", e);
   }
   renderSidebarTasks();
+
+  try {
+    monitors = await api("GET", "/api/monitors");
+  } catch (e) {
+    console.error("loadMonitors:", e);
+  }
+  renderSidebarMonitors();
 }
 
 // ── Tasks sidebar ─────────────────────────────────────────────────────────────
@@ -2566,6 +2581,267 @@ document.getElementById("btn-new-task").addEventListener("click", async () => {
     navigateTo("task", document.querySelector(`[data-task-id="${task.id}"]`));
   } catch {
     showToast("Error creating task", true);
+  }
+});
+
+// ── Monitors sidebar & panel ─────────────────────────────────────────────────
+
+let monitors = [];
+let selectedMonitorId = null;
+
+function renderSidebarMonitors() {
+  const ul = document.getElementById("sidebar-monitors");
+  ul.innerHTML = "";
+  monitors.forEach(m => {
+    const li = document.createElement("li");
+    li.className = "nav-item" + (m.id === selectedMonitorId ? " active" : "");
+    li.dataset.panel     = "monitor";
+    li.dataset.monitorId = m.id;
+    li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
+                    <span class="nav-icon">⚨️</span>
+                    <span class="nav-label">${m.name}</span>`;
+    li.addEventListener("click", () => {
+      selectedMonitorId = m.id;
+      renderSidebarMonitors();
+      renderMonitorForm(monitors.find(x => x.id === m.id));
+      navigateTo("monitor", li);
+    });
+    ul.appendChild(li);
+  });
+}
+
+async function validateCronMonitorLive(expr) {
+  const el = document.getElementById("m-cron-desc");
+  if (!el) return;
+  clearTimeout(_cronValidateTimer);
+  _cronValidateTimer = setTimeout(async () => {
+    if (!expr.trim()) { el.textContent = "—"; el.style.color = "var(--text-muted)"; return; }
+    try {
+      const data = await api("GET", `/api/tasks/validate-cron?expr=${encodeURIComponent(expr.trim())}`);
+      const tz = data.tz || await loadServerTz();
+      if (data.valid) {
+        const next = data.next_fire
+          ? new Date(data.next_fire).toLocaleString(undefined, { hour12: false })
+          : "—";
+        el.textContent = `✅ Valid — next: ${next} (server time ${tz})`;
+        el.style.color = "var(--success)";
+      } else {
+        el.textContent = `❌ ${data.error}`;
+        el.style.color = "var(--danger)";
+      }
+    } catch {
+      el.textContent = "Could not validate";
+      el.style.color = "var(--text-muted)";
+    }
+  }, 400);
+}
+
+async function resolveLocation(q) {
+  const hint = document.getElementById("m-location-hint");
+  if (!q.trim()) { if (hint) { hint.textContent = ""; } return; }
+  try {
+    const data = await api("GET", `/api/monitors/geocode?q=${encodeURIComponent(q.trim())}`);
+    if (hint) {
+      hint.textContent = `✅ ${data.name}, ${data.country} (§ ${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)})`;
+      hint.style.color = "var(--success)";
+    }
+  } catch {
+    if (hint) { hint.textContent = "❌ Location not found"; hint.style.color = "var(--danger)"; }
+  }
+}
+
+function renderMonitorForm(monitor) {
+  const monitorPresets = CRON_PRESETS.map(p =>
+    `<option value="${p.cron}" ${monitor.cron === p.cron ? "selected" : ""}>${p.label} (${p.cron})</option>`
+  ).join("");
+  const isCustomCron = !CRON_PRESETS.find(p => p.cron === (monitor.cron || "").trim());
+
+  // Build panel HTML inside panel-monitor div
+  let panelEl = document.getElementById("panel-monitor");
+  if (!panelEl) {
+    panelEl = document.createElement("div");
+    panelEl.id = "panel-monitor";
+    panelEl.className = "panel";
+    document.getElementById("content").appendChild(panelEl);
+  }
+
+  panelEl.innerHTML = `
+    <div class="form-card">
+      <h2>⚨️ ${monitor.name}</h2>
+
+      <div class="form-group">
+        <label for="m-name">Name</label>
+        <input type="text" id="m-name" value="${monitor.name || ""}">
+      </div>
+
+      <div class="form-group">
+        <div class="toggle-row">
+          <span class="toggle-label">Enabled</span>
+          <label class="toggle">
+            <input type="checkbox" id="m-enabled" ${monitor.enabled ? "checked" : ""}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="m-type">Monitor type</label>
+        <select id="m-type">
+          <option value="thunderstorm" ${monitor.type === "thunderstorm" ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
+        </select>
+        <small style="margin-top:4px;display:block;color:var(--text-muted)">
+          Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.
+        </small>
+      </div>
+
+      <div class="form-group">
+        <label for="m-location">Location</label>
+        <input type="text" id="m-location" value="${monitor.location || ""}" placeholder="e.g. Bacoli, Naples, Rome...">
+        <div class="model-hint" id="m-location-hint"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="m-language">Response language</label>
+        <select id="m-language" style="width:160px">
+          <option value="it" ${(monitor.language || "it") === "it" ? "selected" : ""}>🇮🇹 Italiano</option>
+          <option value="en" ${monitor.language === "en" ? "selected" : ""}>🇬🇧 English</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="m-days">Forecast days (1–7)</label>
+        <input type="number" id="m-days" min="1" max="7" value="${monitor.days || 2}" style="width:80px">
+      </div>
+
+      <div class="form-group">
+        <label for="m-cron-preset">Schedule preset</label>
+        <select id="m-cron-preset">
+          ${monitorPresets}
+          <option value="__custom__" ${isCustomCron ? "selected" : ""}>Custom…</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="m-cron">Cron expression</label>
+        <input type="text" id="m-cron" value="${monitor.cron || "0 7 * * *"}" placeholder="0 7 * * *">
+        <small id="m-cron-desc" style="margin-top:4px;display:block;color:var(--text-muted)">${cronDescription(monitor.cron || "")}</small>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-save" id="btn-save-monitor">Save</button>
+        <button class="btn-save" id="btn-run-monitor" style="background:var(--accent)">▶ Test Monitor</button>
+        <button class="btn-save" id="btn-delete-monitor" style="background:var(--danger,#e53935)">Delete</button>
+      </div>
+    </div>
+  `;
+
+  // Resolve location on load
+  if (monitor.location) resolveLocation(monitor.location);
+
+  // Live location resolve
+  let _locTimer = null;
+  document.getElementById("m-location").addEventListener("input", e => {
+    clearTimeout(_locTimer);
+    _locTimer = setTimeout(() => resolveLocation(e.target.value), 600);
+  });
+
+  // Validate cron on load
+  validateCronMonitorLive(monitor.cron || "0 7 * * *");
+
+  document.getElementById("m-cron-preset").addEventListener("change", e => {
+    if (e.target.value !== "__custom__") {
+      document.getElementById("m-cron").value = e.target.value;
+      validateCronMonitorLive(e.target.value);
+    }
+  });
+
+  document.getElementById("m-cron").addEventListener("input", e => {
+    const val = e.target.value.trim();
+    const match = CRON_PRESETS.find(p => p.cron === val);
+    const sel = document.getElementById("m-cron-preset");
+    sel.value = match ? match.cron : "__custom__";
+    validateCronMonitorLive(val);
+  });
+
+  document.getElementById("btn-save-monitor").onclick   = saveMonitor;
+  document.getElementById("btn-run-monitor").onclick    = runMonitor;
+  document.getElementById("btn-delete-monitor").onclick = deleteMonitor;
+}
+
+async function saveMonitor() {
+  const btn = document.getElementById("btn-save-monitor");
+  btn.disabled = true;
+  const payload = {
+    name:     document.getElementById("m-name").value.trim(),
+    enabled:  document.getElementById("m-enabled").checked,
+    cron:     document.getElementById("m-cron").value.trim(),
+    type:     document.getElementById("m-type").value,
+    location: document.getElementById("m-location").value.trim(),
+    language: document.getElementById("m-language").value,
+    days:     parseInt(document.getElementById("m-days").value, 10) || 2,
+  };
+  try {
+    const updated = await api("PUT", `/api/monitors/${selectedMonitorId}`, payload);
+    monitors = monitors.map(m => m.id === selectedMonitorId ? { ...m, ...updated } : m);
+    renderSidebarMonitors();
+    renderMonitorForm(monitors.find(m => m.id === selectedMonitorId));
+    navigateTo("monitor", document.querySelector(`[data-monitor-id="${selectedMonitorId}"]`));
+    showToast("Saved");
+  } catch (err) {
+    showToast(err.message || "Error saving", true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteMonitor() {
+  if (!confirm("Delete this monitor?")) return;
+  try {
+    await api("DELETE", `/api/monitors/${selectedMonitorId}`);
+    monitors = monitors.filter(m => m.id !== selectedMonitorId);
+    selectedMonitorId = null;
+    renderSidebarMonitors();
+    const panelEl = document.getElementById("panel-monitor");
+    if (panelEl) panelEl.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">⚨️</div>
+        <p>Select a monitor from the sidebar</p>
+      </div>`;
+    navigateTo("settings", document.querySelector(".nav-item[data-panel='settings']"));
+    showToast("Deleted");
+  } catch {
+    showToast("Error deleting", true);
+  }
+}
+
+async function runMonitor() {
+  const btn = document.getElementById("btn-run-monitor");
+  btn.disabled = true;
+  btn.textContent = "Running…";
+  try {
+    await api("POST", `/api/monitors/${selectedMonitorId}/run`);
+    showToast("Monitor started — result will arrive on Telegram");
+  } catch (err) {
+    showToast(err.message || "Error running monitor", true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = "▶ Test Monitor";
+  }
+}
+
+document.getElementById("btn-new-monitor").addEventListener("click", async () => {
+  try {
+    const monitor = await api("POST", "/api/monitors", {
+      name: "New Monitor", enabled: false, cron: "0 7 * * *",
+      type: "thunderstorm", location: "Rome", days: 2,
+    });
+    monitors.push(monitor);
+    selectedMonitorId = monitor.id;
+    renderSidebarMonitors();
+    renderMonitorForm(monitor);
+    navigateTo("monitor", document.querySelector(`[data-monitor-id="${monitor.id}"]`));
+  } catch (err) {
+    showToast(err.message || "Error creating monitor", true);
   }
 });
 

@@ -12,10 +12,11 @@ from pydantic import BaseModel
 import httpx
 from apscheduler.triggers.cron import CronTrigger
 
-AGENTS_FILE   = Path("/data/agents.json")
-TASKS_FILE    = Path("/data/tasks.json")
-OPTIONS_FILE  = Path("/data/options.json")
-SETTINGS_FILE = Path("/data/dradis_settings.json")
+AGENTS_FILE    = Path("/data/agents.json")
+TASKS_FILE     = Path("/data/tasks.json")
+MONITORS_FILE  = Path("/data/monitors.json")
+OPTIONS_FILE   = Path("/data/options.json")
+SETTINGS_FILE  = Path("/data/dradis_settings.json")
 HTML_FILE     = Path(__file__).parent / "index.html"
 
 PROVIDERS = [
@@ -131,6 +132,8 @@ def save_tasks(tasks: list[dict]):
 
 _on_tasks_changed: Callable | None = None
 _run_task_fn: Callable | None = None
+_on_monitors_changed: Callable | None = None
+_run_monitor_fn: Callable | None = None
 
 
 def register_tasks_changed_callback(fn: Callable):
@@ -146,6 +149,32 @@ def _notify_tasks_changed():
 def register_run_task_callback(fn: Callable):
     global _run_task_fn
     _run_task_fn = fn
+
+
+def register_monitors_changed_callback(fn: Callable):
+    global _on_monitors_changed
+    _on_monitors_changed = fn
+
+
+def _notify_monitors_changed():
+    if _on_monitors_changed:
+        _on_monitors_changed()
+
+
+def register_run_monitor_callback(fn: Callable):
+    global _run_monitor_fn
+    _run_monitor_fn = fn
+
+
+def load_monitors() -> list[dict]:
+    try:
+        return json.loads(MONITORS_FILE.read_text())
+    except Exception:
+        return []
+
+
+def save_monitors(monitors: list[dict]):
+    MONITORS_FILE.write_text(json.dumps(monitors, ensure_ascii=False, indent=2))
 
 
 SETTINGS_DEFAULTS = {
@@ -222,6 +251,16 @@ class TaskPayload(BaseModel):
     enabled:      bool = False
     cron:         str  = "0 8 * * *"
     instructions: str  = ""
+
+
+class MonitorPayload(BaseModel):
+    name:     str
+    enabled:  bool = False
+    cron:     str  = "0 7 * * *"
+    type:     str  = "thunderstorm"
+    location: str  = ""
+    days:     int  = 2
+    language: str  = "it"
 
 
 class SettingsPayload(BaseModel):
@@ -815,3 +854,95 @@ async def run_speedtest(payload: SpeedtestPayload, provider: str = "openrouter")
 @app.post("/api/openrouter/speedtest")
 async def run_speedtest_legacy(payload: SpeedtestPayload):
     return await run_speedtest(payload, provider="openrouter")
+
+
+# ── Monitors ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/monitors")
+async def list_monitors():
+    return load_monitors()
+
+
+@app.post("/api/monitors")
+async def create_monitor(payload: MonitorPayload):
+    valid, error, _ = _validate_cron_expr(payload.cron)
+    if not valid:
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {error}")
+    if not payload.location.strip():
+        raise HTTPException(status_code=400, detail="Monitor location is required")
+    monitors = load_monitors()
+    monitor = {
+        "id":         str(uuid4()),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **payload.model_dump(),
+    }
+    monitors.append(monitor)
+    save_monitors(monitors)
+    _notify_monitors_changed()
+    return monitor
+
+
+@app.put("/api/monitors/{monitor_id}")
+async def update_monitor(monitor_id: str, payload: MonitorPayload):
+    valid, error, _ = _validate_cron_expr(payload.cron)
+    if not valid:
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {error}")
+    if not payload.location.strip():
+        raise HTTPException(status_code=400, detail="Monitor location is required")
+    monitors = load_monitors()
+    for i, m in enumerate(monitors):
+        if m["id"] == monitor_id:
+            monitors[i] = {**m, **payload.model_dump()}
+            save_monitors(monitors)
+            _notify_monitors_changed()
+            return monitors[i]
+    raise HTTPException(status_code=404, detail="Monitor not found")
+
+
+@app.delete("/api/monitors/{monitor_id}")
+async def delete_monitor(monitor_id: str):
+    monitors = load_monitors()
+    monitors = [m for m in monitors if m["id"] != monitor_id]
+    save_monitors(monitors)
+    _notify_monitors_changed()
+    return {"ok": True}
+
+
+@app.post("/api/monitors/{monitor_id}/run")
+async def run_monitor_now(monitor_id: str):
+    if not _run_monitor_fn:
+        raise HTTPException(status_code=503, detail="Monitor runner not available")
+    monitor = next((m for m in load_monitors() if m["id"] == monitor_id), None)
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    if not monitor.get("location", "").strip():
+        raise HTTPException(status_code=400, detail="Monitor has no location configured")
+    asyncio.create_task(_run_monitor_fn(monitor))
+    return {"ok": True}
+
+
+@app.get("/api/monitors/geocode")
+async def geocode_location(q: str = ""):
+    """Resolve a location name to coordinates (used by the Web UI for validation)."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Query is required")
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": q, "count": 1, "language": "it", "format": "json"},
+            )
+        results = resp.json().get("results", [])
+        if not results:
+            raise HTTPException(status_code=404, detail=f"Location not found: {q!r}")
+        r = results[0]
+        return {
+            "name":      r.get("name", q),
+            "country":   r.get("country", ""),
+            "latitude":  r["latitude"],
+            "longitude": r["longitude"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
