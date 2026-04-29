@@ -152,66 +152,70 @@ def create_gtasks_agent(settings: dict):
         + settings.get("gtasks_instructions", "")
     )
 
-    async def list_tasks(task_list: str = "@default") -> str:
+    async def list_tasks(task_list: str | None = "@default") -> str:
         """List all open tasks in a Google Tasks list.
         Call this when the user wants to see, check, or review their tasks, to-do list, or things to do.
         Trigger phrases: 'cosa ho da fare', 'lista task', 'todo', 'mostrami i task', 'what do I have to do', 'show tasks'."""
         loop   = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _sync_list_tasks, task_list)
+        result = await loop.run_in_executor(None, _sync_list_tasks, task_list or "@default")
         if result == "NOT_AUTHENTICATED":
             return _not_auth_msg
         return result
 
     async def create_task(
         title: str,
-        notes: str = "",
-        due: str = "",
-        task_list: str = "@default",
+        notes: str | None = "",
+        due: str | None = "",
+        task_list: str | None = "@default",
     ) -> str:
         """Create a new task in Google Tasks.
         Call this when the user wants to add, create, or note down a task or to-do item.
         Trigger phrases: 'aggiungi', 'crea task', 'aggiungi alla lista', 'add task', 'remember to', 'ricorda di'.
         The due parameter is optional and must be a date in YYYY-MM-DD format."""
         loop   = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _sync_create_task, task_list, title, notes, due)
+        result = await loop.run_in_executor(
+            None, _sync_create_task, task_list or "@default", title, notes or "", due or ""
+        )
         if result == "NOT_AUTHENTICATED":
             return _not_auth_msg
         return result
 
-    async def complete_task(task_id: str, task_list: str = "@default") -> str:
+    async def complete_task(task_id: str, task_list: str | None = "@default") -> str:
         """Mark a task as completed in Google Tasks.
         Call this when the user marks a task as done, finished, or completed.
         Trigger phrases: 'fatto', 'completato', 'segna come fatto', 'done', 'mark complete'.
         IMPORTANT: first call list_tasks to retrieve the task ID, then call this with that ID."""
         loop   = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _sync_complete_task, task_list, task_id)
+        result = await loop.run_in_executor(None, _sync_complete_task, task_list or "@default", task_id)
         if result == "NOT_AUTHENTICATED":
             return _not_auth_msg
         return result
 
-    async def delete_task(task_id: str, task_list: str = "@default") -> str:
+    async def delete_task(task_id: str, task_list: str | None = "@default") -> str:
         """Delete a task from Google Tasks permanently.
         Call this when the user wants to remove or delete a task (not just complete it).
         Trigger phrases: 'cancella', 'elimina task', 'rimuovi', 'delete task', 'remove task'.
         IMPORTANT: first call list_tasks to retrieve the task ID, then call this with that ID."""
         loop   = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _sync_delete_task, task_list, task_id)
+        result = await loop.run_in_executor(None, _sync_delete_task, task_list or "@default", task_id)
         if result == "NOT_AUTHENTICATED":
             return _not_auth_msg
         return result
 
     async def update_task(
         task_id: str,
-        title: str = "",
-        notes: str = "",
-        task_list: str = "@default",
+        title: str | None = "",
+        notes: str | None = "",
+        task_list: str | None = "@default",
     ) -> str:
         """Update the title or notes of an existing task in Google Tasks.
         Call this when the user wants to rename, edit, or modify a task.
         Trigger phrases: 'rinomina', 'modifica task', 'cambia il nome', 'update task', 'edit task'.
         IMPORTANT: first call list_tasks to retrieve the task ID, then call this with that ID."""
         loop   = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _sync_update_task, task_list, task_id, title, notes)
+        result = await loop.run_in_executor(
+            None, _sync_update_task, task_list or "@default", task_id, title or "", notes or ""
+        )
         if result == "NOT_AUTHENTICATED":
             return _not_auth_msg
         return result

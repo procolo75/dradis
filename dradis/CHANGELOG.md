@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.9.3] - 2026-04-29
+- **Fix — `/todo` crash with null optional parameters**: Agno's tool schema validation rejects `null` for `str`-typed parameters even when they are optional. All 5 Google Tasks tool functions (`list_tasks`, `create_task`, `complete_task`, `delete_task`, `update_task`) now declare optional string parameters as `str | None` so the schema accepts both `null` and string values; `or` fallbacks in each function body restore the intended default.
+
 ## [2.9.2] - 2026-04-29
 - **Refactor — sidebar agent cleanup**: `renderSidebarAgents()` now removes only dynamically-injected custom agent items (identified by `data-agent-id`) instead of trimming to a hardcoded count. Adding new fixed tabs in future will never require updating this function.
 
