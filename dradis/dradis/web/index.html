@@ -266,6 +266,9 @@
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  details summary { user-select: none; }
+  details[open] .details-arrow { transform: rotate(90deg); }
+  .details-arrow { display: inline-block; transition: transform 0.2s; font-size: 0.7rem; }
   </style>
 </head>
 <body>
@@ -855,36 +858,42 @@
         </div>
 
         <div class="form-group">
-          <label>Google OAuth2 setup guide</label>
-          <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 6px;">
-            No Google username or password is stored — only a free OAuth2 credential is needed.
-            <strong>Do Part 1 once</strong> (covers both Calendar and Gmail). Then do Part 2 for each service you want to enable.
-          </p>
+          <details>
+            <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;color:var(--accent);list-style:none;display:flex;align-items:center;gap:6px;">
+              <span class="details-arrow">▶</span> Google OAuth2 setup guide
+            </summary>
+            <div style="margin-top:8px;">
+            <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 6px;">
+              No Google username or password is stored — only a free OAuth2 credential is needed.
+              <strong>Do Part 1 once</strong> (covers both Calendar and Gmail). Then do Part 2 for each service you want to enable.
+            </p>
 
-          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 1 — One-time Google Cloud setup</p>
-          <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
-            <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
-            <li><strong>APIs &amp; Services → Library</strong> → search <em>Google Calendar API</em> → <strong>Enable</strong>.<br>
-                Then search <em>Gmail API</em> → <strong>Enable</strong>.<br>
-                <em style="font-size:0.78rem;">(Enable only the ones you need — both are free.)</em></li>
-            <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
-            <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
-              <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days and you will need to re-authenticate repeatedly. Publishing makes the token permanent. No Google review is required for personal use.</em>
-            </li>
-            <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
-            <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
-            <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
-          </ol>
+            <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 1 — One-time Google Cloud setup</p>
+            <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+              <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
+              <li><strong>APIs &amp; Services → Library</strong> → search <em>Google Calendar API</em> → <strong>Enable</strong>.<br>
+                  Then search <em>Gmail API</em> → <strong>Enable</strong>.<br>
+                  <em style="font-size:0.78rem;">(Enable only the ones you need — both are free.)</em></li>
+              <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
+              <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
+                <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days and you will need to re-authenticate repeatedly. Publishing makes the token permanent. No Google review is required for personal use.</em>
+              </li>
+              <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
+              <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
+              <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
+            </ol>
 
-          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 2 — Authorize Google Calendar</p>
-          <ol start="8" style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
-            <li>Send <code>/gcalauth</code> to the Telegram bot → click the authorization link it replies with.</li>
-            <li>Sign in with your Google account → grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong>.</li>
-            <li>The bot confirms the connection. Enable Google Calendar above and save.</li>
-          </ol>
-          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
-            <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gcalauth &lt;url&gt;</code>.</em>
-          </p>
+            <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 2 — Authorize Google Calendar</p>
+            <ol start="8" style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+              <li>Send <code>/gcalauth</code> to the Telegram bot → click the authorization link it replies with.</li>
+              <li>Sign in with your Google account → grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong>.</li>
+              <li>The bot confirms the connection. Enable Google Calendar above and save.</li>
+            </ol>
+            <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
+              <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gcalauth &lt;url&gt;</code>.</em>
+            </p>
+            </div>
+          </details>
         </div>
 
         <div class="btn-row">
@@ -967,42 +976,48 @@
         </div>
 
         <div class="form-group">
-          <label>Google OAuth2 setup guide</label>
-          <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 6px;">
-            No Google username or password is stored — only a free OAuth2 credential is needed.
-            <strong>Do Part 1 once</strong> (covers both Calendar and Gmail). Then do Part 2 for each service you want to enable.
-          </p>
+          <details>
+            <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;color:var(--accent);list-style:none;display:flex;align-items:center;gap:6px;">
+              <span class="details-arrow">▶</span> Google OAuth2 setup guide
+            </summary>
+            <div style="margin-top:8px;">
+            <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 6px;">
+              No Google username or password is stored — only a free OAuth2 credential is needed.
+              <strong>Do Part 1 once</strong> (covers both Calendar and Gmail). Then do Part 2 for each service you want to enable.
+            </p>
 
-          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 1 — One-time Google Cloud setup</p>
-          <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
-            <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
-            <li><strong>APIs &amp; Services → Library</strong> → search <em>Google Calendar API</em> → <strong>Enable</strong>.<br>
-                Then search <em>Gmail API</em> → <strong>Enable</strong>.<br>
-                <em style="font-size:0.78rem;">(Enable only the ones you need — both are free.)</em></li>
-            <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
-            <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
-              <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days and you will need to re-authenticate repeatedly. Publishing makes the token permanent. No Google review is required for personal use.</em>
-            </li>
-            <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
-            <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
-            <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
-          </ol>
-          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:4px;">
-            <em>If you already completed Part 1 for Google Calendar, skip directly to step 8.</em>
-          </p>
+            <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 1 — One-time Google Cloud setup</p>
+            <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+              <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
+              <li><strong>APIs &amp; Services → Library</strong> → search <em>Google Calendar API</em> → <strong>Enable</strong>.<br>
+                  Then search <em>Gmail API</em> → <strong>Enable</strong>.<br>
+                  <em style="font-size:0.78rem;">(Enable only the ones you need — both are free.)</em></li>
+              <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
+              <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
+                <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days and you will need to re-authenticate repeatedly. Publishing makes the token permanent. No Google review is required for personal use.</em>
+              </li>
+              <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
+              <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
+              <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
+            </ol>
+            <p style="font-size:0.76rem; color:var(--text-muted); margin-top:4px;">
+              <em>If you already completed Part 1 for Google Calendar, skip directly to step 8.</em>
+            </p>
 
-          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 2 — Authorize Gmail</p>
-          <ol start="8" style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
-            <li>Send <code>/gmailauth</code> to the Telegram bot → click the authorization link it replies with.</li>
-            <li>Sign in with your Google account → grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong>.</li>
-            <li>The bot confirms the connection. Enable Gmail above and save.</li>
-          </ol>
-          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
-            <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gmailauth &lt;url&gt;</code>.</em>
-          </p>
-          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:4px;">
-            <em>Gmail uses a separate token from Calendar — run <code>/gmailauth</code> even if Calendar is already connected.</em>
-          </p>
+            <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 2 — Authorize Gmail</p>
+            <ol start="8" style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+              <li>Send <code>/gmailauth</code> to the Telegram bot → click the authorization link it replies with.</li>
+              <li>Sign in with your Google account → grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong>.</li>
+              <li>The bot confirms the connection. Enable Gmail above and save.</li>
+            </ol>
+            <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
+              <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gmailauth &lt;url&gt;</code>.</em>
+            </p>
+            <p style="font-size:0.76rem; color:var(--text-muted); margin-top:4px;">
+              <em>Gmail uses a separate token from Calendar — run <code>/gmailauth</code> even if Calendar is already connected.</em>
+            </p>
+            </div>
+          </details>
         </div>
 
         <div class="btn-row">
@@ -1085,37 +1100,43 @@
         </div>
 
         <div class="form-group">
-          <label>Google OAuth2 setup guide</label>
-          <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 6px;">
-            No Google username or password is stored — only a free OAuth2 credential is needed.
-            <strong>Do Part 1 once</strong> (covers Calendar, Gmail, and Tasks). Then do Part 2 to authorize Tasks.
-          </p>
+          <details>
+            <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;color:var(--accent);list-style:none;display:flex;align-items:center;gap:6px;">
+              <span class="details-arrow">▶</span> Google OAuth2 setup guide
+            </summary>
+            <div style="margin-top:8px;">
+            <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 6px;">
+              No Google username or password is stored — only a free OAuth2 credential is needed.
+              <strong>Do Part 1 once</strong> (covers Calendar, Gmail, and Tasks). Then do Part 2 to authorize Tasks.
+            </p>
 
-          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 1 — One-time Google Cloud setup</p>
-          <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
-            <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
-            <li><strong>APIs &amp; Services → Library</strong> → search <em>Tasks API</em> → <strong>Enable</strong>.</li>
-            <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
-            <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
-              <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days. Publishing makes the token permanent. No Google review is required for personal use.</em>
-            </li>
-            <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
-            <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
-            <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
-          </ol>
+            <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 1 — One-time Google Cloud setup</p>
+            <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+              <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
+              <li><strong>APIs &amp; Services → Library</strong> → search <em>Tasks API</em> → <strong>Enable</strong>.</li>
+              <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
+              <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
+                <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days. Publishing makes the token permanent. No Google review is required for personal use.</em>
+              </li>
+              <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
+              <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
+              <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
+            </ol>
 
-          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 2 — Authorize Google Tasks</p>
-          <ol start="8" style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
-            <li>Send <code>/gtasksauth</code> to the Telegram bot → click the authorization link it replies with.</li>
-            <li>Sign in with your Google account → grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong>.</li>
-            <li>The bot confirms the connection. Enable Google Tasks above and save.</li>
-          </ol>
-          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
-            <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gtasksauth &lt;url&gt;</code>.</em>
-          </p>
-          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:4px;">
-            <em>Google Tasks uses a separate token — run <code>/gtasksauth</code> even if Calendar or Gmail are already connected.</em>
-          </p>
+            <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 2 — Authorize Google Tasks</p>
+            <ol start="8" style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+              <li>Send <code>/gtasksauth</code> to the Telegram bot → click the authorization link it replies with.</li>
+              <li>Sign in with your Google account → grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong>.</li>
+              <li>The bot confirms the connection. Enable Google Tasks above and save.</li>
+            </ol>
+            <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
+              <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gtasksauth &lt;url&gt;</code>.</em>
+            </p>
+            <p style="font-size:0.76rem; color:var(--text-muted); margin-top:4px;">
+              <em>Google Tasks uses a separate token — run <code>/gtasksauth</code> even if Calendar or Gmail are already connected.</em>
+            </p>
+            </div>
+          </details>
         </div>
 
         <div class="btn-row">
