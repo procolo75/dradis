@@ -651,11 +651,17 @@ async def run_scheduled_monitor(monitor: dict):
         return
 
     if text:
-        await _telegram_bot.send_message(
-            chat_id=ALLOWED_CHAT_ID,
-            text=text,
-            parse_mode=ParseMode.HTML,
-        )
+        try:
+            await _telegram_bot.send_message(
+                chat_id=ALLOWED_CHAT_ID,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            print(f"[DRADIS] Monitor '{monitor_name}' send_message error: {e}")
+            await _send_error_telegram(
+                f"❌ Monitor <b>{html.escape(monitor_name)}</b> — errore invio report: {html.escape(str(e))}"
+            )
 
 
 def reload_monitor_jobs():

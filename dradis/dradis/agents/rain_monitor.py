@@ -7,6 +7,7 @@ next N hours. If no precipitation is expected, returns an empty string (no
 Telegram message sent).
 """
 
+import html
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -83,12 +84,13 @@ async def run_rain_monitor(monitor: dict, tz_name: str = "UTC") -> str:
         return ""
 
     total = sum(mm for _, mm in rainy)
+    esc = html.escape(resolved)
     if lang == "en":
-        header  = f"🌧️ <b>Rain alert — {resolved}</b>"
+        header  = f"🌧️ <b>Rain alert — {esc}</b>"
         subhead = f"Next {hours_ahead}h | {now.strftime('%d %B %Y, %H:%M')}"
         footer  = f"💧 Total: {total:.1f} mm in {hours_ahead}h"
     else:
-        header  = f"🌧️ <b>Allerta pioggia — {resolved}</b>"
+        header  = f"🌧️ <b>Allerta pioggia — {esc}</b>"
         subhead = f"Prossime {hours_ahead}h | {now.strftime('%d %B %Y, %H:%M')}"
         footer  = f"💧 Totale: {total:.1f} mm in {hours_ahead}h"
 

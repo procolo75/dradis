@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.10.1] - 2026-04-29
+- **Fix — monitor CRON crash**: `_telegram_bot.send_message()` in `run_scheduled_monitor` was outside the try/except block. When it raised an exception (e.g. invalid HTML from an unescaped `&` in a geocoded location name), APScheduler caught it as a job-level error visible in HA logs, while the same failure in manual mode was silently swallowed by `asyncio.create_task()`. Fixed by wrapping `send_message()` in its own try/except that logs the error and sends a Telegram notification.
+- **Fix — HTML injection in monitor reports**: `location_name` in `thunderstorm_monitor._format_report()` and `resolved` in `rain_monitor.run_rain_monitor()` were inserted raw into HTML strings. If the geocoding API returned a name containing `&`, `<`, or `>`, Telegram rejected the message with `BadRequest: can't parse entities`. Both values are now escaped with `html.escape()`.
+
 ## [2.10.0] - 2026-04-29
 - **Feature — Rain alert monitor**: new `rain` monitor type that fetches 15-minute precipitation data from Open-Meteo (`minutely_15=precipitation`) for a configurable location. When rain is forecast in the next N hours (configurable from the UI, default 2h), sends a Telegram notification listing each 15-minute slot (🔵 rainy / ⚪ dry) and the total precipitation in mm. If no rain is expected, no message is sent. No LLM used.
 - **Web UI — Rain alert monitor type**: the monitor type dropdown now includes "🌧️ Rain alert"; selecting it dynamically shows the "Hours ahead" field and hides "Forecast days" (thunderstorm), and vice versa; type description updates in real time.

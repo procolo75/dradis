@@ -21,6 +21,7 @@ Risk levels:
   7.5 - 10  : RED    SEVERE
 """
 
+import html
 import statistics
 from datetime import datetime, date
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -188,7 +189,7 @@ def _format_report(
     lines: list[str] = []
 
     forecast_str = s["forecast"].format(days=days, suffix=s["day_suffix"](days))
-    lines.append(s["title"].format(name=location_name))
+    lines.append(s["title"].format(name=html.escape(location_name)))
     lines.append(f"📍 {lat:.4f}, {lon:.4f} | {forecast_str}")
     lines.append(f"🕐 {datetime.now(tz).strftime('%d/%m/%Y %H:%M')} ({tz_name})")
     lines.append("")
