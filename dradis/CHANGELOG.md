@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.9.1] - 2026-04-29
+- **Fix — Google Tasks tab disappears from Web UI sidebar**: `renderSidebarAgents()` was trimming the sidebar `<ul>` to the first 5 fixed items, removing the newly added Google Tasks entry (6th). Fixed by changing the guard from `> 5` to `> 6`.
+
 ## [2.9.0] - 2026-04-29
 - **Feature — Google Tasks sub-agent**: added a new AI sub-agent for managing Google Tasks via natural language in Telegram. Supports creating, listing, completing, deleting, and updating tasks. Uses the same Google OAuth2 credentials as Calendar and Gmail (separate token in `/data/google_tasks_token.json`, scope `https://www.googleapis.com/auth/tasks`).
 - **New Telegram commands**: `/gtasksauth` starts the OAuth2 authorization flow; `/todo` is a shortcut that lists open tasks directly without going through the DRADIS team routing.
