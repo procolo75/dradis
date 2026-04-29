@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 import time
+import traceback
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import uvicorn
@@ -644,9 +645,11 @@ async def run_scheduled_monitor(monitor: dict):
     try:
         text = await runner(monitor, tz_name=tz_name)
     except Exception as e:
-        print(f"[DRADIS] Monitor '{monitor_name}' error: {e}")
+        exc_desc = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        traceback.print_exc()
+        print(f"[DRADIS] Monitor '{monitor_name}' error: {exc_desc}")
         await _send_error_telegram(
-            f"❌ Monitor <b>{html.escape(monitor_name)}</b> failed: {html.escape(str(e))}"
+            f"❌ Monitor <b>{html.escape(monitor_name)}</b> failed: {html.escape(exc_desc)}"
         )
         return
 

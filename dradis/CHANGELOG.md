@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.10.2] - 2026-04-29
+- **Fix — monitor CRON error invisible**: when a runner raised an exception with an empty `str()` (e.g. `httpx.ConnectTimeout` wrapping a bare `asyncio.TimeoutError`), the log showed `Monitor 'X' error: ` with nothing after the colon and the Telegram notification was equally blank. The log now prints `ExceptionClass: message` (type always visible, message when present) and a full traceback via `traceback.print_exc()` so the real cause is visible in HA logs.
+- **Fix — monitor HTTP timeout too short**: httpx timeout increased from 10 s to 30 s in both `rain_monitor` and `thunderstorm_monitor` to account for cold-start or slow DNS resolution in HA Docker environments.
+
 ## [2.10.1] - 2026-04-29
 - **Fix — monitor CRON crash**: `_telegram_bot.send_message()` in `run_scheduled_monitor` was outside the try/except block. When it raised an exception (e.g. invalid HTML from an unescaped `&` in a geocoded location name), APScheduler caught it as a job-level error visible in HA logs, while the same failure in manual mode was silently swallowed by `asyncio.create_task()`. Fixed by wrapping `send_message()` in its own try/except that logs the error and sends a Telegram notification.
 - **Fix — HTML injection in monitor reports**: `location_name` in `thunderstorm_monitor._format_report()` and `resolved` in `rain_monitor.run_rain_monitor()` were inserted raw into HTML strings. If the geocoding API returned a name containing `&`, `<`, or `>`, Telegram rejected the message with `BadRequest: can't parse entities`. Both values are now escaped with `html.escape()`.

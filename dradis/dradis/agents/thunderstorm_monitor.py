@@ -139,7 +139,7 @@ def _compute_risk(cape, li, cin, gusts, precip) -> float:
 
 
 async def _geocode(location: str) -> tuple[float, float, str]:
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             "https://geocoding-api.open-meteo.com/v1/search",
             params={"name": location, "count": 1, "language": "it", "format": "json"},
@@ -162,7 +162,7 @@ async def _fetch_instability(lat: float, lon: float, days: int) -> dict:
         "timezone":      "auto",
         "forecast_days": days,
     }
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get("https://api.open-meteo.com/v1/forecast", params=params)
     resp.raise_for_status()
     return resp.json()

@@ -18,7 +18,7 @@ _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 
 async def _geocode(location: str) -> tuple[float, float, str]:
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             _GEOCODE_URL,
             params={"name": location, "count": 1, "language": "it", "format": "json"},
@@ -31,7 +31,7 @@ async def _geocode(location: str) -> tuple[float, float, str]:
 
 
 async def _fetch_rain(lat: float, lon: float, tz_name: str) -> dict:
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             _FORECAST_URL,
             params={
