@@ -1553,7 +1553,7 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
 
 function renderSidebarAgents() {
   const ul = document.getElementById("sidebar-agents");
-  while (ul.children.length > 6) ul.removeChild(ul.lastChild); // preserve Web Search + Weather + Voice + Google Calendar + Gmail + Google Tasks
+  ul.querySelectorAll("[data-agent-id]").forEach(el => el.remove());
   agents.forEach(a => {
     const li = document.createElement("li");
     li.className = "nav-item" + (a.id === selectedId ? " active" : "");

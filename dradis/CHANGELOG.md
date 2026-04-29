@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.9.2] - 2026-04-29
+- **Refactor — sidebar agent cleanup**: `renderSidebarAgents()` now removes only dynamically-injected custom agent items (identified by `data-agent-id`) instead of trimming to a hardcoded count. Adding new fixed tabs in future will never require updating this function.
+
 ## [2.9.1] - 2026-04-29
 - **Fix — Google Tasks tab disappears from Web UI sidebar**: `renderSidebarAgents()` was trimming the sidebar `<ul>` to the first 5 fixed items, removing the newly added Google Tasks entry (6th). Fixed by changing the guard from `> 5` to `> 6`.
 
