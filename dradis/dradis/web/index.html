@@ -3002,10 +3002,9 @@ function renderMonitorForm(monitor) {
         <label for="m-type">Monitor type</label>
         <select id="m-type">
           <option value="thunderstorm" ${monitor.type === "thunderstorm" ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
+          <option value="rain"         ${monitor.type === "rain"         ? "selected" : ""}>🌧️ Rain alert (Open-Meteo)</option>
         </select>
-        <small style="margin-top:4px;display:block;color:var(--text-muted)">
-          Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.
-        </small>
+        <small id="m-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)"></small>
       </div>
 
       <div class="form-group">
@@ -3022,9 +3021,14 @@ function renderMonitorForm(monitor) {
         </select>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="fg-days">
         <label for="m-days">Forecast days (1–7)</label>
         <input type="number" id="m-days" min="1" max="7" value="${monitor.days || 2}" style="width:80px">
+      </div>
+
+      <div class="form-group" id="fg-hours-ahead">
+        <label for="m-hours-ahead">Hours ahead (1–24)</label>
+        <input type="number" id="m-hours-ahead" min="1" max="24" value="${monitor.hours_ahead || 2}" style="width:80px">
       </div>
 
       <div class="form-group">
@@ -3048,6 +3052,19 @@ function renderMonitorForm(monitor) {
       </div>
     </div>
   `;
+
+  // Type-specific field visibility
+  const _TYPE_DESCS = {
+    thunderstorm: "Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.",
+    rain: "Checks 15-minute precipitation forecast for the next N hours. Sends an alert only if rain is expected. No LLM used.",
+  };
+  function applyTypeVisibility(type) {
+    document.getElementById("fg-days").style.display        = type === "thunderstorm" ? "" : "none";
+    document.getElementById("fg-hours-ahead").style.display = type === "rain"         ? "" : "none";
+    document.getElementById("m-type-desc").textContent      = _TYPE_DESCS[type] || "";
+  }
+  applyTypeVisibility(monitor.type || "thunderstorm");
+  document.getElementById("m-type").addEventListener("change", e => applyTypeVisibility(e.target.value));
 
   // Resolve location on load
   if (monitor.location) resolveLocation(monitor.location);
@@ -3086,13 +3103,14 @@ async function saveMonitor() {
   const btn = document.getElementById("btn-save-monitor");
   btn.disabled = true;
   const payload = {
-    name:     document.getElementById("m-name").value.trim(),
-    enabled:  document.getElementById("m-enabled").checked,
-    cron:     document.getElementById("m-cron").value.trim(),
-    type:     document.getElementById("m-type").value,
-    location: document.getElementById("m-location").value.trim(),
-    language: document.getElementById("m-language").value,
-    days:     parseInt(document.getElementById("m-days").value, 10) || 2,
+    name:        document.getElementById("m-name").value.trim(),
+    enabled:     document.getElementById("m-enabled").checked,
+    cron:        document.getElementById("m-cron").value.trim(),
+    type:        document.getElementById("m-type").value,
+    location:    document.getElementById("m-location").value.trim(),
+    language:    document.getElementById("m-language").value,
+    days:        parseInt(document.getElementById("m-days").value, 10) || 2,
+    hours_ahead: parseInt(document.getElementById("m-hours-ahead").value, 10) || 2,
   };
   try {
     const updated = await api("PUT", `/api/monitors/${selectedMonitorId}`, payload);

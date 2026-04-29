@@ -268,8 +268,9 @@ class MonitorPayload(BaseModel):
     cron:     str  = "0 7 * * *"
     type:     str  = "thunderstorm"
     location: str  = ""
-    days:     int  = 2
-    language: str  = "it"
+    days:        int  = 2
+    language:    str  = "it"
+    hours_ahead: int  = 2
 
 
 class SettingsPayload(BaseModel):

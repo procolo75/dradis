@@ -38,6 +38,7 @@ from agents.gtasks import GTASKS_TOKEN_FILE, _build_gtasks_flow, create_gtasks_a
 from agents.weather import create_weather_agent
 from agents.web_search import create_web_search_agent
 from agents.thunderstorm_monitor import run_thunderstorm_monitor
+from agents.rain_monitor import run_rain_monitor
 
 WEB_PORT = 8099
 
@@ -619,6 +620,7 @@ def reload_task_jobs():
 
 _MONITOR_RUNNERS = {
     "thunderstorm": run_thunderstorm_monitor,
+    "rain":         run_rain_monitor,
 }
 
 

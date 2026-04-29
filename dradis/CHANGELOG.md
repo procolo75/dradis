@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.10.0] - 2026-04-29
+- **Feature — Rain alert monitor**: new `rain` monitor type that fetches 15-minute precipitation data from Open-Meteo (`minutely_15=precipitation`) for a configurable location. When rain is forecast in the next N hours (configurable from the UI, default 2h), sends a Telegram notification listing each 15-minute slot (🔵 rainy / ⚪ dry) and the total precipitation in mm. If no rain is expected, no message is sent. No LLM used.
+- **Web UI — Rain alert monitor type**: the monitor type dropdown now includes "🌧️ Rain alert"; selecting it dynamically shows the "Hours ahead" field and hides "Forecast days" (thunderstorm), and vice versa; type description updates in real time.
+
 ## [2.9.3] - 2026-04-29
 - **Fix — `/todo` crash with null optional parameters**: Agno's tool schema validation rejects `null` for `str`-typed parameters even when they are optional. All 5 Google Tasks tool functions (`list_tasks`, `create_task`, `complete_task`, `delete_task`, `update_task`) now declare optional string parameters as `str | None` so the schema accepts both `null` and string values; `or` fallbacks in each function body restore the intended default.
 

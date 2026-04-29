@@ -56,7 +56,8 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `agents/gmail.py` | Gmail member agent — `create_gmail_agent()` + OAuth token management |
 | `agents/gcal.py` | Google Calendar member agent — `create_gcal_agent()` + OAuth token management |
 | `agents/gtasks.py` | Google Tasks member agent — `create_gtasks_agent()` + OAuth token management |
-| `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
+| `agents/thunderstorm_monitor.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
+| `agents/rain_monitor.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 
 ---
 
@@ -319,10 +320,11 @@ Click `+` in the Monitors sidebar header to create a new monitor. Each monitor h
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
-| Monitor type | Type of data source. Currently: **⛈️ Thunderstorm risk (Open-Meteo)**. |
+| Monitor type | Type of data source: **⛈️ Thunderstorm risk** or **🌧️ Rain alert** (both Open-Meteo, no API key required). |
 | Response language | Language of the Telegram report: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Location | City name or geographic description (e.g. *Bacoli*, *Naples*, *Rome*). Resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and coordinates as you type. |
-| Forecast days | Number of days to fetch (1–7, default 2). |
+| Forecast days | *(Thunderstorm only)* Number of days to fetch (1–7, default 2). |
+| Hours ahead | *(Rain alert only)* How many hours ahead to check for rain (1–24, default 2). |
 | Schedule preset | Dropdown of common schedules. |
 | Cron expression | Raw 5-part cron with live validation and next-fire preview. |
 
@@ -354,6 +356,25 @@ Fetches atmospheric instability data from [Open-Meteo](https://open-meteo.com) (
 The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–12, AFTERNOON 12–18, EVENING 18–24) with the raw parameter values and the computed risk label, plus a daily maximum at the end of each day.
 
 **Testing a monitor manually:** each monitor form includes a **▶ Test Monitor** button that triggers an immediate execution. The result is delivered to Telegram within seconds.
+
+#### Rain alert monitor
+
+Fetches 15-minute precipitation data from [Open-Meteo](https://open-meteo.com) (free, no API key required) for the next 24 hours and checks whether rain is forecast within the configured time window. **If no precipitation is expected, no Telegram message is sent** — the monitor is completely silent when conditions are clear.
+
+When rain is detected, the Telegram message lists every 15-minute slot in the window:
+
+- 🔵 slots with precipitation > 0 mm (amount shown in mm)
+- ⚪ dry slots (shown for context)
+- 💧 total precipitation for the window at the end
+
+**Configuration:**
+
+| Field | Description |
+|---|---|
+| Location | City name resolved via Open-Meteo geocoding. |
+| Hours ahead | How far ahead to look for rain (1–24, default 2). |
+| Language | 🇮🇹 Italiano / 🇬🇧 English. |
+| Cron | How often to check (e.g. `0 * * * *` = every hour). |
 
 ---
 
@@ -415,6 +436,21 @@ Every morning DRADIS fetches atmospheric instability data for the next 2 days an
 | Cron | `0 7 * * *` |
 
 The Telegram message shows one line per time band (NIGHT / MORNING / AFTERNOON / EVENING) with CAPE, Lifted Index, CIN, wind gusts, precipitation probability, and a risk level (🟢 LOW · 🟡 MODERATE · 🟠 HIGH · 🔴 SEVERE).
+
+---
+
+### Hourly rain alert *(monitor)*
+
+Check every hour whether rain is expected in the next 2 hours. No notification is sent when skies are clear — only when precipitation is actually forecast.
+
+| Field | Value |
+|-------|-------|
+| Monitor type | 🌧️ Rain alert (Open-Meteo) |
+| Location | your city (e.g. *Bacoli*) |
+| Hours ahead | 2 |
+| Cron | `0 * * * *` |
+
+The Telegram message lists each 15-minute slot with the expected precipitation in mm (🔵 rainy / ⚪ dry) and the total at the end.
 
 ---
 
