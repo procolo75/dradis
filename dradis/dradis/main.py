@@ -82,6 +82,7 @@ _groq_client: GroqClient | None = (
 
 _scheduler: AsyncIOScheduler = AsyncIOScheduler()
 _telegram_bot = None
+_main_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def _send_error_telegram(msg: str):
@@ -595,6 +596,11 @@ async def run_scheduled_task(task: dict):
         )
 
 
+def _cron_task(task: dict):
+    if _main_loop:
+        asyncio.run_coroutine_threadsafe(run_scheduled_task(task), _main_loop)
+
+
 def reload_task_jobs():
     tz = read_settings().get("timezone", "UTC") or "UTC"
     # Remove only task jobs (monitors have id prefixed with 'monitor:')
@@ -605,7 +611,7 @@ def reload_task_jobs():
         if task.get("enabled") and task.get("cron"):
             try:
                 _scheduler.add_job(
-                    run_scheduled_task,
+                    _cron_task,
                     CronTrigger.from_crontab(task["cron"], timezone=tz),
                     args=[task],
                     id=task["id"],
@@ -667,6 +673,11 @@ async def run_scheduled_monitor(monitor: dict):
             )
 
 
+def _cron_monitor(monitor: dict):
+    if _main_loop:
+        asyncio.run_coroutine_threadsafe(run_scheduled_monitor(monitor), _main_loop)
+
+
 def reload_monitor_jobs():
     tz = read_settings().get("timezone", "UTC") or "UTC"
     # Remove only monitor jobs (tasks are prefixed differently)
@@ -677,7 +688,7 @@ def reload_monitor_jobs():
         if monitor.get("enabled") and monitor.get("cron"):
             try:
                 _scheduler.add_job(
-                    run_scheduled_monitor,
+                    _cron_monitor,
                     CronTrigger.from_crontab(monitor["cron"], timezone=tz),
                     args=[monitor],
                     id=f"monitor:{monitor['id']}",
@@ -1294,9 +1305,10 @@ async def _register_commands(bot):
 
 
 async def main():
-    global _telegram_bot
+    global _telegram_bot, _main_loop
     _init_settings()
     agent_core.init_token_stats()
+    _main_loop = asyncio.get_running_loop()
     telegram_app = build_telegram_app()
     web_server   = uvicorn.Server(
         uvicorn.Config(web_app, host="0.0.0.0", port=WEB_PORT, log_level="warning")
