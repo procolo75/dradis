@@ -11,6 +11,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 - **Voice** transcription via Groq Whisper (optional)
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
+- **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Monitors** — LLM-free scheduled monitors that fetch data and compute results in Python (no token cost, deterministic output)
 - **Fallback model** — each agent has a configurable fallback provider and model; on any API error (rate limit, provider error, empty response) DRADIS automatically retries with the fallback and notifies via Telegram; if both fail, a clear `❌` message lists both model names
@@ -55,6 +56,12 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 > Every morning DRADIS checks your unread emails and sends a summary to Telegram.
 > Cron: `0 8 * * 1-5` — Instructions: *"Check unread emails and send a brief summary of each to Telegram."*
 
+**Task management** *(requires Google Tasks)*
+> *"Aggiungi comprare latte e chiamare il medico"*
+> → DRADIS creates two tasks in your Google Tasks list and confirms.
+> *"Cosa ho da fare?"* → Lists all open tasks with IDs.
+> *"Segna come fatto il task 2"* → Marks the task as completed.
+
 ## Telegram Commands
 
 | Command | Description |
@@ -67,6 +74,8 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 | `/tokens_reset` | Reset token counters to zero |
 | `/gcalauth` | Connect Google Calendar (OAuth2) |
 | `/gmailauth` | Connect Gmail (OAuth2) |
+| `/gtasksauth` | Connect Google Tasks (OAuth2) |
+| `/todo` | List open Google Tasks |
 
 ## Documentation
 

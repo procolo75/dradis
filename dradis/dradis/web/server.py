@@ -67,6 +67,8 @@ SETTINGS_KEYS = [
     "gcal_fallback_provider", "gcal_fallback_model",
     "gmail_enabled", "gmail_provider", "gmail_model", "gmail_instructions", "gmail_show_metrics",
     "gmail_fallback_provider", "gmail_fallback_model",
+    "gtasks_enabled", "gtasks_provider", "gtasks_model", "gtasks_instructions", "gtasks_show_metrics",
+    "gtasks_fallback_provider", "gtasks_fallback_model",
 ]
 
 # Maps old key names to current names for transparent migration.
@@ -212,6 +214,11 @@ SETTINGS_DEFAULTS = {
     "gmail_model":              "nvidia/nemotron-3-nano-30b-a3b:free",
     "gmail_instructions":       "",
     "gmail_show_metrics":       False,
+    "gtasks_enabled":           False,
+    "gtasks_provider":          "openrouter",
+    "gtasks_model":             "nvidia/nemotron-3-nano-30b-a3b:free",
+    "gtasks_instructions":      "",
+    "gtasks_show_metrics":      False,
     "fallback_provider":             "",
     "fallback_model":                "",
     "ws_fallback_provider":          "",
@@ -222,6 +229,8 @@ SETTINGS_DEFAULTS = {
     "gcal_fallback_model":           "",
     "gmail_fallback_provider":       "",
     "gmail_fallback_model":          "",
+    "gtasks_fallback_provider":      "",
+    "gtasks_fallback_model":         "",
 }
 
 def load_settings() -> dict:
@@ -308,6 +317,13 @@ class SettingsPayload(BaseModel):
     gcal_fallback_model:           str = ""
     gmail_fallback_provider:       str = ""
     gmail_fallback_model:          str = ""
+    gtasks_enabled:           bool = False
+    gtasks_provider:          str  = "openrouter"
+    gtasks_model:             str  = "nvidia/nemotron-3-nano-30b-a3b:free"
+    gtasks_instructions:      str  = ""
+    gtasks_show_metrics:      bool = False
+    gtasks_fallback_provider: str  = ""
+    gtasks_fallback_model:    str  = ""
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -764,6 +780,63 @@ async def get_gmail_status():
     client_id     = opts.get("google_client_id", "")
     client_secret = opts.get("google_client_secret", "")
     token_file    = Path("/data/google_gmail_token.json")
+    return {
+        "credentials_configured": bool(client_id and client_secret),
+        "authenticated": token_file.exists(),
+    }
+
+
+# ── Google Tasks OAuth callback ───────────────────────────────────────────────
+
+_gtasks_pending_code: str | None = None
+_gtasks_code_event: asyncio.Event | None = None
+
+
+def set_gtasks_code_event(event: asyncio.Event):
+    global _gtasks_code_event
+    _gtasks_code_event = event
+
+
+def pop_gtasks_pending_code() -> str | None:
+    global _gtasks_pending_code
+    code = _gtasks_pending_code
+    _gtasks_pending_code = None
+    return code
+
+
+@app.get("/gtasksauth/callback")
+async def gtasks_oauth_callback(code: str = None, error: str = None):
+    """Loopback redirect target for Google Tasks OAuth. Signals the waiting Telegram command."""
+    global _gtasks_pending_code
+    if error:
+        return HTMLResponse(
+            f"<h2 style='font-family:sans-serif;color:#c00'>❌ Authorization failed: {error}</h2>"
+            "<p style='font-family:sans-serif'>Return to Telegram and send /gtasksauth to try again.</p>"
+        )
+    if not code:
+        return HTMLResponse(
+            "<h2 style='font-family:sans-serif;color:#c00'>❌ No authorization code received.</h2>"
+        )
+    _gtasks_pending_code = code
+    if _gtasks_code_event:
+        _gtasks_code_event.set()
+    return HTMLResponse(
+        "<h2 style='font-family:sans-serif;color:#080'>✅ Google Tasks connected!</h2>"
+        "<p style='font-family:sans-serif'>You can close this tab and return to Telegram.</p>"
+    )
+
+
+@app.get("/api/gtasks-status")
+async def get_gtasks_status():
+    """Return whether Google Tasks credentials are configured and authenticated."""
+    opts = {}
+    try:
+        opts = json.loads(OPTIONS_FILE.read_text())
+    except Exception:
+        pass
+    client_id     = opts.get("google_client_id", "")
+    client_secret = opts.get("google_client_secret", "")
+    token_file    = Path("/data/google_tasks_token.json")
     return {
         "credentials_configured": bool(client_id and client_secret),
         "authenticated": token_file.exists(),

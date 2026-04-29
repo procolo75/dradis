@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [2.9.0] - 2026-04-29
+- **Feature — Google Tasks sub-agent**: added a new AI sub-agent for managing Google Tasks via natural language in Telegram. Supports creating, listing, completing, deleting, and updating tasks. Uses the same Google OAuth2 credentials as Calendar and Gmail (separate token in `/data/google_tasks_token.json`, scope `https://www.googleapis.com/auth/tasks`).
+- **New Telegram commands**: `/gtasksauth` starts the OAuth2 authorization flow; `/todo` is a shortcut that lists open tasks directly without going through the DRADIS team routing.
+- **Web UI**: new Google Tasks panel in the sidebar with enable toggle, provider/model selector, fallback model, additional instructions, show metrics toggle, and OAuth setup guide.
+- **Token tracking**: Google Tasks tokens tracked separately under the `gtasks` category, visible in `/tokens`.
+- **Routing**: DRADIS team leader is instructed to delegate task-related queries (todo, lista attività, aggiungi task, segna come fatto, etc.) exclusively to the `gtasks` member.
+
 ## [2.8.6] - 2026-04-28
 - **Fix — wrong weekday name in weather forecast**: the weather agent was passing only ISO date strings (`2026-04-28`) to the LLM, which then computed the day of the week incorrectly. Fixed by adding the English weekday name to each day's entry in `_summarise_hourly` and to the `daily` block in `fetch_weather`. Also updated `_now_str` in `agent_core.py` to include the weekday in the system-prompt timestamp so the model always knows what day today is.
 

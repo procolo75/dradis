@@ -313,6 +313,10 @@
           <span class="nav-dot" id="gmail-dot"></span>
           <span class="nav-label">Gmail</span>
         </li>
+        <li class="nav-item" data-panel="gtasks" id="nav-gtasks">
+          <span class="nav-dot" id="gtasks-dot"></span>
+          <span class="nav-label">Google Tasks</span>
+        </li>
         <!-- custom agents injected by renderSidebarAgents() -->
       </ul>
     </div>
@@ -1007,6 +1011,119 @@
       </div>
     </div>
 
+    <!-- Panel: Google Tasks -->
+    <div class="panel" id="panel-gtasks">
+      <div class="form-card">
+        <h2>Google Tasks</h2>
+
+        <div id="gtasks-creds-warning" style="display:none; background:var(--warn-bg,#fffbe6); border:1px solid var(--warn-border,#ffe58f); border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:0.85rem; color:var(--warn-text,#7c5a00);">
+          ⚠️ <strong>google_client_id</strong> and/or <strong>google_client_secret</strong> not configured — set them in the app <strong>Configuration</strong> tab and restart.
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="gtasks-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Authentication status</label>
+          <span id="gtasks-auth-status" style="font-size:0.85rem; color:var(--text-muted);">Checking…</span>
+        </div>
+
+        <div class="form-group">
+          <label for="gtasks-provider">LLM Provider</label>
+          <select id="gtasks-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="gtasks-model">Model</label>
+          <div class="model-row">
+            <select id="gtasks-model">
+              <option value="">— Click 🔄 to load models —</option>
+            </select>
+            <button class="btn-icon" id="btn-gtasks-load-models" title="Load free ≥30B models">🔄</button>
+            <button class="btn-icon" id="btn-gtasks-speedtest" title="Speed test loaded models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="gtasks-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="gtasks-fallback-provider">Fallback Provider <span style="font-size:0.8em; color:var(--text-muted)">(used on API error)</span></label>
+          <select id="gtasks-fallback-provider"></select>
+        </div>
+
+        <div class="form-group">
+          <label for="gtasks-fallback-model">Fallback Model</label>
+          <div class="model-row">
+            <select id="gtasks-fallback-model">
+              <option value="">— none / disabled —</option>
+            </select>
+            <button class="btn-icon" id="btn-gtasks-fallback-load" title="Load models for fallback provider">🔄</button>
+            <button class="btn-icon" id="btn-gtasks-fallback-speedtest" title="Speed test fallback models" disabled>⚡</button>
+          </div>
+          <div class="model-hint" id="gtasks-fallback-model-hint"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="gtasks-instructions">Additional instructions</label>
+          <textarea id="gtasks-instructions" placeholder="Optional: extra instructions for the Google Tasks sub-agent…"></textarea>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Show metrics</span>
+            <label class="toggle">
+              <input type="checkbox" id="gtasks-metrics">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Google OAuth2 setup guide</label>
+          <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 6px;">
+            No Google username or password is stored — only a free OAuth2 credential is needed.
+            <strong>Do Part 1 once</strong> (covers Calendar, Gmail, and Tasks). Then do Part 2 to authorize Tasks.
+          </p>
+
+          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 1 — One-time Google Cloud setup</p>
+          <ol style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+            <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--accent);">console.cloud.google.com</a> → create or select a project.</li>
+            <li><strong>APIs &amp; Services → Library</strong> → search <em>Tasks API</em> → <strong>Enable</strong>.</li>
+            <li><strong>APIs &amp; Services → OAuth consent screen</strong> → choose <strong>External</strong> → fill in app name (e.g. <em>DRADIS</em>) and your email → save.</li>
+            <li>Still in the consent screen → <strong>Publishing status</strong> → click <strong>Publish app</strong> → confirm.
+              <br><em style="font-size:0.78rem;">⚠️ This step is essential. If the app stays in <strong>Testing</strong> mode, Google revokes the refresh token every 7 days. Publishing makes the token permanent. No Google review is required for personal use.</em>
+            </li>
+            <li><strong>Credentials → Create credentials → OAuth client ID → Desktop app</strong> → any name → <strong>Create</strong>.</li>
+            <li>Copy <strong>Client ID</strong> and <strong>Client Secret</strong> from the dialog.</li>
+            <li>Paste them in the app <strong>Configuration</strong> tab (<code>google_client_id</code>, <code>google_client_secret</code>) → <strong>restart the app</strong>.</li>
+          </ol>
+
+          <p style="font-size:0.82rem; font-weight:600; color:var(--text); margin:10px 0 4px;">Part 2 — Authorize Google Tasks</p>
+          <ol start="8" style="font-size:0.82rem; color:var(--text-muted); margin:0; padding-left:18px; line-height:1.9;">
+            <li>Send <code>/gtasksauth</code> to the Telegram bot → click the authorization link it replies with.</li>
+            <li>Sign in with your Google account → grant access → <strong>the browser redirects back to DRADIS automatically ✅</strong>.</li>
+            <li>The bot confirms the connection. Enable Google Tasks above and save.</li>
+          </ol>
+          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:8px;">
+            <em>If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as <code>/gtasksauth &lt;url&gt;</code>.</em>
+          </p>
+          <p style="font-size:0.76rem; color:var(--text-muted); margin-top:4px;">
+            <em>Google Tasks uses a separate token — run <code>/gtasksauth</code> even if Calendar or Gmail are already connected.</em>
+          </p>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-gtasks">Save</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Panel: Agent edit (injected by renderAgentForm) -->
     <div class="panel" id="panel-agent">
       <div class="empty-state">
@@ -1156,6 +1273,7 @@ const wsFbModels      = [];
 const weatherFbModels = [];
 const gcalFbModels    = [];
 const gmailFbModels   = [];
+const gtasksFbModels  = [];
 
 async function _loadFallbackModels(provSelId, modelSelId, hintId, loadBtnId, speedBtnId, modelsList) {
   const btn      = document.getElementById(loadBtnId);
@@ -1279,6 +1397,17 @@ document.getElementById("btn-gmail-fallback-load").addEventListener("click", () 
 );
 document.getElementById("btn-gmail-fallback-speedtest").addEventListener("click", () =>
   _runFallbackSpeedTest("gmail-fallback-provider", "gmail-fallback-model", "gmail-fallback-model-hint", "btn-gmail-fallback-load", "btn-gmail-fallback-speedtest", gmailFbModels)
+);
+
+// Google Tasks fallback
+document.getElementById("gtasks-fallback-provider").addEventListener("change", () =>
+  _onProviderChange("gtasks-fallback-provider", "gtasks-fallback-model", "gtasks-fallback-model-hint", "btn-gtasks-fallback-load", "btn-gtasks-fallback-speedtest")
+);
+document.getElementById("btn-gtasks-fallback-load").addEventListener("click", () =>
+  _loadFallbackModels("gtasks-fallback-provider", "gtasks-fallback-model", "gtasks-fallback-model-hint", "btn-gtasks-fallback-load", "btn-gtasks-fallback-speedtest", gtasksFbModels)
+);
+document.getElementById("btn-gtasks-fallback-speedtest").addEventListener("click", () =>
+  _runFallbackSpeedTest("gtasks-fallback-provider", "gtasks-fallback-model", "gtasks-fallback-model-hint", "btn-gtasks-fallback-load", "btn-gtasks-fallback-speedtest", gtasksFbModels)
 );
 
 function _rebuildModelSelect(models, currentId) {
@@ -2263,6 +2392,164 @@ document.getElementById("btn-save-gmail").addEventListener("click", async () => 
   }
 });
 
+// ── Google Tasks panel ────────────────────────────────────────────────────────
+
+let gtasksModels = [];
+
+async function loadGtasksSettings() {
+  const [s, status] = await Promise.all([
+    api("GET", "/api/settings"),
+    api("GET", "/api/gtasks-status").catch(() => ({ credentials_configured: false, authenticated: false })),
+  ]);
+
+  const warning = document.getElementById("gtasks-creds-warning");
+  const toggle  = document.getElementById("gtasks-enabled");
+  const authEl  = document.getElementById("gtasks-auth-status");
+
+  if (!status.credentials_configured) {
+    warning.style.display = "";
+    toggle.checked  = false;
+    toggle.disabled = true;
+  } else {
+    warning.style.display = "none";
+    toggle.disabled = false;
+    toggle.checked  = !!s.gtasks_enabled;
+  }
+
+  authEl.textContent = status.authenticated ? "✅ Connected" : "❌ Not authenticated — send /gtasksauth to the bot";
+  authEl.style.color = status.authenticated ? "var(--success)" : "var(--danger)";
+
+  const provOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.gtasks_provider || "openrouter") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("gtasks-provider").innerHTML = provOptions;
+
+  const savedModel = s.gtasks_model || "";
+  const sel = document.getElementById("gtasks-model");
+  if (savedModel && ![...sel.options].some(o => o.value === savedModel)) {
+    sel.innerHTML = `<option value="${savedModel}">${savedModel}</option>` + sel.innerHTML;
+  }
+  if (savedModel) sel.value = savedModel;
+
+  document.getElementById("gtasks-instructions").value = s.gtasks_instructions || "";
+  document.getElementById("gtasks-metrics").checked    = !!s.gtasks_show_metrics;
+
+  const gtasksFbProvOptions = providers.map(p =>
+    `<option value="${p.id}" ${(s.gtasks_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
+  ).join("");
+  document.getElementById("gtasks-fallback-provider").innerHTML = gtasksFbProvOptions;
+  const savedGtasksFbModel = s.gtasks_fallback_model || "";
+  const gtasksFbSel = document.getElementById("gtasks-fallback-model");
+  if (savedGtasksFbModel && ![...gtasksFbSel.options].some(o => o.value === savedGtasksFbModel)) {
+    gtasksFbSel.innerHTML = `<option value="${savedGtasksFbModel}">${savedGtasksFbModel}</option>` + gtasksFbSel.innerHTML;
+  }
+  if (savedGtasksFbModel) gtasksFbSel.value = savedGtasksFbModel;
+
+  const gtasksDot = document.getElementById("gtasks-dot");
+  if (gtasksDot) gtasksDot.classList.toggle("on", !!s.gtasks_enabled && status.authenticated);
+}
+
+document.getElementById("gtasks-provider").addEventListener("change", () =>
+  _onProviderChange("gtasks-provider", "gtasks-model", "gtasks-model-hint", "btn-gtasks-load-models", "btn-gtasks-speedtest")
+);
+
+async function loadGtasksModels() {
+  const btn      = document.getElementById("btn-gtasks-load-models");
+  const hint     = document.getElementById("gtasks-model-hint");
+  const current  = document.getElementById("gtasks-model").value;
+  const provider = document.getElementById("gtasks-provider").value;
+  const label    = _providerLabel(provider);
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Loading models from ${label}…`;
+
+  try {
+    const models = await api("GET", `/api/models?provider=${provider}`);
+    gtasksModels = [...models];
+    const sel  = document.getElementById("gtasks-model");
+    let list   = [...models];
+    if (current && !list.find(m => m.id === current)) list.unshift({ id: current, name: current });
+    sel.innerHTML = list.map(m =>
+      `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}</option>`
+    ).join("");
+    if (current) sel.value = current;
+    document.getElementById("btn-gtasks-speedtest").disabled = gtasksModels.length === 0;
+    hint.textContent = `${models.length} models from ${label} — click ⚡ to speed test`;
+  } catch {
+    hint.textContent = "Error loading models";
+    showToast("Error loading models", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "🔄";
+  }
+}
+
+async function runGtasksSpeedTest() {
+  if (!gtasksModels.length) return;
+  const btn      = document.getElementById("btn-gtasks-speedtest");
+  const hint     = document.getElementById("gtasks-model-hint");
+  const current  = document.getElementById("gtasks-model").value;
+  const provider = document.getElementById("gtasks-provider").value;
+
+  btn.disabled     = true;
+  btn.textContent  = "⏳";
+  hint.textContent = `Testing ${gtasksModels.length} models… (may take 30–60 s)`;
+
+  try {
+    const results = await api("POST", `/api/speedtest?provider=${provider}`, { models: gtasksModels.map(m => m.id) });
+    const resMap  = {};
+    results.forEach(r => { resMap[r.id] = r; });
+    gtasksModels = gtasksModels
+      .filter(m => results.map(r => r.id).includes(m.id))
+      .map(m => ({ ...m, tok_s: resMap[m.id]?.tok_s ?? null, ok: resMap[m.id]?.ok ?? false }))
+      .sort((a, b) => (b.tok_s ?? -1) - (a.tok_s ?? -1));
+    const sel = document.getElementById("gtasks-model");
+    sel.innerHTML = gtasksModels.map(m => {
+      const tag = m.tok_s != null ? ` — ⚡ ${m.tok_s} tok/s` : m.ok === false ? " — ❌" : "";
+      return `<option value="${m.id}" ${m.id === current ? "selected" : ""}>${m.name}${tag}</option>`;
+    }).join("");
+    if (current) sel.value = current;
+    hint.textContent = `Speed test done — sorted fastest first`;
+  } catch {
+    hint.textContent = "Speed test failed";
+    showToast("Speed test failed", true);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "⚡";
+  }
+}
+
+document.getElementById("btn-gtasks-load-models").addEventListener("click", loadGtasksModels);
+document.getElementById("btn-gtasks-speedtest").addEventListener("click", runGtasksSpeedTest);
+
+document.getElementById("btn-save-gtasks").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-gtasks");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    gtasks_enabled:           document.getElementById("gtasks-enabled").checked,
+    gtasks_provider:          document.getElementById("gtasks-provider").value,
+    gtasks_model:             document.getElementById("gtasks-model").value.trim(),
+    gtasks_fallback_provider: document.getElementById("gtasks-fallback-provider").value,
+    gtasks_fallback_model:    document.getElementById("gtasks-fallback-model").value.trim(),
+    gtasks_instructions:      document.getElementById("gtasks-instructions").value.trim(),
+    gtasks_show_metrics:      document.getElementById("gtasks-metrics").checked,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const gtasksDot = document.getElementById("gtasks-dot");
+    if (gtasksDot) gtasksDot.classList.toggle("on", payload.gtasks_enabled);
+    showToast("Google Tasks settings saved");
+  } catch {
+    showToast("Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -2308,6 +2595,12 @@ async function init() {
     await loadGmailSettings();
   } catch (e) {
     console.error("loadGmailSettings:", e);
+  }
+
+  try {
+    await loadGtasksSettings();
+  } catch (e) {
+    console.error("loadGtasksSettings:", e);
   }
 
   renderSidebarAgents();

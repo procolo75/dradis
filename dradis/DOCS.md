@@ -16,7 +16,7 @@ DRADIS uses an **agno Team** design (`coordinate` mode): a DRADIS leader agent o
 
 ### Fallback model (v2.5.0 — improved in v2.7.0, v2.8.3–2.8.4)
 
-Each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail) supports an independent fallback provider and model. When an API call fails, DRADIS:
+Each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail, Google Tasks) supports an independent fallback provider and model. When an API call fails, DRADIS:
 
 1. Detects the failure — agno never re-raises model errors; instead it sets `response.status = "ERROR"` and puts the error message in `response.content`. DRADIS checks both `status == "ERROR"` and empty content to catch all failure modes (rate limits, provider errors, context-window exceeded, etc.)
 2. Sends a Telegram warning: *"⚠️ Primary model failed — replied via fallback ✅"* if the fallback succeeds
@@ -37,7 +37,7 @@ All API call failures send a Telegram notification:
 
 ### Tool call limit (v2.4.0)
 
-Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use loops: **4** for Gmail and Google Calendar (which may need multiple sequential tool calls for complex tasks such as search-then-send or fetch-then-delete), **2** for Weather and Web Search (single-tool agents). The limit is enforced by agno's `Agent.tool_call_limit` parameter and caps the worst-case LLM calls per sub-agent regardless of model behaviour.
+Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use loops: **4** for Gmail, Google Calendar, and Google Tasks (which may need multiple sequential tool calls for complex operations such as list-then-complete or list-then-delete), **2** for Weather and Web Search (single-tool agents). The limit is enforced by agno's `Agent.tool_call_limit` parameter and caps the worst-case LLM calls per sub-agent regardless of model behaviour.
 
 **Routing** is driven by each member's tool docstrings — the team leader LLM decides which members to invoke based on the user message and the tool descriptions. No keyword matching or hidden text is injected.
 
@@ -55,6 +55,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `agents/weather.py` | Weather member agent — `fetch_weather()` + `create_weather_agent()` |
 | `agents/gmail.py` | Gmail member agent — `create_gmail_agent()` + OAuth token management |
 | `agents/gcal.py` | Google Calendar member agent — `create_gcal_agent()` + OAuth token management |
+| `agents/gtasks.py` | Google Tasks member agent — `create_gtasks_agent()` + OAuth token management |
 | `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
 
 ---
@@ -66,7 +67,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 - An API key for at least one supported LLM provider (OpenRouter, OpenAI, GitHub Models, Gemini, or Groq)
 - *(Optional)* A [Tavily](https://tavily.com) API key for the Web Search sub-agent
 - *(Optional)* A [Groq](https://console.groq.com) API key for the Voice sub-agent (required to enable voice transcription)
-- *(Optional)* Google Cloud OAuth2 credentials — one credential covers both the Google Calendar and Gmail sub-agents
+- *(Optional)* Google Cloud OAuth2 credentials — one credential covers the Google Calendar, Gmail, and Google Tasks sub-agents
 
 ---
 
@@ -94,8 +95,8 @@ Only API keys and credentials go here. All other settings are managed at runtime
 | `gemini_api_key` | password | *(Optional)* Google Gemini API key |
 | `groq_api_key` | password | *(Optional)* Groq API key — required for the Voice sub-agent |
 | `tavily_api_key` | password | *(Optional)* Tavily API key — required for the Web Search sub-agent |
-| `google_client_id` | str | *(Optional)* Google OAuth2 client ID — required for Google Calendar and/or Gmail |
-| `google_client_secret` | password | *(Optional)* Google OAuth2 client secret — required for Google Calendar and/or Gmail |
+| `google_client_id` | str | *(Optional)* Google OAuth2 client ID — required for Google Calendar, Gmail, and/or Google Tasks |
+| `google_client_secret` | password | *(Optional)* Google OAuth2 client secret — required for Google Calendar, Gmail, and/or Google Tasks |
 
 Fill in at least one LLM provider key. The active provider is selected from the Web UI.
 
@@ -109,11 +110,11 @@ Fill in at least one LLM provider key. The active provider is selected from the 
 - **Gemini API key**: sign up at [aistudio.google.com](https://aistudio.google.com), click **Get API key**
 - **Groq API key**: sign up at [console.groq.com](https://console.groq.com), go to **API Keys**
 - **Tavily API key** *(optional)*: sign up at [tavily.com](https://tavily.com) — the free tier includes 1 000 searches/month
-- **Google OAuth2 credential** *(optional — required for Calendar and/or Gmail)*: no Google username or password is stored. **One credential covers both services.**
+- **Google OAuth2 credential** *(optional — required for Calendar, Gmail, and/or Tasks)*: no Google username or password is stored. **One credential covers all three services.**
 
-  **Part 1 — One-time Google Cloud setup (do this once for both Calendar and Gmail):**
+  **Part 1 — One-time Google Cloud setup (do this once for all Google services):**
   1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create or select a project
-  2. **APIs & Services → Library** → search *Google Calendar API* → **Enable**. Then search *Gmail API* → **Enable**. *(Enable only the ones you need — both are free.)*
+  2. **APIs & Services → Library** → enable the APIs you need: *Google Calendar API*, *Gmail API*, *Tasks API*. *(Enable only the ones you need — all are free.)*
   3. **APIs & Services → OAuth consent screen** → choose **External** → fill in app name (e.g. *DRADIS*) and your email → save
   4. Still in the consent screen → **Publishing status** → click **Publish app** → confirm
 
@@ -126,10 +127,11 @@ Fill in at least one LLM provider key. The active provider is selected from the 
   **Part 2 — Authorize each service (run once per service):**
   - **Calendar**: send `/gcalauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Google Calendar in the Web UI and save.
   - **Gmail**: send `/gmailauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Gmail in the Web UI and save.
+  - **Tasks**: send `/gtasksauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Google Tasks in the Web UI and save.
 
-  *Gmail and Calendar use separate token files — even if Calendar is already connected, run `/gmailauth` separately.*
+  *Each service uses a separate token file — even if Calendar is already connected, run `/gmailauth` and `/gtasksauth` separately for the other services.*
 
-  *If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as `/gcalauth <url>` or `/gmailauth <url>`.*
+  *If the automatic redirect doesn't work (HA on a different device), copy the full URL from the browser address bar and send it as `/gcalauth <url>`, `/gmailauth <url>`, or `/gtasksauth <url>`.*
 
 ---
 
@@ -277,6 +279,35 @@ A synthesis sub-agent formats the raw email data using the configured LLM model 
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the Gmail sub-agent's system prompt. |
 | Show metrics | `false` | Send a separate 📧 metrics message after each Gmail operation (tokens, latency, model). |
+
+### Agents → Google Tasks
+
+Connect DRADIS to your Google Tasks. When enabled, the agent manages your to-do lists via natural language in Telegram. **Requires `google_client_id` and `google_client_secret`** in the Configuration tab — see setup steps under *How to get your API keys* above.
+
+Five tools are available:
+
+| Tool | Description |
+|------|-------------|
+| `list_tasks` | Fetches all open tasks in the specified list (default: `@default`). Returns each task with its ID in brackets so it can be referenced for future operations. |
+| `create_task` | Creates a new task with a title, optional notes, and an optional due date (YYYY-MM-DD format). |
+| `complete_task` | Marks a task as completed by ID. DRADIS always calls `list_tasks` first to retrieve the ID before completing. |
+| `delete_task` | Permanently deletes a task by ID. DRADIS always calls `list_tasks` first to retrieve the ID before deleting. |
+| `update_task` | Renames a task or updates its notes by ID. DRADIS always calls `list_tasks` first to retrieve the ID. |
+
+A synthesis sub-agent formats the raw task data using the configured LLM model before replying to the user.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Enabled | `false` | Activate Google Tasks access. The toggle is disabled when credentials are not configured. |
+| Authentication status | — | Shows whether the OAuth2 token is present. If not authenticated, send `/gtasksauth` to the bot and follow the steps. |
+| LLM Provider | `openrouter` | Provider for the tasks sub-agent (independent from DRADIS). |
+| Model | — | Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test. |
+| Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
+| Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
+| Additional instructions | — | Optional extra instructions appended to the Google Tasks sub-agent's system prompt. |
+| Show metrics | `false` | Send a separate 📝 metrics message after each Tasks operation (tokens, latency, model). |
+
+The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
 
 ### Monitors
 
@@ -475,10 +506,12 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/menu` | List all available commands |
 | `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
 | `/monitors` | List all enabled monitors as Telegram inline buttons. Tap a button to run the monitor immediately — result is delivered to Telegram within seconds. |
-| `/tokens` | Show cumulative token usage (input / output / total) broken down by agent: DRADIS, Weather, Web Search, Calendar, Gmail |
+| `/tokens` | Show cumulative token usage (input / output / total) broken down by agent: DRADIS, Weather, Web Search, Calendar, Gmail, Google Tasks |
 | `/tokens_reset` | Reset all token counters to zero |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
 | `/gmailauth` | Start Gmail OAuth2 authorization. Same flow as `/gcalauth` but authorizes Gmail read and send scopes. Send `/gmailauth <url>` as fallback if the automatic redirect fails. |
+| `/gtasksauth` | Start Google Tasks OAuth2 authorization. Same flow as `/gcalauth`. Send `/gtasksauth <url>` as fallback if the automatic redirect fails. |
+| `/todo` | List all open Google Tasks. Shortcut that calls the Tasks sub-agent directly without going through the DRADIS team routing. |
 
 ---
 
@@ -499,6 +532,7 @@ Every DRADIS response includes an italic footer indicating which agent(s) proces
 - `🤖 DRADIS · Weather` — reply involved the weather sub-agent
 - `🤖 DRADIS · Google Calendar` — reply involved the Google Calendar sub-agent
 - `🤖 DRADIS · Gmail` — reply involved the Gmail sub-agent
+- `🤖 DRADIS · Google Tasks` — reply involved the Google Tasks sub-agent
 - Multiple labels are combined, e.g. `🤖 DRADIS · Web Search · Weather`
 - For scheduled tasks the task name is appended: `🤖 DRADIS · <task name>`
 
@@ -517,4 +551,5 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/monitors.json` | Monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |
+| `/data/google_tasks_token.json` | Google Tasks OAuth2 token (auto-refreshed) |
 | `/data/dradis_token_stats.json` | Cumulative token usage counters (input/output per agent, persisted across restarts) |

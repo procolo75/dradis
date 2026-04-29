@@ -29,10 +29,12 @@ from web.server import (
     register_monitors_changed_callback, register_run_monitor_callback, load_monitors,
     set_gcal_code_event, pop_gcal_pending_code,
     set_gmail_code_event, pop_gmail_pending_code,
+    set_gtasks_code_event, pop_gtasks_pending_code,
 )
 import agent_core
 from agents.gcal import GCAL_TOKEN_FILE, _build_gcal_flow, create_gcal_agent
 from agents.gmail import GMAIL_TOKEN_FILE, _build_gmail_flow, create_gmail_agent
+from agents.gtasks import GTASKS_TOKEN_FILE, _build_gtasks_flow, create_gtasks_agent
 from agents.weather import create_weather_agent
 from agents.web_search import create_web_search_agent
 from agents.thunderstorm_monitor import run_thunderstorm_monitor
@@ -45,6 +47,7 @@ _MEMBER_TOKEN_MAP = {
     "web_search": "ws",
     "gcal":       "gcal",
     "gmail":      "gmail",
+    "gtasks":     "gtasks",
 }
 
 
@@ -93,11 +96,12 @@ async def _send_error_telegram(msg: str):
 
 
 _FALLBACK_MAP = {
-    "model":         ("fallback_model",         "provider",         "fallback_provider"),
-    "ws_model":      ("ws_fallback_model",       "ws_provider",      "ws_fallback_provider"),
-    "weather_model": ("weather_fallback_model",  "weather_provider", "weather_fallback_provider"),
-    "gcal_model":    ("gcal_fallback_model",     "gcal_provider",    "gcal_fallback_provider"),
-    "gmail_model":   ("gmail_fallback_model",    "gmail_provider",   "gmail_fallback_provider"),
+    "model":          ("fallback_model",          "provider",          "fallback_provider"),
+    "ws_model":       ("ws_fallback_model",        "ws_provider",       "ws_fallback_provider"),
+    "weather_model":  ("weather_fallback_model",   "weather_provider",  "weather_fallback_provider"),
+    "gcal_model":     ("gcal_fallback_model",      "gcal_provider",     "gcal_fallback_provider"),
+    "gmail_model":    ("gmail_fallback_model",     "gmail_provider",    "gmail_fallback_provider"),
+    "gtasks_model":   ("gtasks_fallback_model",    "gtasks_provider",   "gtasks_fallback_provider"),
 }
 
 
@@ -250,6 +254,8 @@ def _build_members(settings: dict) -> list:
         members.append(create_gcal_agent(settings))
     if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists():
         members.append(create_gmail_agent(settings))
+    if settings.get("gtasks_enabled") and GTASKS_TOKEN_FILE.exists():
+        members.append(create_gtasks_agent(settings))
     return members
 
 
@@ -264,6 +270,12 @@ def _build_executor(system_prompt: str, model: str, provider: str, members: list
                 "- If the user asks about weather, forecasts, temperature, rain, wind, "
                 "thunderstorm risk or any meteorological topic, delegate ONLY to the "
                 "Weather member. Do NOT call Web Search for weather questions."
+            )
+        if "gtasks" in member_names:
+            routing_rules.append(
+                "- For task management, to-do lists, or Google Tasks: delegate ONLY to the "
+                "'gtasks' member. Trigger phrases: 'cosa ho da fare', 'todo', 'task', "
+                "'aggiungi task', 'lista attività', 'segna come fatto', 'add task', 'show tasks'."
             )
         if routing_rules:
             rules_text = (
@@ -286,6 +298,7 @@ def _agents_label(member_responses: list) -> str:
     if "weather"    in invoked: parts.append("Weather")
     if "gcal"       in invoked: parts.append("Google Calendar")
     if "gmail"      in invoked: parts.append("Gmail")
+    if "gtasks"     in invoked: parts.append("Google Tasks")
     return "🤖 " + " · ".join(parts)
 
 
@@ -398,6 +411,8 @@ def _build_metrics_parts(response, duration: float, member_responses: list, sett
         parts.append("📅 Google Calendar\n" + format_metrics(member_map["gcal"], 0.0))
     if settings.get("gmail_show_metrics") and "gmail" in member_map:
         parts.append("📧 Gmail\n" + format_metrics(member_map["gmail"], 0.0))
+    if settings.get("gtasks_show_metrics") and "gtasks" in member_map:
+        parts.append("📝 Google Tasks\n" + format_metrics(member_map["gtasks"], 0.0))
     if settings.get("show_metrics"):
         parts.append("🤖 DRADIS\n" + format_metrics(response, duration))
     return parts
@@ -794,6 +809,14 @@ async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"Model: {settings.get('gmail_model', SETTINGS_DEFAULTS['gmail_model'])}")
         lines.append(f"Auth: {'✅ connected' if gmail_auth else '❌ not authenticated — send /gmailauth'}")
 
+    gtasks_on   = settings.get("gtasks_enabled", False)
+    gtasks_auth = GTASKS_TOKEN_FILE.exists()
+    lines += ["", "<b>Google Tasks</b>", f"Status: {'enabled' if gtasks_on else 'disabled'}"]
+    if gtasks_on:
+        lines.append(f"Provider: {settings.get('gtasks_provider', SETTINGS_DEFAULTS['gtasks_provider'])}")
+        lines.append(f"Model: {settings.get('gtasks_model', SETTINGS_DEFAULTS['gtasks_model'])}")
+        lines.append(f"Auth: {'✅ connected' if gtasks_auth else '❌ not authenticated — send /gtasksauth'}")
+
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
@@ -979,6 +1002,130 @@ async def cmd_gmailauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _gmail_complete_auth(flow, code, update.message)
 
 
+async def _gtasks_complete_auth(flow, code: str, message) -> bool:
+    from web.server import _gtasks_code_event as _ev
+    global _gtasks_pending_flow
+    try:
+        loop  = asyncio.get_event_loop()
+        creds = await loop.run_in_executor(
+            None,
+            lambda: (flow.fetch_token(code=code), flow.credentials)[1],
+        )
+        GTASKS_TOKEN_FILE.write_text(creds.to_json())
+        _gtasks_pending_flow = None
+        if _ev and not _ev.is_set():
+            _ev.set()
+        await message.reply_text(
+            "✅ <b>Google Tasks connected!</b> You can now ask DRADIS about your tasks.",
+            parse_mode=ParseMode.HTML,
+        )
+        return True
+    except Exception as e:
+        await message.reply_text(
+            f"❌ Authorization failed: {html.escape(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+        return False
+
+
+async def _gtasks_auth_background(event: asyncio.Event, flow, message):
+    try:
+        await asyncio.wait_for(event.wait(), timeout=300)
+        code = pop_gtasks_pending_code()
+        if code and not GTASKS_TOKEN_FILE.exists():
+            await _gtasks_complete_auth(flow, code, message)
+    except asyncio.TimeoutError:
+        if not GTASKS_TOKEN_FILE.exists():
+            await message.reply_text("⏱ Authorization timed out (5 min). Send /gtasksauth to try again.")
+
+
+_gtasks_pending_flow = None
+
+
+async def cmd_gtasksauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global _gtasks_pending_flow
+    if update.effective_user.id != ALLOWED_CHAT_ID:
+        return
+
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        await update.message.reply_text(
+            "❌ <code>google_client_id</code> and <code>google_client_secret</code> are not configured.\n"
+            "Add them in the add-on <b>Configuration</b> tab and restart.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    args = context.args or []
+
+    if not args:
+        event = asyncio.Event()
+        set_gtasks_code_event(event)
+        flow = _build_gtasks_flow(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
+        _gtasks_pending_flow = flow
+        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+
+        msg = (
+            "📝 <b>Google Tasks — Authorization</b>\n\n"
+            "1. Open this link in your browser:\n"
+            f"<code>{html.escape(auth_url)}</code>\n\n"
+            "2. Sign in with your Google account and grant access.\n"
+            "3. Your browser will redirect back to DRADIS automatically ✅\n\n"
+            "<i>If the redirect fails (HA on a different device), copy the full URL "
+            "from the browser address bar and send it as:\n"
+            "/gtasksauth &lt;url&gt;</i>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        asyncio.create_task(_gtasks_auth_background(event, flow, update.message))
+        return
+
+    raw  = " ".join(args)
+    code = parse_qs(urlparse(raw).query).get("code", [raw])[0]
+
+    if not code:
+        await update.message.reply_text(
+            "❌ Could not parse the authorization code. "
+            "Make sure you copied the full redirect URL.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    flow = _gtasks_pending_flow or _build_gtasks_flow(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
+    await _gtasks_complete_auth(flow, code, update.message)
+
+
+async def cmd_todo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ALLOWED_CHAT_ID:
+        return
+    settings = read_settings()
+    if not settings.get("gtasks_enabled", False):
+        await update.message.reply_text(
+            "📝 Google Tasks is not enabled. Enable it from the Web UI.",
+        )
+        return
+    if not GTASKS_TOKEN_FILE.exists():
+        await update.message.reply_text(
+            "📝 Google Tasks not authenticated. Send /gtasksauth to connect.",
+        )
+        return
+    agent      = create_gtasks_agent(settings)
+    start_time = time.time()
+    try:
+        response = await agent.arun("List all open tasks")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
+        return
+    duration = time.time() - start_time
+    text     = (response.content or "").strip()
+    agent_core._add_tokens("gtasks", response)
+    if text:
+        await update.message.reply_text(
+            md_to_html(text) + "\n\n<i>🤖 DRADIS · Google Tasks</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await update.message.reply_text("📭 No open tasks.")
+
+
 COMMANDS = [
     BotCommand("info",         "Status and configuration of all agents"),
     BotCommand("menu",         "List all available commands"),
@@ -988,6 +1135,8 @@ COMMANDS = [
     BotCommand("tokens_reset", "Reset token counters"),
     BotCommand("gcalauth",     "Connect Google Calendar (OAuth2)"),
     BotCommand("gmailauth",    "Connect Gmail (OAuth2)"),
+    BotCommand("gtasksauth",   "Connect Google Tasks (OAuth2)"),
+    BotCommand("todo",         "List open Google Tasks"),
 ]
 
 
@@ -1007,6 +1156,7 @@ async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "ws":      "🔍 Web Search",
         "gcal":    "📅 Calendar",
         "gmail":   "📧 Gmail",
+        "gtasks":  "📝 Google Tasks",
     }
     lines = ["<b>Token usage</b>"]
     total_in = total_out = 0
@@ -1114,6 +1264,8 @@ def build_telegram_app():
     app.add_handler(CommandHandler("tokens_reset", cmd_tokens_reset))
     app.add_handler(CommandHandler("gcalauth",     cmd_gcalauth))
     app.add_handler(CommandHandler("gmailauth",    cmd_gmailauth))
+    app.add_handler(CommandHandler("gtasksauth",   cmd_gtasksauth))
+    app.add_handler(CommandHandler("todo",         cmd_todo))
     app.add_handler(CallbackQueryHandler(handle_task_callback,    pattern=r"^task:"))
     app.add_handler(CallbackQueryHandler(handle_monitor_callback, pattern=r"^monitor:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

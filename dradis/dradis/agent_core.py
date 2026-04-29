@@ -8,7 +8,7 @@ from agno.models.openai.like import OpenAILike
 API_KEYS: dict = {}
 
 TOKEN_STATS_FILE   = Path("/data/dradis_token_stats.json")
-_TOKEN_CATEGORIES  = ("dradis", "weather", "ws", "gcal", "gmail")
+_TOKEN_CATEGORIES  = ("dradis", "weather", "ws", "gcal", "gmail", "gtasks")
 _TOKEN_STATS: dict = {}
 
 
