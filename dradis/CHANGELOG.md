@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.12.1] - 2026-05-02
+- **Fix — version bump**: increment to allow HA update detection after the in-place v2.12.0 refactor (read_url tool, Tools panel in Web UI).
+
 ## [2.12.0] - 2026-05-02
 - **Fix — web search routing + URL Fetch tool**: `web_search` simplified to Tavily-only (removed `JinaReaderTools`). URL reading is now a direct tool (`read_url`) of the DRADIS team leader — no extra LLM sub-agent, no extra token cost. DRADIS calls `read_url` directly when the user provides a URL and analyses the result with its own model. Controlled via a new `read_url_enabled` setting (Tools panel in the Web UI). Routing rules injected into the team leader system prompt: URL present → call `read_url`; question without URL → delegate to `web_search`.
 
