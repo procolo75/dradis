@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.12.0] - 2026-05-02
+- **Fix — web search routing**: split the single `web_search` agent into two focused agents: `web_search` (Tavily, query-based) and `web_reader` (Jina Reader, URL-based). Previously, a single agent held both tools and the LLM frequently called `read_url` for plain questions, causing timeouts. Each agent now has a single tool with an unambiguous purpose, and the DRADIS team leader receives explicit routing rules: URLs go to `web_reader`, questions go to `web_search`. `JinaReaderTools` from agno replaced by a direct `httpx` call with URL validation. `web_reader` is activated automatically alongside `web_search` when `ws_enabled = true`; it requires no API key (Jina Reader free tier).
+
 ## [2.11.0] - 2026-05-02
 - **Feature — URL content fetch**: the web_search agent now provides a `read_url` tool (Agno `JinaReaderTools`) alongside the existing `search_web`. When the user provides a specific URL, the agent fetches and returns the page content as markdown (max 8 000 chars). No API key required; no extra dependencies (Jina Reader API uses `httpx` already in `requirements.txt`). The `open_url` stub has been removed and the agent system prompt updated to reflect both tools.
 

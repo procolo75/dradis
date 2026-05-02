@@ -1,5 +1,3 @@
-from agno.tools.jina import JinaReaderTools
-
 from agent_core import create_agent, _now_str
 from web.server import SETTINGS_DEFAULTS
 
@@ -9,13 +7,10 @@ def create_web_search_agent(settings: dict, tavily_api_key: str):
 
     base_prompt = (
         f"It is {_now_str(tz_name)} ({tz_name}). "
-        "You are a web research assistant. "
-        "You have TWO tools available: search_web and read_url. "
-        "Use search_web when the user asks a question or wants to find information on the web — "
-        "pass a concise, optimised search query and synthesise the results into a clear answer. "
-        "Use read_url when the user provides a specific URL they want you to read or summarise — "
-        "pass the URL exactly as given and synthesise the returned content. "
-        "After calling either tool, synthesise ONLY the information present in the results. "
+        "You are a web search assistant. "
+        "When the user asks a question or wants to find information, call search_web with a "
+        "concise, optimised query and synthesise the results into a clear answer. "
+        "Synthesise ONLY the information present in the results. "
         "If the results do not contain enough information, say so explicitly. "
         "Never invent or assume facts not present in the results. "
         + settings.get("ws_instructions", "")
@@ -43,14 +38,7 @@ def create_web_search_agent(settings: dict, tavily_api_key: str):
         system_prompt=base_prompt,
         model=settings.get("ws_model", SETTINGS_DEFAULTS["ws_model"]),
         provider=settings.get("ws_provider", SETTINGS_DEFAULTS["ws_provider"]),
-        tools=[
-            search_web,
-            JinaReaderTools(
-                enable_read_url=True,
-                enable_search_query=False,
-                max_content_length=8000,
-            ),
-        ],
+        tools=[search_web],
         name="web_search",
         tool_call_limit=3,
     )

@@ -38,6 +38,7 @@ from agents.gmail import GMAIL_TOKEN_FILE, _build_gmail_flow, create_gmail_agent
 from agents.gtasks import GTASKS_TOKEN_FILE, _build_gtasks_flow, create_gtasks_agent
 from agents.weather import create_weather_agent
 from agents.web_search import create_web_search_agent
+from agents.web_reader import create_web_reader_agent
 from agents.thunderstorm_monitor import run_thunderstorm_monitor
 from agents.rain_monitor import run_rain_monitor
 
@@ -47,6 +48,7 @@ WEB_PORT = 8099
 _MEMBER_TOKEN_MAP = {
     "weather":    "weather",
     "web_search": "ws",
+    "web_reader": "ws",
     "gcal":       "gcal",
     "gmail":      "gmail",
     "gtasks":     "gtasks",
@@ -249,6 +251,8 @@ def format_metrics(response, duration: float) -> str:
 
 def _build_members(settings: dict) -> list:
     members = []
+    if settings.get("ws_enabled"):
+        members.append(create_web_reader_agent(settings))
     if settings.get("ws_enabled") and TAVILY_API_KEY:
         members.append(create_web_search_agent(settings, TAVILY_API_KEY))
     if settings.get("weather_enabled"):
@@ -268,6 +272,16 @@ def _build_executor(system_prompt: str, model: str, provider: str, members: list
     if members:
         member_names = {m.name for m in members}
         routing_rules = []
+        if "web_reader" in member_names:
+            routing_rules.append(
+                "- If the user provides a specific URL starting with http:// or https://, "
+                "delegate ONLY to the web_reader member. Never use web_search for URLs."
+            )
+        if "web_search" in member_names:
+            routing_rules.append(
+                "- If the user asks a question or wants to search the web without providing a URL, "
+                "delegate ONLY to the web_search member. Never use web_reader for questions."
+            )
         if "weather" in member_names and "web_search" in member_names:
             routing_rules.append(
                 "- If the user asks about weather, forecasts, temperature, rain, wind, "
@@ -298,6 +312,7 @@ def _agents_label(member_responses: list) -> str:
     invoked = {mr.agent_name for mr in member_responses if mr.agent_name}
     parts = ["DRADIS"]
     if "web_search" in invoked: parts.append("Web Search")
+    if "web_reader" in invoked: parts.append("Web Reader")
     if "weather"    in invoked: parts.append("Weather")
     if "gcal"       in invoked: parts.append("Google Calendar")
     if "gmail"      in invoked: parts.append("Gmail")
@@ -408,6 +423,8 @@ def _build_metrics_parts(response, duration: float, member_responses: list, sett
     parts = []
     if settings.get("ws_show_metrics") and "web_search" in member_map:
         parts.append("🔍 Web Search\n" + format_metrics(member_map["web_search"], 0.0))
+    if settings.get("ws_show_metrics") and "web_reader" in member_map:
+        parts.append("🌐 Web Reader\n" + format_metrics(member_map["web_reader"], 0.0))
     if settings.get("weather_show_metrics") and "weather" in member_map:
         parts.append("🌤 Weather\n" + format_metrics(member_map["weather"], 0.0))
     if settings.get("gcal_show_metrics") and "gcal" in member_map:
