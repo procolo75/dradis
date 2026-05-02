@@ -171,13 +171,20 @@ Lets you edit all non-sensitive DRADIS settings at runtime without restarting th
 
 ### Agents → Web Search
 
-Configure the built-in Web Search sub-agent, powered by [Tavily](https://tavily.com). A green dot in the sidebar indicates the agent is active.
+Configure the built-in Web Search sub-agent. A green dot in the sidebar indicates the agent is active.
 
-When enabled, DRADIS automatically decides when to call `search_web` — no prompt engineering required. Tavily returns up to 5 results; a dedicated synthesis LLM formats them into a concise answer.
+When enabled, DRADIS automatically decides which tool to call — no prompt engineering required. Two tools are available:
+
+| Tool | When used | Backend |
+|------|-----------|---------|
+| `search_web` | User asks a question or wants to search for information | [Tavily](https://tavily.com) — requires `tavily_api_key` |
+| `read_url` | User provides a specific URL to read or summarise | [Jina Reader](https://jina.ai/reader/) — free, no API key required |
+
+`search_web` returns up to 5 results with full page content. `read_url` fetches the page at the given URL and returns its content as markdown (max 8 000 characters). A dedicated synthesis LLM formats the output into a concise answer.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| Enabled | `false` | Activate web search delegation. Requires `tavily_api_key` in the Configuration tab. |
+| Enabled | `false` | Activate web search delegation. Requires `tavily_api_key` in the Configuration tab for query-based search. URL reading works without any additional key. |
 | Test connection | — | Sends a test query to Tavily and reports the result inline. |
 | LLM Provider | `openrouter` | Provider for the synthesis LLM (independent from DRADIS). |
 | Model | — | Model used to synthesise search results. Click 🔄 to load, ⚡ to speed-test. |
@@ -421,6 +428,13 @@ DRADIS calls the Weather sub-agent (Open-Meteo, no API key needed) and replies w
 > *"What are the latest Home Assistant announcements?"*
 
 DRADIS routes the request to the Web Search sub-agent (Tavily), retrieves up to 5 results, and sends a concise summarised answer.
+
+---
+
+### Read a specific URL
+> *"Summarise this article: https://www.example.com/article"*
+
+DRADIS routes the request to the Web Search sub-agent, which calls `read_url` via Jina Reader. The page content is fetched, truncated to 8 000 characters, and synthesised into a concise summary. No API key required.
 
 ---
 

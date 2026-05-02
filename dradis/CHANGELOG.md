@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.11.0] - 2026-05-02
+- **Feature — URL content fetch**: the web_search agent now provides a `read_url` tool (Agno `JinaReaderTools`) alongside the existing `search_web`. When the user provides a specific URL, the agent fetches and returns the page content as markdown (max 8 000 chars). No API key required; no extra dependencies (Jina Reader API uses `httpx` already in `requirements.txt`). The `open_url` stub has been removed and the agent system prompt updated to reflect both tools.
+
 ## [2.10.4] - 2026-05-02
 - **Fix — GCal token expired silent failure**: `_get_gcal_creds()` now sends a Telegram notification when the Google Calendar OAuth token is revoked or expired, matching the behaviour already present in Gmail and Google Tasks agents.
 - **Fix — handle_message no-fallback error not notified**: when the primary model fails and no fallback model is configured, `handle_message` now sends a Telegram error notification in addition to the in-chat reply, aligning with the scheduled task behaviour.
