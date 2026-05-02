@@ -6,7 +6,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 
 - **Branded icon**: custom DRADIS AI icon in the HA app dashboard and sidebar
 - **Multi-provider LLM**: OpenRouter, OpenAI, GitHub Models, Gemini, Groq
-- **Web Search** sub-agent powered by Tavily (optional)
+- **Web Search** sub-agent: query search via Tavily + URL content fetch via Jina Reader (both optional/free)
 - **Weather** sub-agent powered by Open-Meteo (free, no API key)
 - **Voice** transcription via Groq Whisper (optional)
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
@@ -40,6 +40,10 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 **Web search**
 > *"What are the latest Home Assistant announcements?"*
 > → DRADIS searches the web via Tavily and sends a summarised answer.
+
+**Read a URL**
+> *"Summarise this article: https://www.example.com/article"*
+> → DRADIS fetches the page via Jina Reader and returns a concise summary. No API key required.
 
 **Daily thunderstorm risk digest** *(monitor)*
 > Every morning DRADIS fetches atmospheric instability data and sends a risk summary by time band — no LLM, no token cost.
