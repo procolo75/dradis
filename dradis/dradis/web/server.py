@@ -60,6 +60,7 @@ SETTINGS_KEYS = [
     "show_metrics", "history_enabled", "history_depth", "startup_message", "timezone",
     "ws_enabled", "ws_provider", "ws_model", "ws_instructions", "ws_show_metrics",
     "ws_fallback_provider", "ws_fallback_model",
+    "read_url_enabled",
     "weather_enabled", "weather_provider", "weather_model", "weather_instructions", "weather_show_metrics",
     "weather_fallback_provider", "weather_fallback_model",
     "voice_enabled", "voice_provider", "voice_model", "voice_language", "voice_send_transcription", "voice_metrics",
@@ -193,6 +194,7 @@ SETTINGS_DEFAULTS = {
     "ws_model":             "nvidia/nemotron-3-nano-30b-a3b:free",
     "ws_instructions":      "",
     "ws_show_metrics":      False,
+    "read_url_enabled":     False,
     "weather_enabled":      False,
     "weather_provider":     "openrouter",
     "weather_model":        "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -287,6 +289,7 @@ class SettingsPayload(BaseModel):
     ws_model:             str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     ws_instructions:      str  = ""
     ws_show_metrics:      bool = False
+    read_url_enabled:     bool = False
     weather_enabled:      bool = False
     weather_provider:     str  = "openrouter"
     weather_model:        str  = "nvidia/nemotron-3-nano-30b-a3b:free"

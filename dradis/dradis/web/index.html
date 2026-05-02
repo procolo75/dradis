@@ -325,6 +325,16 @@
     </div>
 
     <div class="nav-section">
+      <span class="nav-section-label">Tools</span>
+      <ul class="nav-list">
+        <li class="nav-item" data-panel="tools" id="nav-tools">
+          <span class="nav-dot" id="read-url-dot"></span>
+          <span class="nav-label">URL Fetch</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="nav-section">
       <span class="nav-section-label" style="display:flex;align-items:center;justify-content:space-between;">
         Tasks
         <button id="btn-new-task" title="New task" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
@@ -585,6 +595,35 @@
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-ws">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Tools -->
+    <div class="panel" id="panel-tools">
+      <div class="form-card">
+        <h2>Tools</h2>
+
+        <h3 style="font-size:1rem; margin-bottom:4px;">🌐 URL Fetch</h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          When enabled, DRADIS can fetch the content of any URL you provide, using
+          <a href="https://jina.ai/reader/" target="_blank" style="color:var(--accent)">Jina Reader</a>
+          (free, no API key required). The raw page text is returned directly to DRADIS —
+          no extra LLM call is made. DRADIS analyses the content with its own model.
+        </p>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="read-url-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-tools">Save</button>
         </div>
       </div>
     </div>
@@ -1814,6 +1853,36 @@ document.getElementById("btn-save-ws").addEventListener("click", async () => {
   }
 });
 
+// ── Tools panel ───────────────────────────────────────────────────────────────
+
+async function loadToolsSettings() {
+  const s = await api("GET", "/api/settings");
+  document.getElementById("read-url-enabled").checked = !!s.read_url_enabled;
+  const dot = document.getElementById("read-url-dot");
+  if (dot) dot.classList.toggle("on", !!s.read_url_enabled);
+}
+
+document.getElementById("btn-save-tools").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-tools");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    read_url_enabled: document.getElementById("read-url-enabled").checked,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const dot = document.getElementById("read-url-dot");
+    if (dot) dot.classList.toggle("on", payload.read_url_enabled);
+    showToast("Tools settings saved");
+  } catch {
+    showToast("Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ── Weather panel ─────────────────────────────────────────────────────────────
 
 async function loadWeatherSettings() {
@@ -2592,6 +2661,12 @@ async function init() {
     await loadWsSettings();
   } catch (e) {
     console.error("loadWsSettings:", e);
+  }
+
+  try {
+    await loadToolsSettings();
+  } catch (e) {
+    console.error("loadToolsSettings:", e);
   }
 
   try {

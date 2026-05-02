@@ -38,7 +38,6 @@ from agents.gmail import GMAIL_TOKEN_FILE, _build_gmail_flow, create_gmail_agent
 from agents.gtasks import GTASKS_TOKEN_FILE, _build_gtasks_flow, create_gtasks_agent
 from agents.weather import create_weather_agent
 from agents.web_search import create_web_search_agent
-from agents.web_reader import create_web_reader_agent
 from agents.thunderstorm_monitor import run_thunderstorm_monitor
 from agents.rain_monitor import run_rain_monitor
 
@@ -48,7 +47,6 @@ WEB_PORT = 8099
 _MEMBER_TOKEN_MAP = {
     "weather":    "weather",
     "web_search": "ws",
-    "web_reader": "ws",
     "gcal":       "gcal",
     "gmail":      "gmail",
     "gtasks":     "gtasks",
@@ -103,6 +101,7 @@ async def _send_error_telegram(msg: str):
 _FALLBACK_MAP = {
     "model":          ("fallback_model",          "provider",          "fallback_provider"),
     "ws_model":       ("ws_fallback_model",        "ws_provider",       "ws_fallback_provider"),
+
     "weather_model":  ("weather_fallback_model",   "weather_provider",  "weather_fallback_provider"),
     "gcal_model":     ("gcal_fallback_model",      "gcal_provider",     "gcal_fallback_provider"),
     "gmail_model":    ("gmail_fallback_model",     "gmail_provider",    "gmail_fallback_provider"),
@@ -246,13 +245,29 @@ def format_metrics(response, duration: float) -> str:
         return f"📊 {duration:.1f}s | metrics error: {e}"
 
 
+# ── read_url tool (no LLM — plain HTTP fetch via Jina Reader) ─────────────────
+
+async def read_url(url: str) -> str:
+    """Fetch and return the text content of a web page given its URL.
+    Call this when the user explicitly provides a URL starting with http:// or https://.
+    Do NOT call this for questions or search queries."""
+    import httpx
+    if not url.startswith("http://") and not url.startswith("https://"):
+        return "Error: a valid URL starting with http:// or https:// is required."
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"https://r.jina.ai/{url}",
+            headers={"Accept": "text/plain"},
+            follow_redirects=True,
+        )
+    return resp.text[:8000]
+
+
 # ── Team / agent builder ──────────────────────────────────────────────────────
 
 
 def _build_members(settings: dict) -> list:
     members = []
-    if settings.get("ws_enabled"):
-        members.append(create_web_reader_agent(settings))
     if settings.get("ws_enabled") and TAVILY_API_KEY:
         members.append(create_web_search_agent(settings, TAVILY_API_KEY))
     if settings.get("weather_enabled"):
@@ -266,21 +281,26 @@ def _build_members(settings: dict) -> list:
     return members
 
 
-def _build_executor(system_prompt: str, model: str, provider: str, members: list):
-    # Inject routing rules into the team leader system prompt to prevent
-    # the leader from calling irrelevant members (e.g. Web Search for weather).
+def _build_executor(system_prompt: str, model: str, provider: str, members: list, settings: dict):
+    tools = [read_url] if settings.get("read_url_enabled") else []
+    if tools:
+        system_prompt = (
+            system_prompt
+            + " When the user provides a URL starting with http:// or https://, "
+            "call read_url to fetch the page content and answer based on it."
+        )
     if members:
         member_names = {m.name for m in members}
         routing_rules = []
-        if "web_reader" in member_names:
+        if tools and "web_search" in member_names:
             routing_rules.append(
                 "- If the user provides a specific URL starting with http:// or https://, "
-                "delegate ONLY to the web_reader member. Never use web_search for URLs."
+                "call read_url directly. Do NOT delegate to web_search for URLs."
             )
         if "web_search" in member_names:
             routing_rules.append(
                 "- If the user asks a question or wants to search the web without providing a URL, "
-                "delegate ONLY to the web_search member. Never use web_reader for questions."
+                "delegate ONLY to the web_search member."
             )
         if "weather" in member_names and "web_search" in member_names:
             routing_rules.append(
@@ -295,13 +315,13 @@ def _build_executor(system_prompt: str, model: str, provider: str, members: list
                 "'aggiungi task', 'lista attività', 'segna come fatto', 'add task', 'show tasks'."
             )
         if routing_rules:
-            rules_text = (
-                "\n\nROUTING RULES (follow strictly):\n"
+            system_prompt = (
+                system_prompt
+                + "\n\nROUTING RULES (follow strictly):\n"
                 + "\n".join(routing_rules)
             )
-            system_prompt = system_prompt + rules_text
-        return agent_core.create_team(system_prompt, model, provider, members)
-    return agent_core.create_agent(system_prompt, model, provider)
+        return agent_core.create_team(system_prompt, model, provider, members, tools=tools)
+    return agent_core.create_agent(system_prompt, model, provider, tools=tools)
 
 
 def _collect_member_responses(response) -> list:
@@ -312,7 +332,6 @@ def _agents_label(member_responses: list) -> str:
     invoked = {mr.agent_name for mr in member_responses if mr.agent_name}
     parts = ["DRADIS"]
     if "web_search" in invoked: parts.append("Web Search")
-    if "web_reader" in invoked: parts.append("Web Reader")
     if "weather"    in invoked: parts.append("Weather")
     if "gcal"       in invoked: parts.append("Google Calendar")
     if "gmail"      in invoked: parts.append("Gmail")
@@ -399,7 +418,7 @@ async def _run_with_fallback(
     fb_model_id = fb_settings.get("model", primary_model)
     fb_provider = fb_settings.get("provider", primary_provider)
     fb_members  = _build_members(fb_settings)
-    fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members)
+    fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members, fb_settings)
     print(f"[DRADIS] {context_label} fallback: model={fb_model_id} provider={fb_provider}")
 
     try:
@@ -423,8 +442,6 @@ def _build_metrics_parts(response, duration: float, member_responses: list, sett
     parts = []
     if settings.get("ws_show_metrics") and "web_search" in member_map:
         parts.append("🔍 Web Search\n" + format_metrics(member_map["web_search"], 0.0))
-    if settings.get("ws_show_metrics") and "web_reader" in member_map:
-        parts.append("🌐 Web Reader\n" + format_metrics(member_map["web_reader"], 0.0))
     if settings.get("weather_show_metrics") and "weather" in member_map:
         parts.append("🌤 Weather\n" + format_metrics(member_map["weather"], 0.0))
     if settings.get("gcal_show_metrics") and "gcal" in member_map:
@@ -552,7 +569,7 @@ async def run_scheduled_task(task: dict):
     provider      = settings.get("provider", SETTINGS_DEFAULTS["provider"])
 
     members  = _build_members(settings)
-    executor = _build_executor(system_prompt, model, provider, members)
+    executor = _build_executor(system_prompt, model, provider, members, settings)
     print(f"[DRADIS] Scheduled task '{task_name}': model={model} members={[m.name for m in members]}")
 
     start_time = time.time()
@@ -734,7 +751,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     provider = settings.get("provider", SETTINGS_DEFAULTS["provider"])
 
     members  = _build_members(settings)
-    executor = _build_executor(system_prompt, model, provider, members)
+    executor = _build_executor(system_prompt, model, provider, members, settings)
     print(f"[DRADIS] model: {model} | members: {[m.name for m in members]}")
 
     start_time = time.time()

@@ -59,7 +59,7 @@ def create_agent(
     )
 
 
-def create_team(system_prompt: str, model: str, provider: str, members: list):
+def create_team(system_prompt: str, model: str, provider: str, members: list, tools: list | None = None):
     from agno.team import Team
     return Team(
         name="DRADIS",
@@ -71,6 +71,7 @@ def create_team(system_prompt: str, model: str, provider: str, members: list):
             base_url=_base_url_for_provider(provider),
         ),
         instructions=system_prompt,
+        tools=tools or [],
         store_member_responses=True,
         markdown=False,
     )
