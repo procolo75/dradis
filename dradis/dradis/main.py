@@ -743,11 +743,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _send_error_telegram(err_msg)
             await update.message.reply_text(err_msg, parse_mode=ParseMode.HTML)
         else:
-            await update.message.reply_text(
+            err_msg = (
                 f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(error))}\n"
-                "<i>No fallback model configured.</i>",
-                parse_mode=ParseMode.HTML,
+                "<i>No fallback model configured.</i>"
             )
+            await _send_error_telegram(err_msg)
+            await update.message.reply_text(err_msg, parse_mode=ParseMode.HTML)
         return
 
     if used_fallback:

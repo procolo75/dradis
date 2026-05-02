@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.10.4] - 2026-05-02
+- **Fix — GCal token expired silent failure**: `_get_gcal_creds()` now sends a Telegram notification when the Google Calendar OAuth token is revoked or expired, matching the behaviour already present in Gmail and Google Tasks agents.
+- **Fix — handle_message no-fallback error not notified**: when the primary model fails and no fallback model is configured, `handle_message` now sends a Telegram error notification in addition to the in-chat reply, aligning with the scheduled task behaviour.
+
 ## [2.10.2] - 2026-04-29
 - **Fix — monitor CRON crash (root cause)**: APScheduler's `AsyncIOScheduler` runs async job functions via its own `AsyncIOExecutor` which may use a stale or thread-local event loop reference — causing `run_scheduled_monitor` and `run_scheduled_task` to fail silently when the CRON fires, while manual triggers (which use `asyncio.create_task` directly) work fine. Fixed by replacing the direct async job registration with a pair of thin sync wrappers (`_cron_monitor`, `_cron_task`) that call `asyncio.run_coroutine_threadsafe(coro, _main_loop)` where `_main_loop` is the exact loop captured from `asyncio.get_running_loop()` at startup — guaranteeing the coroutine always runs in the correct event loop regardless of how APScheduler calls it.
 - **Fix — monitor CRON error invisible**: exception log now prints `ExceptionClass: message` (type always visible even with empty message) plus a full traceback via `traceback.print_exc()`.

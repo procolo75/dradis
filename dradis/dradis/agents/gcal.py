@@ -10,6 +10,17 @@ GCAL_SCOPES       = ["https://www.googleapis.com/auth/calendar"]
 GCAL_REDIRECT_URI = "http://localhost:8099/gcalauth/callback"
 
 
+async def _notify_token_expired():
+    try:
+        import main as _main
+        await _main._send_error_telegram(
+            "🔑 <b>Google Calendar token scaduto o revocato.</b>\n"
+            "Invia <code>/gcalauth</code> per riconnetterti."
+        )
+    except Exception as ex:
+        print(f"[DRADIS] Could not send token-expired notification: {ex}")
+
+
 def _build_gcal_flow(client_id: str, client_secret: str):
     from google_auth_oauthlib.flow import Flow
     client_config = {
@@ -36,10 +47,15 @@ def _get_gcal_creds():
             creds.refresh(GoogleRequest())
             GCAL_TOKEN_FILE.write_text(creds.to_json())
         except RefreshError as e:
-            # Token revoked or expired (invalid_grant): delete it so the user
-            # gets a clean re-auth prompt instead of a cryptic crash.
             print(f"[DRADIS] GCal token refresh failed ({e}), deleting token file.")
             GCAL_TOKEN_FILE.unlink(missing_ok=True)
+            import asyncio as _aio
+            try:
+                loop = _aio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(_notify_token_expired())
+            except Exception:
+                pass
             return None
     return creds
 
