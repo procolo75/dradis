@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [2.13.0] - 2026-05-03
+- **Feature — Duplicate task / monitor**: added a "⎘ Copy" button in both the Task and Monitor forms. Clicking it creates a new item named `Copy of <name>` with the same cron schedule and instructions (tasks) or all monitor fields, disabled by default. The copy is immediately selected in the sidebar and ready to edit.
+
+## [2.12.2] - 2026-05-03
+- **Fix — sub-agent fallback not triggered**: when a sub-agent's LLM model failed, agno was catching the error internally (setting `status=ERROR` on the member response) without propagating it to the top-level DRADIS response. `_run_with_fallback` therefore saw a "successful" response and never triggered the sub-agent's fallback. Fixed by adding `_check_member_failures()` which inspects `member_responses` after each primary attempt and flags any member with `status=ERROR` that also has a fallback model configured. Fixed the fallback guard (`if not fb_model`) which previously required DRADIS's own `fallback_model` to be set even when only sub-agent fallbacks were configured; the guard now also passes when the failure was a detected member failure.
+- **Fix — fallback Telegram notification opaque for sub-agents**: `_build_fallback_used_msg()` replaces the hardcoded "primary model X failed → fallback Y" string. The new helper computes the diff between primary and fallback settings and lists every changed model (DRADIS main + sub-agents), so the notification clearly shows which agents switched to fallback.
+
 ## [2.12.1] - 2026-05-02
 - **Fix — version bump**: increment to allow HA update detection after the in-place v2.12.0 refactor (read_url tool, Tools panel in Web UI).
 

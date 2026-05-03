@@ -108,6 +108,15 @@ _FALLBACK_MAP = {
     "gtasks_model":   ("gtasks_fallback_model",    "gtasks_provider",   "gtasks_fallback_provider"),
 }
 
+# Maps sub-agent name → the fallback model settings key for that agent
+_AGENT_TO_FB_MODEL_KEY = {
+    "web_search": "ws_fallback_model",
+    "weather":    "weather_fallback_model",
+    "gcal":       "gcal_fallback_model",
+    "gmail":      "gmail_fallback_model",
+    "gtasks":     "gtasks_fallback_model",
+}
+
 
 def _apply_fallback_settings(settings: dict) -> dict:
     s = dict(settings)
@@ -371,6 +380,30 @@ def _is_failed_response(response) -> bool:
         return True
 
 
+def _check_member_failures(response, settings: dict) -> list[str]:
+    """Return names of failed sub-agents that have a fallback model configured.
+
+    Agno catches sub-agent LLM errors internally and sets the member response
+    status to ERROR without propagating the failure to the top-level response.
+    This helper inspects member_responses so _run_with_fallback can detect
+    recoverable sub-agent failures and rebuild with fallback models.
+    Only members with a fallback configured are returned (unrecoverable ones
+    are ignored so we don't discard a valid partial response for nothing).
+    """
+    recoverable = []
+    for mr in getattr(response, "member_responses", []):
+        status = getattr(mr, "status", None)
+        is_error = status is not None and (
+            status == "ERROR" or getattr(status, "value", None) == "ERROR"
+        )
+        if is_error:
+            name = getattr(mr, "agent_name", "")
+            fb_key = _AGENT_TO_FB_MODEL_KEY.get(name, "")
+            if fb_key and (settings.get(fb_key) or "").strip():
+                recoverable.append(name)
+    return recoverable
+
+
 async def _run_with_fallback(
     executor,
     prompt: str,
@@ -388,6 +421,7 @@ async def _run_with_fallback(
     """
     response      = None
     primary_error = None
+    member_failed = False
 
     # ── Primary attempt ───────────────────────────────────────────────────────
     try:
@@ -406,12 +440,24 @@ async def _run_with_fallback(
         )
         print(f"[DRADIS] {context_label} failed response ({reason}) — triggering fallback")
 
+    # Detect sub-agent failures even when DRADIS main response succeeded.
+    # Agno catches member LLM errors internally (status=ERROR on member_responses)
+    # without bubbling them up to the top-level response.
+    if primary_error is None and response is not None:
+        recoverable = _check_member_failures(response, settings)
+        if recoverable:
+            primary_error = RuntimeError(f"Sub-agent(s) failed: {', '.join(recoverable)}")
+            member_failed = True
+            print(f"[DRADIS] {context_label} member failure(s): {recoverable} — triggering fallback")
+
     if primary_error is None:
         return response, False, None
 
     # ── Fallback attempt ──────────────────────────────────────────────────────
+    # DRADIS main failures require fallback_model to be set.
+    # Sub-agent failures only need the specific agent's fallback (already confirmed above).
     fb_model = (settings.get("fallback_model") or "").strip()
-    if not fb_model:
+    if not fb_model and not member_failed:
         return None, False, primary_error
 
     fb_settings = _apply_fallback_settings(settings)
@@ -435,6 +481,36 @@ async def _run_with_fallback(
     except Exception as e2:
         print(f"[DRADIS] {context_label} fallback arun exception: {e2}")
         return None, True, e2
+
+
+def _build_fallback_used_msg(settings: dict, primary_model: str, task_name: str | None = None) -> str:
+    """Build Telegram notification text describing which fallback models were activated."""
+    fb_settings = _apply_fallback_settings(settings)
+    lines = []
+
+    fb_main = fb_settings.get("model", primary_model)
+    if fb_main != primary_model:
+        lines.append(
+            f"DRADIS: <code>{html.escape(primary_model)}</code> → <code>{html.escape(fb_main)}</code>"
+        )
+
+    for agent_name, model_key in [
+        ("web_search", "ws_model"),
+        ("weather",    "weather_model"),
+        ("gcal",       "gcal_model"),
+        ("gmail",      "gmail_model"),
+        ("gtasks",     "gtasks_model"),
+    ]:
+        orig   = (settings.get(model_key) or "").strip()
+        fb_val = (fb_settings.get(model_key) or "").strip()
+        if orig and fb_val and fb_val != orig:
+            lines.append(
+                f"{agent_name}: <code>{html.escape(orig)}</code> → <code>{html.escape(fb_val)}</code>"
+            )
+
+    prefix = f"⚠️ Task <b>{html.escape(task_name)}</b>: " if task_name else "⚠️ "
+    detail = "\n" + "\n".join(f"  • {l}" for l in lines) if lines else ""
+    return f"{prefix}fallback triggered ✅{detail}"
 
 
 def _build_metrics_parts(response, duration: float, member_responses: list, settings: dict) -> list:
@@ -602,11 +678,7 @@ async def run_scheduled_task(task: dict):
         return
 
     if used_fallback:
-        fb_model_id = _apply_fallback_settings(settings).get("model", model)
-        await _send_error_telegram(
-            f"⚠️ Task <b>{html.escape(task_name)}</b>: primary model <code>{html.escape(model)}</code> failed — "
-            f"responded via fallback <code>{html.escape(fb_model_id)}</code> ✅"
-        )
+        await _send_error_telegram(_build_fallback_used_msg(settings, model, task_name))
 
     duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)
@@ -786,11 +858,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if used_fallback:
-        fb_model_id = _apply_fallback_settings(settings).get("model", model)
-        await _send_error_telegram(
-            f"⚠️ Primary model <code>{html.escape(model)}</code> failed — "
-            f"replied via fallback <code>{html.escape(fb_model_id)}</code> ✅"
-        )
+        await _send_error_telegram(_build_fallback_used_msg(settings, model))
 
     duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)

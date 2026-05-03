@@ -2868,6 +2868,7 @@ function renderTaskForm(task) {
       <div class="btn-row">
         <button class="btn-save" id="btn-save-task">Save</button>
         <button class="btn-save" id="btn-run-task" style="background:var(--accent)">&#9654; Test Task</button>
+        <button class="btn-save" id="btn-duplicate-task" style="background:var(--text-muted,#888)">⎘ Copy</button>
         <button class="btn-save" id="btn-delete-task" style="background:var(--danger,#e53935)">Delete</button>
       </div>
     </div>
@@ -2899,6 +2900,7 @@ function renderTaskForm(task) {
 
   document.getElementById("btn-save-task").onclick = saveTask;
   document.getElementById("btn-run-task").onclick = runTask;
+  document.getElementById("btn-duplicate-task").onclick = duplicateTask;
   document.getElementById("btn-delete-task").onclick = deleteTask;
 }
 
@@ -2940,6 +2942,27 @@ async function deleteTask() {
     showToast("Deleted");
   } catch {
     showToast("Error deleting", true);
+  }
+}
+
+async function duplicateTask() {
+  const src = tasks.find(t => t.id === selectedTaskId);
+  if (!src) return;
+  try {
+    const copy = await api("POST", "/api/tasks", {
+      name:         `Copy of ${src.name}`,
+      enabled:      false,
+      cron:         src.cron,
+      instructions: src.instructions,
+    });
+    tasks.push(copy);
+    selectedTaskId = copy.id;
+    renderSidebarTasks();
+    renderTaskForm(copy);
+    navigateTo("task", document.querySelector(`[data-task-id="${copy.id}"]`));
+    showToast("Task duplicated");
+  } catch {
+    showToast("Error duplicating task", true);
   }
 }
 
@@ -3123,6 +3146,7 @@ function renderMonitorForm(monitor) {
       <div class="btn-row">
         <button class="btn-save" id="btn-save-monitor">Save</button>
         <button class="btn-save" id="btn-run-monitor" style="background:var(--accent)">▶ Test Monitor</button>
+        <button class="btn-save" id="btn-duplicate-monitor" style="background:var(--text-muted,#888)">⎘ Copy</button>
         <button class="btn-save" id="btn-delete-monitor" style="background:var(--danger,#e53935)">Delete</button>
       </div>
     </div>
@@ -3169,9 +3193,10 @@ function renderMonitorForm(monitor) {
     validateCronMonitorLive(val);
   });
 
-  document.getElementById("btn-save-monitor").onclick   = saveMonitor;
-  document.getElementById("btn-run-monitor").onclick    = runMonitor;
-  document.getElementById("btn-delete-monitor").onclick = deleteMonitor;
+  document.getElementById("btn-save-monitor").onclick      = saveMonitor;
+  document.getElementById("btn-run-monitor").onclick       = runMonitor;
+  document.getElementById("btn-duplicate-monitor").onclick = duplicateMonitor;
+  document.getElementById("btn-delete-monitor").onclick    = deleteMonitor;
 }
 
 async function saveMonitor() {
@@ -3218,6 +3243,31 @@ async function deleteMonitor() {
     showToast("Deleted");
   } catch {
     showToast("Error deleting", true);
+  }
+}
+
+async function duplicateMonitor() {
+  const src = monitors.find(m => m.id === selectedMonitorId);
+  if (!src) return;
+  try {
+    const copy = await api("POST", "/api/monitors", {
+      name:        `Copy of ${src.name}`,
+      enabled:     false,
+      cron:        src.cron,
+      type:        src.type,
+      location:    src.location,
+      language:    src.language,
+      days:        src.days,
+      hours_ahead: src.hours_ahead,
+    });
+    monitors.push(copy);
+    selectedMonitorId = copy.id;
+    renderSidebarMonitors();
+    renderMonitorForm(copy);
+    navigateTo("monitor", document.querySelector(`[data-monitor-id="${copy.id}"]`));
+    showToast("Monitor duplicated");
+  } catch (err) {
+    showToast(err.message || "Error duplicating monitor", true);
   }
 }
 

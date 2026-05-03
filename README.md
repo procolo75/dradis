@@ -15,7 +15,8 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 - **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Monitors** — LLM-free scheduled monitors that fetch data and compute results in Python (no token cost, deterministic output)
-- **Fallback model** — each agent has a configurable fallback provider and model; on any API error (rate limit, provider error, empty response) DRADIS automatically retries with the fallback and notifies via Telegram; if both fail, a clear `❌` message lists both model names
+- **Duplicate task / monitor** — copy any task or monitor with the ⎘ button; the copy is created disabled and ready to edit
+- **Fallback model** — each agent has a configurable fallback provider and model; when any agent fails (including sub-agents) DRADIS retries with the fallback and notifies which specific models switched; if both fail, a clear `❌` message lists all model names
 - **Telegram error notifications** — all API failures are reported via Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
 - **Conversation history** with configurable depth
@@ -60,6 +61,10 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 **Morning email digest** *(scheduled task)*
 > Every morning DRADIS checks your unread emails and sends a summary to Telegram.
 > Cron: `0 8 * * 1-5` — Instructions: *"Check unread emails and send a brief summary of each to Telegram."*
+
+**Aviation TAF briefing** *(scheduled task, requires Web Search)*
+> Every morning DRADIS fetches the Terminal Aerodrome Forecast for your airport, decodes it, and sends a plain-language summary (wind, visibility, ceiling, significant weather) to Telegram.
+> Cron: `0 6 * * *` — Instructions: *"Fetch the latest TAF for airport LIRN from aviationweather.gov, decode it, and send a plain-language summary to Telegram."*
 
 **Task management** *(requires Google Tasks)*
 > *"Aggiungi comprare latte e chiamare il medico"*

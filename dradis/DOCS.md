@@ -364,6 +364,8 @@ The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–1
 
 **Testing a monitor manually:** each monitor form includes a **▶ Test Monitor** button that triggers an immediate execution. The result is delivered to Telegram within seconds.
 
+**Duplicating a monitor:** click **⎘ Copy** in any monitor form to create a copy named `Copy of <name>`. The duplicate is disabled by default, with the same cron, type, location, and all other fields. It is immediately selected in the sidebar and ready to edit.
+
 #### Rain alert monitor
 
 Fetches 15-minute precipitation data from [Open-Meteo](https://open-meteo.com) (free, no API key required) for the next 24 hours and checks whether rain is forecast within the configured time window. **If no precipitation is expected, no Telegram message is sent** — the monitor is completely silent when conditions are clear.
@@ -402,6 +404,8 @@ Click `+` in the Tasks sidebar header to create a new task. Each task has:
 When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no app restart required.
 
 **Testing a task manually:** each task form includes a **▶ Test Task** button. Clicking it triggers an immediate one-off execution of the task without altering the cron schedule. The result is delivered to Telegram exactly as a scheduled run would. This is useful for verifying instructions before enabling a task or debugging an existing one — no need to modify the cron expression to `* * * * *` just for a quick check.
+
+**Duplicating a task:** click **⎘ Copy** in any task form to create a copy named `Copy of <name>`. The duplicate is disabled by default, with the same cron and instructions. It is immediately selected in the sidebar and ready to edit.
 
 ---
 
@@ -543,6 +547,20 @@ Every 12 hours DRADIS scans recent emails for deadlines or appointments and crea
 | Instructions | `Read all emails received in the last 12 hours, including those with no subject. Ignore any automated notifications sent by Google Calendar itself. For each email that mentions a deadline, meeting, appointment, or event with a specific date and time, create the corresponding event in Google Calendar. Do not send any summary to Telegram — just create the events silently.` |
 
 *Requires: Gmail sub-agent and Google Calendar sub-agent both enabled.*
+
+---
+
+### Aviation TAF briefing *(scheduled task)*
+
+Every morning DRADIS fetches the Terminal Aerodrome Forecast (TAF) for a configured airport, decodes the encoded meteorological notation, and sends a plain-language summary — wind direction and speed, visibility, cloud ceiling, significant weather phenomena — to Telegram.
+
+| Field | Value |
+|-------|-------|
+| Cron | `0 6 * * *` |
+| Instructions | `Fetch the latest TAF for airport ICAO code LIRN (replace with your airport). Search the web for "TAF LIRN site:aviationweather.gov" or use https://aviationweather.gov/api/data/taf?ids=LIRN&format=json to get the raw forecast. Decode the TAF and send a clear plain-language summary to Telegram: validity period, wind (direction and speed in knots), visibility, significant weather (rain, thunderstorms, fog, snow), and cloud layers (few/scattered/broken/overcast). Highlight any conditions below VFR minimums (visibility < 5 km or ceiling < 1 500 ft).` |
+
+*Requires: Web Search sub-agent enabled.*
+*Replace `LIRN` with the ICAO code of your airport (e.g. `EGLL` for London Heathrow, `KJFK` for New York JFK, `LFPG` for Paris CDG).*
 
 ---
 
