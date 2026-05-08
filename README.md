@@ -20,7 +20,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 - **Telegram error notifications** — all API failures are reported via Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
 - **Conversation history** with configurable depth
-- **Token counter** — `/tokens` shows cumulative input/output usage per agent; `/tokens_reset` resets
+- **Token counter** — `/tokens` shows cumulative token usage per agent, broken down by model actually used (primary and fallback tracked separately), with Input / Output / Cache read / Cache write; `/tokens_reset` resets all counters
 - All settings managed at runtime from the Web UI — no restart required
 
 ## Installation
@@ -80,8 +80,8 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 | `/menu` | List all available commands |
 | `/tasks` | List enabled tasks as inline buttons — tap one to run it immediately |
 | `/monitors` | List enabled monitors as inline buttons — tap one to run it immediately |
-| `/tokens` | Show cumulative token usage (input/output/total) per agent |
-| `/tokens_reset` | Reset token counters to zero |
+| `/tokens` | Show token usage per agent — per model actually used (primary + fallback separate), with Input / Output / Cache read / Cache write / Total; also shows last reset date |
+| `/tokens_reset` | Reset all token counters and record timestamp |
 | `/gcalauth` | Connect Google Calendar (OAuth2) |
 | `/gmailauth` | Connect Gmail (OAuth2) |
 | `/gtasksauth` | Connect Google Tasks (OAuth2) |
