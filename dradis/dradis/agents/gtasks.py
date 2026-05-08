@@ -59,12 +59,30 @@ def _get_gtasks_creds():
     return creds
 
 
+def _resolve_task_list_id(service, name_or_id: str) -> str:
+    """Resolve a task list name to its ID; returns name_or_id unchanged if it already is an ID."""
+    if name_or_id == "@default":
+        return name_or_id
+    lists = service.tasklists().list(maxResults=20).execute().get("items", [])
+    # exact ID match
+    for lst in lists:
+        if lst.get("id") == name_or_id:
+            return name_or_id
+    # case-insensitive title match
+    lower = name_or_id.lower()
+    for lst in lists:
+        if lst.get("title", "").lower() == lower:
+            return lst["id"]
+    return name_or_id  # fall back and let the API surface the error
+
+
 def _sync_list_tasks(task_list: str) -> str:
     from googleapiclient.discovery import build as gtasks_build
     creds = _get_gtasks_creds()
     if not creds:
         return "NOT_AUTHENTICATED"
     service = gtasks_build("tasks", "v1", credentials=creds)
+    task_list = _resolve_task_list_id(service, task_list)
     result  = service.tasks().list(
         tasklist=task_list,
         showCompleted=False,
@@ -88,6 +106,7 @@ def _sync_create_task(task_list: str, title: str, notes: str, due: str) -> str:
     if not creds:
         return "NOT_AUTHENTICATED"
     service = gtasks_build("tasks", "v1", credentials=creds)
+    task_list = _resolve_task_list_id(service, task_list)
     body = {"title": title}
     if notes:
         body["notes"] = notes
@@ -105,6 +124,7 @@ def _sync_complete_task(task_list: str, task_id: str) -> str:
     if not creds:
         return "NOT_AUTHENTICATED"
     service = gtasks_build("tasks", "v1", credentials=creds)
+    task_list = _resolve_task_list_id(service, task_list)
     task    = service.tasks().get(tasklist=task_list, task=task_id).execute()
     service.tasks().patch(
         tasklist=task_list, task=task_id, body={"status": "completed"}
@@ -118,6 +138,7 @@ def _sync_delete_task(task_list: str, task_id: str) -> str:
     if not creds:
         return "NOT_AUTHENTICATED"
     service = gtasks_build("tasks", "v1", credentials=creds)
+    task_list = _resolve_task_list_id(service, task_list)
     task    = service.tasks().get(tasklist=task_list, task=task_id).execute()
     service.tasks().delete(tasklist=task_list, task=task_id).execute()
     return f"Task '{task.get('title', task_id)}' deleted."
@@ -129,6 +150,7 @@ def _sync_update_task(task_list: str, task_id: str, title: str, notes: str) -> s
     if not creds:
         return "NOT_AUTHENTICATED"
     service = gtasks_build("tasks", "v1", credentials=creds)
+    task_list = _resolve_task_list_id(service, task_list)
     body = {}
     if title:
         body["title"] = title

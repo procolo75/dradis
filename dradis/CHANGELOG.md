@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.13.4] - 2026-05-08
+- **Fix — Google Tasks name-to-ID resolution**: all `_sync_*` functions now call `_resolve_task_list_id()` before using the `task_list` parameter. The helper fetches `tasklists().list()` and resolves a human-readable name (e.g. "Procolo") to the actual API ID via case-insensitive title match, so the LLM no longer has to know the internal ID.
+
 ## [2.13.3] - 2026-05-08
 - **Fix — `/tokens` hides zero-token model entries**: model buckets where all counters are zero (e.g. stale `unknown` entries) are now skipped in the output.
 - **Fix — `/tokens` grand total uses bullet format**: grand total section now matches the per-agent bullet layout.
