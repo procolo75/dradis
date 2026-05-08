@@ -78,12 +78,24 @@ def create_team(system_prompt: str, model: str, provider: str, members: list, to
 
 
 def _load_token_stats() -> dict:
-    default = {k: {"in": 0, "out": 0} for k in _TOKEN_CATEGORIES}
+    default = {k: {"models": {}} for k in _TOKEN_CATEGORIES}
+    default["last_reset"] = None
     try:
         data = json.loads(TOKEN_STATS_FILE.read_text())
-        for k in default:
+        for k in _TOKEN_CATEGORIES:
             if k not in data:
-                data[k] = {"in": 0, "out": 0}
+                data[k] = {"models": {}}
+            elif "in" in data[k]:
+                # migrate flat format → per-model
+                old = data[k]
+                data[k] = {"models": {"unknown": {
+                    "in": old.get("in", 0), "out": old.get("out", 0),
+                    "cr": old.get("cr", 0), "cw": old.get("cw", 0),
+                }}}
+            else:
+                data[k].setdefault("models", {})
+        data.pop("model", None)
+        data.setdefault("last_reset", None)
         return data
     except Exception:
         return default
@@ -101,7 +113,7 @@ def _save_token_stats():
         print(f"[DRADIS] WARNING: could not save token stats: {e}")
 
 
-def _extract_tokens(response) -> tuple[int, int]:
+def _extract_tokens(response) -> tuple[int, int, int, int]:
     try:
         m = response.metrics
         def _sum_key(key):
@@ -111,17 +123,28 @@ def _extract_tokens(response) -> tuple[int, int]:
             if isinstance(v, list):
                 return sum(int(x) for x in v if x is not None)
             return int(v)
-        return _sum_key("input_tokens"), _sum_key("output_tokens")
+        return (
+            _sum_key("input_tokens"),
+            _sum_key("output_tokens"),
+            _sum_key("cached_tokens"),
+            _sum_key("cache_creation_input_tokens"),
+        )
     except Exception:
-        return 0, 0
+        return 0, 0, 0, 0
 
 
 def _add_tokens(category: str, response):
     if response is None:
         return
-    in_t, out_t = _extract_tokens(response)
-    if in_t == 0 and out_t == 0:
+    in_t, out_t, cr_t, cw_t = _extract_tokens(response)
+    if in_t == 0 and out_t == 0 and cr_t == 0 and cw_t == 0:
         return
-    _TOKEN_STATS[category]["in"]  += in_t
-    _TOKEN_STATS[category]["out"] += out_t
+    model = getattr(response, "model", None) or "unknown"
+    bucket = _TOKEN_STATS[category]["models"].setdefault(
+        model, {"in": 0, "out": 0, "cr": 0, "cw": 0}
+    )
+    bucket["in"]  += in_t
+    bucket["out"] += out_t
+    bucket["cr"]  += cr_t
+    bucket["cw"]  += cw_t
     _save_token_stats()

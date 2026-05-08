@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [2.13.2] - 2026-05-08
+- **Feature — Per-model token tracking**: token stats are now stored per actual model used (from `response.model`), not per configured model. Each agent category accumulates separate counters per model name, so primary and fallback usage are always distinguishable. `/tokens` lists each model used under its agent with full Input / Output / Cache read / Cache write / Total breakdown.
+- **Feature — Cache token tracking**: `_extract_tokens()` now extracts `cached_tokens` (cache read) and `cache_creation_input_tokens` (cache write) from `response.metrics`, persisted in `dradis_token_stats.json`.
+- **Feature — `/tokens` shows last reset date**: timestamp of last `/tokens_reset` shown at the top of the report.
+- **Breaking — token stats JSON format changed**: old flat `{"in", "out"}` structure migrated automatically to `{"models": {model_name: {in, out, cr, cw}}}` on first load.
+
 ## [2.13.0] - 2026-05-03
 - **Feature — Duplicate task / monitor**: added a "⎘ Copy" button in both the Task and Monitor forms. Clicking it creates a new item named `Copy of <name>` with the same cron schedule and instructions (tasks) or all monitor fields, disabled by default. The copy is immediately selected in the sidebar and ready to edit.
 

@@ -6,6 +6,7 @@ import re
 import tempfile
 import time
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import uvicorn
@@ -1275,24 +1276,48 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ALLOWED_CHAT_ID:
         return
-    labels = {
-        "dradis":  "🤖 DRADIS",
-        "weather": "🌤 Weather",
-        "ws":      "🔍 Web Search",
-        "gcal":    "📅 Calendar",
-        "gmail":   "📧 Gmail",
-        "gtasks":  "📝 Google Tasks",
-    }
-    lines = ["<b>Token usage</b>"]
-    total_in = total_out = 0
-    for key, label in labels.items():
-        s    = agent_core._TOKEN_STATS.get(key, {"in": 0, "out": 0})
-        i, o = s["in"], s["out"]
-        total_in  += i
-        total_out += o
-        lines.append(f"{label}: in {i:,} | out {o:,} | tot {i + o:,}")
+    agents = [
+        ("dradis",  "🤖 DRADIS",         "model"),
+        ("weather", "🌤 Weather",         "weather_model"),
+        ("ws",      "🔍 Web Search",      "ws_model"),
+        ("gcal",    "📅 Calendar",        "gcal_model"),
+        ("gmail",   "📧 Gmail",           "gmail_model"),
+        ("gtasks",  "📝 Google Tasks",    "gtasks_model"),
+    ]
+    settings  = read_settings()
+    raw_reset = agent_core._TOKEN_STATS.get("last_reset")
+    if raw_reset:
+        try:
+            reset_str = datetime.fromisoformat(raw_reset).strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            reset_str = raw_reset
+    else:
+        reset_str = "—"
+    lines = ["<b>Token usage</b>", f"🕐 Last reset: {reset_str}", ""]
+    total_in = total_out = total_cr = total_cw = 0
+    for key, label, _model_key in agents:
+        cat_models = agent_core._TOKEN_STATS.get(key, {}).get("models", {})
+        if not cat_models:
+            continue
+        cat_in = sum(m["in"] for m in cat_models.values())
+        cat_out = sum(m["out"] for m in cat_models.values())
+        cat_cr  = sum(m["cr"] for m in cat_models.values())
+        cat_cw  = sum(m["cw"] for m in cat_models.values())
+        total_in  += cat_in
+        total_out += cat_out
+        total_cr  += cat_cr
+        total_cw  += cat_cw
+        lines.append(f"<b>{label}</b>")
+        for model_name, m in cat_models.items():
+            lines.append(f"  <code>{html.escape(model_name)}</code>")
+            lines.append(f"  • Input: {m['in']:,}")
+            lines.append(f"  • Output: {m['out']:,}")
+            lines.append(f"  • Cache read: {m['cr']:,}")
+            lines.append(f"  • Cache write: {m['cw']:,}")
+            lines.append(f"  • Total: {m['in']+m['out']+m['cr']+m['cw']:,}")
+        lines.append("")
     lines.append(
-        f"\n<b>Total: in {total_in:,} | out {total_out:,} | tot {total_in + total_out:,}</b>"
+        f"<b>Total: in {total_in:,} | out {total_out:,} | cr {total_cr:,} | cw {total_cw:,} | tot {total_in+total_out+total_cr+total_cw:,}</b>"
     )
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
@@ -1300,8 +1325,9 @@ async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_tokens_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ALLOWED_CHAT_ID:
         return
-    for key in agent_core._TOKEN_STATS:
-        agent_core._TOKEN_STATS[key] = {"in": 0, "out": 0}
+    for key in agent_core._TOKEN_CATEGORIES:
+        agent_core._TOKEN_STATS[key] = {"models": {}}
+    agent_core._TOKEN_STATS["last_reset"] = datetime.now(timezone.utc).isoformat()
     agent_core._save_token_stats()
     await update.message.reply_text("✅ Token counters reset.")
 
