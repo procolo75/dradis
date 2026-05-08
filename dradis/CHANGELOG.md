@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.13.3] - 2026-05-08
+- **Fix — `/tokens` hides zero-token model entries**: model buckets where all counters are zero (e.g. stale `unknown` entries) are now skipped in the output.
+- **Fix — `/tokens` grand total uses bullet format**: grand total section now matches the per-agent bullet layout.
+
 ## [2.13.2] - 2026-05-08
 - **Feature — Per-model token tracking**: token stats are now stored per actual model used (from `response.model`), not per configured model. Each agent category accumulates separate counters per model name, so primary and fallback usage are always distinguishable. `/tokens` lists each model used under its agent with full Input / Output / Cache read / Cache write / Total breakdown.
 - **Feature — Cache token tracking**: `_extract_tokens()` now extracts `cached_tokens` (cache read) and `cache_creation_input_tokens` (cache write) from `response.metrics`, persisted in `dradis_token_stats.json`.

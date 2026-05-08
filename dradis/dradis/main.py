@@ -1309,6 +1309,8 @@ async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_cw  += cat_cw
         lines.append(f"<b>{label}</b>")
         for model_name, m in cat_models.items():
+            if m["in"] == 0 and m["out"] == 0 and m["cr"] == 0 and m["cw"] == 0:
+                continue
             lines.append(f"  <code>{html.escape(model_name)}</code>")
             lines.append(f"  • Input: {m['in']:,}")
             lines.append(f"  • Output: {m['out']:,}")
@@ -1316,9 +1318,12 @@ async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"  • Cache write: {m['cw']:,}")
             lines.append(f"  • Total: {m['in']+m['out']+m['cr']+m['cw']:,}")
         lines.append("")
-    lines.append(
-        f"<b>Total: in {total_in:,} | out {total_out:,} | cr {total_cr:,} | cw {total_cw:,} | tot {total_in+total_out+total_cr+total_cw:,}</b>"
-    )
+    lines.append("<b>Grand total</b>")
+    lines.append(f"  • Input: {total_in:,}")
+    lines.append(f"  • Output: {total_out:,}")
+    lines.append(f"  • Cache read: {total_cr:,}")
+    lines.append(f"  • Cache write: {total_cw:,}")
+    lines.append(f"  • Total: {total_in+total_out+total_cr+total_cw:,}")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
