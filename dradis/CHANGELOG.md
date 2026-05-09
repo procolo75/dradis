@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.14.2] - 2026-05-09
+- **UX — sidebar `+` button**: hidden when the section is collapsed, visible only when expanded.
+- **UX — Tasks section renamed**: sidebar label changed from "Tasks" to "LLM Scheduled Tasks".
+
 ## [2.14.1] - 2026-05-09
 - **Fix — collapsible sidebar sections**: all sidebar sections (Agents, Tools, Tasks, Scheduled Monitors, Live Monitors) are now collapsible and collapsed by default. Settings remains expanded. Clicking the section header toggles it; clicking the `+` button does not collapse the section.
 

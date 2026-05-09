@@ -85,6 +85,7 @@
       transition: max-height 0.2s ease;
     }
     .nav-section.collapsed .nav-list { max-height: 0; }
+    .nav-section.collapsed .nav-section-btn { display: none; }
 
     .nav-list { list-style: none; padding: 0 8px; }
 
@@ -354,7 +355,7 @@
 
     <div class="nav-section collapsed" id="section-tasks">
       <span class="nav-section-label">
-        <span>▾ Tasks</span>
+        <span>▾ LLM Scheduled Tasks</span>
         <button id="btn-new-task" title="New task" class="nav-section-btn" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
       </span>
       <ul class="nav-list" id="sidebar-tasks"></ul>
