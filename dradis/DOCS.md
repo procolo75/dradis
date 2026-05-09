@@ -49,7 +49,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 
 | File | Responsibility |
 |------|---------------|
-| `main.py` | Telegram bot, message handlers, cron scheduler, OAuth flows, team assembly |
+| `main.py` | Telegram bot, message handlers, cron scheduler, OAuth flows, team assembly, live monitor management |
 | `agent_core.py` | `create_agent()`, `create_team()`, provider helpers, token tracking |
 | `agents/web_search.py` | Web Search member agent — `create_web_search_agent()` |
 | `agents/weather.py` | Weather member agent — `fetch_weather()` + `create_weather_agent()` |
@@ -58,6 +58,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `agents/gtasks.py` | Google Tasks member agent — `create_gtasks_agent()` + OAuth token management |
 | `agents/thunderstorm_monitor.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
 | `agents/rain_monitor.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
+| `agents/lightning_live_monitor.py` | Lightning live monitor — LLM-free, persistent MQTT listener on Blitzortung; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
 
 ---
 
@@ -140,7 +141,7 @@ Fill in at least one LLM provider key. The active provider is selected from the 
 
 After startup, the app exposes a web panel accessible directly from the Home Assistant sidebar (via HA Ingress — no external port required).
 
-The UI uses a **vertical left sidebar** with four sections: **Settings**, **Agents**, **Tasks**, and **Other**.
+The UI uses a **vertical left sidebar** with six collapsible sections: **Settings**, **Agents**, **Tools**, **Tasks**, **Scheduled Monitors**, and **Live Monitors**. All sections except Settings are collapsed by default — click any header to expand it.
 
 ### Settings → DRADIS
 
@@ -317,11 +318,11 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
 
-### Monitors
+### Scheduled Monitors
 
 Create LLM-free scheduled monitors that fetch data from external APIs and compute results entirely in Python. Monitors run on a cron schedule and deliver results to your Telegram chat. No model is invoked — output is deterministic and costs no tokens. Monitors are stored in `/data/monitors.json`.
 
-Click `+` in the Monitors sidebar header to create a new monitor. Each monitor has:
+Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. Each monitor has:
 
 | Field | Description |
 |-------|-------------|
@@ -409,6 +410,60 @@ When a task fires, the agent response is sent to your Telegram chat with a label
 
 ---
 
+### Live Monitors
+
+Create persistent push-based monitors that stay connected to an external data source and react to events in real time — no cron schedule, no polling. Live monitors are stored in `/data/live_monitors.json` (separate from scheduled monitors).
+
+Click `+` in the **Live Monitors** sidebar header to create a new live monitor. Each live monitor has:
+
+| Field | Description |
+|-------|-------------|
+| Name | Display name shown in the sidebar. |
+| Enabled | Toggle — a green dot in the sidebar shows the monitor is active. When enabled, DRADIS starts the MQTT listener at startup (or immediately on save). |
+| Type | Push integration type. Currently: **⚡ Lightning alert (Blitzortung MQTT)**. |
+| Location | City name — resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and exact lat/lon as you type. Coordinates are stored and used for distance calculations. |
+| Alert language | Language of the Telegram alert: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
+| Radius (km) | Strikes within this distance from the configured location trigger an alert (1–500 km, default 100). |
+| Alert cooldown (minutes) | After an alert fires, the monitor is silenced for this many minutes before the next strike can trigger a new alert (1–1440, default 30). |
+| Status badge | Shows 🟢 Running or 🔴 Stopped, fetched live from the backend. |
+
+There is no cron field, no **▶ Test** button, and no "run now" action — the monitor is always-on when enabled.
+
+#### Lightning alert (Blitzortung MQTT)
+
+Connects to the public [Blitzortung](https://www.blitzortung.org) MQTT broker (`blitzortung.ha.sed.pl:1883`) and subscribes to geohash-based topics covering the configured location and its 8 neighbouring cells. No API key, no account, no cost.
+
+**Behaviour:**
+1. On app startup (or save), if the monitor is enabled a persistent asyncio task is created.
+2. The task connects to the broker and subscribes to all geohash topics for the area.
+3. For every incoming strike payload, it computes the distance and azimuth from the configured coordinates.
+4. If `distance ≤ radius_km` **and** the cooldown period has expired → fires a Telegram alert and resets the timer.
+5. On disconnect, waits 15 seconds and reconnects automatically — the loop runs indefinitely until the monitor is disabled.
+
+**Telegram alert format:**
+
+```
+⚡ Fulmine rilevato — Bacoli
+📍 Distanza: 23.4 km a SE (138°)
+🔕 Prossimo alert tra 30 min
+🕐 14:37
+```
+
+**Example configuration:**
+
+| Field | Value |
+|-------|-------|
+| Name | Bacoli Lightning |
+| Type | ⚡ Lightning alert (Blitzortung MQTT) |
+| Location | Bacoli (auto-resolves to 40.7961, 14.0820) |
+| Radius | 50 km |
+| Cooldown | 30 min |
+| Language | 🇮🇹 Italiano |
+
+**Duplicating a live monitor:** click **⎘ Copy** to create a copy named `Copy of <name>`. The duplicate is disabled by default, with all fields copied. Useful for monitoring multiple locations.
+
+---
+
 ## Usage Examples
 
 ### Voice appointment
@@ -442,7 +497,31 @@ DRADIS routes the request to the Web Search sub-agent, which calls `read_url` vi
 
 ---
 
-### Daily thunderstorm risk digest *(monitor)*
+### Lightning alert *(live monitor)*
+
+DRADIS opens a persistent MQTT connection to the Blitzortung public network and listens for lightning strike data in real time. When a strike is detected within the configured radius, it fires an immediate Telegram alert — no polling, no cron, no LLM.
+
+| Field | Value |
+|-------|-------|
+| Type | ⚡ Lightning alert (Blitzortung MQTT) |
+| Location | Bacoli (auto-resolves to lat/lon) |
+| Radius | 50 km |
+| Cooldown | 30 min |
+| Language | 🇮🇹 Italiano |
+
+Sample alert:
+```
+⚡ Fulmine rilevato — Bacoli
+📍 Distanza: 23.4 km a SE (138°)
+🔕 Prossimo alert tra 30 min
+🕐 14:37
+```
+
+No API key required. No Google account. Reconnects automatically on disconnect.
+
+---
+
+### Daily thunderstorm risk digest *(scheduled monitor)*
 
 Every morning DRADIS fetches atmospheric instability data for the next 2 days and sends a convective risk summary divided by time band — with no LLM call, no token cost, and deterministic output.
 
@@ -457,7 +536,7 @@ The Telegram message shows one line per time band (NIGHT / MORNING / AFTERNOON /
 
 ---
 
-### Hourly rain alert *(monitor)*
+### Hourly rain alert *(scheduled monitor)*
 
 Check every hour whether rain is expected in the next 2 hours. No notification is sent when skies are clear — only when precipitation is actually forecast.
 
@@ -573,7 +652,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/info` | Show status and configuration of all agents (provider, model, metrics, history, sub-agents) |
 | `/menu` | List all available commands |
 | `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
-| `/monitors` | List all enabled monitors as Telegram inline buttons. Tap a button to run the monitor immediately — result is delivered to Telegram within seconds. |
+| `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see 🟢 Running / 🔴 Stopped status). |
 | `/tokens` | Show cumulative token usage (input / output / total) broken down by agent: DRADIS, Weather, Web Search, Calendar, Gmail, Google Tasks |
 | `/tokens_reset` | Reset all token counters to zero |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
@@ -616,7 +695,8 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/dradis_settings.json` | Runtime settings edited from the Web UI |
 | `/data/agents.json` | Custom sub-agent configuration (managed from Web UI) |
 | `/data/tasks.json` | Scheduled task configuration (managed from Web UI) |
-| `/data/monitors.json` | Monitor configuration (managed from Web UI) |
+| `/data/monitors.json` | Scheduled monitor configuration (managed from Web UI) |
+| `/data/live_monitors.json` | Live monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |
 | `/data/google_tasks_token.json` | Google Tasks OAuth2 token (auto-refreshed) |
