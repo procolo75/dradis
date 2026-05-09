@@ -15,7 +15,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 - **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Scheduled Monitors** — LLM-free cron-based monitors (Thunderstorm risk, Rain alert) that fetch data from Open-Meteo and compute results in Python — no token cost, deterministic output
-- **Live Monitors** — persistent push-based monitors that stay connected and react to external events in real time, with no polling and no cron schedule. First type: ⚡ **Lightning alert** via [Blitzortung](https://www.blitzortung.org) public MQTT broker — sends a Telegram alert on the first strike within a configurable radius after each cooldown period
+- **Live Monitors** — persistent push-based monitors that stay connected and react to external events in real time, with no polling and no cron schedule. First type: ⚡ **Lightning alert** via MQTT — sends a Telegram alert on the first strike within a configurable radius after each cooldown period
 - **Collapsible sidebar** — all Web UI sidebar sections (Agents, Tools, Tasks, Scheduled Monitors, Live Monitors) are collapsed by default for a clean overview; click any header to expand
 - **Duplicate task / monitor** — copy any task or monitor with the ⎘ button; the copy is created disabled and ready to edit
 - **Fallback model** — each agent has a configurable fallback provider and model; when any agent fails (including sub-agents) DRADIS retries with the fallback and notifies which specific models switched; if both fail, a clear `❌` message lists all model names
@@ -50,14 +50,14 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 > → DRADIS calls `read_url` directly, fetches the page via Jina Reader, and analyses the content with its own model. No API key required, no extra LLM call.
 
 **Lightning alert** *(live monitor — no cron, no LLM, no token cost)*
-> DRADIS opens a persistent MQTT connection to the public Blitzortung network and listens for lightning strikes in real time. When a strike is detected within the configured radius (e.g. 50 km from Bacoli), it sends an immediate Telegram alert:
+> DRADIS opens a persistent MQTT connection and listens for lightning strikes in real time. When a strike is detected within the configured radius (e.g. 50 km from Bacoli), it sends an immediate Telegram alert:
 >
 > ⚡ **Fulmine rilevato — Bacoli**
 > 📍 Distanza: **23.4 km** a SE (138°)
 > 🔕 Prossimo alert tra 30 min
 > 🕐 14:37
 >
-> No API key required. No cron schedule. Reconnects automatically on disconnect.
+> No cron schedule. Reconnects automatically on disconnect.
 > Configure in Web UI → **Live Monitors** → `+` → Type: ⚡ Lightning alert
 
 **Daily thunderstorm risk digest** *(scheduled monitor)*

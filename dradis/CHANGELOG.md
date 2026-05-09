@@ -4,7 +4,7 @@
 - **Fix — collapsible sidebar sections**: all sidebar sections (Agents, Tools, Tasks, Scheduled Monitors, Live Monitors) are now collapsible and collapsed by default. Settings remains expanded. Clicking the section header toggles it; clicking the `+` button does not collapse the section.
 
 ## [2.14.0] - 2026-05-09
-- **Feature — Live Monitors**: new sidebar section separate from "Scheduled Monitors". Live monitors are persistent push-based integrations with no cron scheduling. First type: `lightning` — persistent MQTT listener on the public Blitzortung broker (`blitzortung.ha.sed.pl:1883`). Sends a Telegram alert on the first strike within a configurable radius after each cooldown period. Reconnects automatically on disconnect. Geohash-based topic subscription (cell + 8 neighbours).
+- **Feature — Live Monitors**: new sidebar section separate from "Scheduled Monitors". Live monitors are persistent push-based integrations with no cron scheduling. First type: `lightning` — persistent MQTT listener that subscribes to geohash-based topics covering the configured location and its 8 neighbouring cells. Sends a Telegram alert on the first strike within a configurable radius after each cooldown period. Reconnects automatically on disconnect.
 - **Web UI — Live Monitors section**: sidebar renamed "Scheduled Monitors" / "Live Monitors". Live monitor form includes: location with live geocoding (auto lat/lon), radius km, cooldown minutes, language, status badge (🟢/🔴). No cron fields. Save, Copy, Delete buttons.
 - **Telegram `/monitors` command**: shows scheduled monitors (tap to run) and live monitors (tap to see status with 🟢/🔴 badge).
 - **New dependency**: `aiomqtt`.

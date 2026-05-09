@@ -58,7 +58,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `agents/gtasks.py` | Google Tasks member agent — `create_gtasks_agent()` + OAuth token management |
 | `agents/thunderstorm_monitor.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
 | `agents/rain_monitor.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
-| `agents/lightning_live_monitor.py` | Lightning live monitor — LLM-free, persistent MQTT listener on Blitzortung; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
+| `agents/lightning_live_monitor.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
 
 ---
 
@@ -420,7 +420,7 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Toggle — a green dot in the sidebar shows the monitor is active. When enabled, DRADIS starts the MQTT listener at startup (or immediately on save). |
-| Type | Push integration type. Currently: **⚡ Lightning alert (Blitzortung MQTT)**. |
+| Type | Push integration type. Currently: **⚡ Lightning alert**. |
 | Location | City name — resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and exact lat/lon as you type. Coordinates are stored and used for distance calculations. |
 | Alert language | Language of the Telegram alert: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Radius (km) | Strikes within this distance from the configured location trigger an alert (1–500 km, default 100). |
@@ -429,9 +429,9 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 
 There is no cron field, no **▶ Test** button, and no "run now" action — the monitor is always-on when enabled.
 
-#### Lightning alert (Blitzortung MQTT)
+#### Lightning alert
 
-Connects to the public [Blitzortung](https://www.blitzortung.org) MQTT broker (`blitzortung.ha.sed.pl:1883`) and subscribes to geohash-based topics covering the configured location and its 8 neighbouring cells. No API key, no account, no cost.
+Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells.
 
 **Behaviour:**
 1. On app startup (or save), if the monitor is enabled a persistent asyncio task is created.
@@ -454,7 +454,7 @@ Connects to the public [Blitzortung](https://www.blitzortung.org) MQTT broker (`
 | Field | Value |
 |-------|-------|
 | Name | Bacoli Lightning |
-| Type | ⚡ Lightning alert (Blitzortung MQTT) |
+| Type | ⚡ Lightning alert |
 | Location | Bacoli (auto-resolves to 40.7961, 14.0820) |
 | Radius | 50 km |
 | Cooldown | 30 min |
@@ -499,11 +499,11 @@ DRADIS routes the request to the Web Search sub-agent, which calls `read_url` vi
 
 ### Lightning alert *(live monitor)*
 
-DRADIS opens a persistent MQTT connection to the Blitzortung public network and listens for lightning strike data in real time. When a strike is detected within the configured radius, it fires an immediate Telegram alert — no polling, no cron, no LLM.
+DRADIS opens a persistent MQTT connection and listens for lightning strike data in real time. When a strike is detected within the configured radius, it fires an immediate Telegram alert — no polling, no cron, no LLM.
 
 | Field | Value |
 |-------|-------|
-| Type | ⚡ Lightning alert (Blitzortung MQTT) |
+| Type | ⚡ Lightning alert |
 | Location | Bacoli (auto-resolves to lat/lon) |
 | Radius | 50 km |
 | Cooldown | 30 min |
