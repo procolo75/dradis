@@ -137,6 +137,8 @@ _on_tasks_changed: Callable | None = None
 _run_task_fn: Callable | None = None
 _on_monitors_changed: Callable | None = None
 _run_monitor_fn: Callable | None = None
+_on_live_monitors_changed: Callable | None = None
+_get_live_monitor_status_fn: Callable | None = None
 
 
 def register_tasks_changed_callback(fn: Callable):
@@ -167,6 +169,35 @@ def _notify_monitors_changed():
 def register_run_monitor_callback(fn: Callable):
     global _run_monitor_fn
     _run_monitor_fn = fn
+
+
+def register_live_monitors_changed_callback(fn: Callable):
+    global _on_live_monitors_changed
+    _on_live_monitors_changed = fn
+
+
+def _notify_live_monitors_changed():
+    if _on_live_monitors_changed:
+        _on_live_monitors_changed()
+
+
+def register_live_monitor_status_callback(fn: Callable):
+    global _get_live_monitor_status_fn
+    _get_live_monitor_status_fn = fn
+
+
+LIVE_MONITORS_FILE = Path("/data/live_monitors.json")
+
+
+def load_live_monitors() -> list[dict]:
+    try:
+        return json.loads(LIVE_MONITORS_FILE.read_text())
+    except Exception:
+        return []
+
+
+def save_live_monitors(items: list[dict]):
+    LIVE_MONITORS_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2))
 
 
 def load_monitors() -> list[dict]:
@@ -273,6 +304,18 @@ class MonitorPayload(BaseModel):
     days:        int  = 2
     language:    str  = "it"
     hours_ahead: int  = 2
+
+
+class LiveMonitorPayload(BaseModel):
+    name:         str
+    enabled:      bool  = False
+    type:         str   = "lightning"
+    location:     str   = ""
+    latitude:     float = 0.0
+    longitude:    float = 0.0
+    radius_km:    float = 100.0
+    cooldown_min: float = 30.0
+    language:     str   = "it"
 
 
 class SettingsPayload(BaseModel):
@@ -996,6 +1039,58 @@ async def run_monitor_now(monitor_id: str):
         raise HTTPException(status_code=400, detail="Monitor has no location configured")
     asyncio.create_task(_run_monitor_fn(monitor))
     return {"ok": True}
+
+
+# ── Live Monitors ─────────────────────────────────────────────────────────────
+
+@app.get("/api/live-monitors")
+async def list_live_monitors():
+    return load_live_monitors()
+
+
+@app.post("/api/live-monitors")
+async def create_live_monitor(payload: LiveMonitorPayload):
+    if not payload.location.strip():
+        raise HTTPException(status_code=400, detail="Location is required")
+    items = load_live_monitors()
+    item = {
+        "id":         str(uuid4()),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **payload.model_dump(),
+    }
+    items.append(item)
+    save_live_monitors(items)
+    _notify_live_monitors_changed()
+    return item
+
+
+@app.put("/api/live-monitors/{item_id}")
+async def update_live_monitor(item_id: str, payload: LiveMonitorPayload):
+    if not payload.location.strip():
+        raise HTTPException(status_code=400, detail="Location is required")
+    items = load_live_monitors()
+    for i, m in enumerate(items):
+        if m["id"] == item_id:
+            items[i] = {**m, **payload.model_dump()}
+            save_live_monitors(items)
+            _notify_live_monitors_changed()
+            return items[i]
+    raise HTTPException(status_code=404, detail="Live monitor not found")
+
+
+@app.delete("/api/live-monitors/{item_id}")
+async def delete_live_monitor(item_id: str):
+    items = [m for m in load_live_monitors() if m["id"] != item_id]
+    save_live_monitors(items)
+    _notify_live_monitors_changed()
+    return {"ok": True}
+
+
+@app.get("/api/live-monitors/{item_id}/status")
+async def get_live_monitor_status(item_id: str):
+    if _get_live_monitor_status_fn:
+        return {"status": _get_live_monitor_status_fn(item_id)}
+    return {"status": "unknown"}
 
 
 @app.get("/api/monitors/geocode")

@@ -344,10 +344,18 @@
 
     <div class="nav-section">
       <span class="nav-section-label" style="display:flex;align-items:center;justify-content:space-between;">
-        Monitors
-        <button id="btn-new-monitor" title="New monitor" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
+        Scheduled Monitors
+        <button id="btn-new-monitor" title="New scheduled monitor" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
       </span>
       <ul class="nav-list" id="sidebar-monitors"></ul>
+    </div>
+
+    <div class="nav-section">
+      <span class="nav-section-label" style="display:flex;align-items:center;justify-content:space-between;">
+        Live Monitors
+        <button id="btn-new-live-monitor" title="New live monitor" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
+      </span>
+      <ul class="nav-list" id="sidebar-live-monitors"></ul>
     </div>
 
 
@@ -2714,6 +2722,13 @@ async function init() {
     console.error("loadMonitors:", e);
   }
   renderSidebarMonitors();
+
+  try {
+    liveMonitors = await api("GET", "/api/live-monitors");
+  } catch (e) {
+    console.error("loadLiveMonitors:", e);
+  }
+  renderSidebarLiveMonitors();
 }
 
 // ── Tasks sidebar ─────────────────────────────────────────────────────────────
@@ -3299,6 +3314,227 @@ document.getElementById("btn-new-monitor").addEventListener("click", async () =>
     navigateTo("monitor", document.querySelector(`[data-monitor-id="${monitor.id}"]`));
   } catch (err) {
     showToast(err.message || "Error creating monitor", true);
+  }
+});
+
+// ── Live Monitors sidebar & panel ─────────────────────────────────────────────
+
+let liveMonitors = [];
+let selectedLiveMonitorId = null;
+
+function renderSidebarLiveMonitors() {
+  const ul = document.getElementById("sidebar-live-monitors");
+  ul.innerHTML = "";
+  liveMonitors.forEach(m => {
+    const li = document.createElement("li");
+    li.className = "nav-item" + (m.id === selectedLiveMonitorId ? " active" : "");
+    li.dataset.panel         = "live-monitor";
+    li.dataset.liveMonitorId = m.id;
+    li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
+                    <span class="nav-icon">⚡</span>
+                    <span class="nav-label">${m.name}</span>`;
+    li.addEventListener("click", () => {
+      selectedLiveMonitorId = m.id;
+      renderSidebarLiveMonitors();
+      renderLiveMonitorForm(liveMonitors.find(x => x.id === m.id));
+      navigateTo("live-monitor", li);
+    });
+    ul.appendChild(li);
+  });
+}
+
+function renderLiveMonitorForm(monitor) {
+  let panel = document.getElementById("panel-live-monitor");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "panel";
+    panel.id        = "panel-live-monitor";
+    document.getElementById("content").appendChild(panel);
+  }
+
+  const _TYPE_DESCS_LIVE = {
+    lightning: "Persistent MQTT listener on Blitzortung. Sends an alert on the first strike within the configured radius after each cooldown period. No LLM, no cron.",
+  };
+
+  panel.innerHTML = `
+    <div class="form-card">
+      <h2>Live Monitor</h2>
+
+      <div class="form-group">
+        <label for="lm-name">Name</label>
+        <input type="text" id="lm-name" value="${monitor.name || ""}">
+      </div>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="lm-enabled" ${monitor.enabled ? "checked" : ""}>
+          Enabled
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label for="lm-type">Type</label>
+        <select id="lm-type">
+          <option value="lightning" ${monitor.type === "lightning" ? "selected" : ""}>⚡ Lightning alert (Blitzortung MQTT)</option>
+        </select>
+        <small id="lm-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)">${_TYPE_DESCS_LIVE[monitor.type] || ""}</small>
+      </div>
+
+      <div class="form-group">
+        <label for="lm-location">Location</label>
+        <input type="text" id="lm-location" value="${monitor.location || ""}" placeholder="e.g. Bacoli, Rome...">
+        <div class="model-hint" id="lm-location-hint"></div>
+        <input type="hidden" id="lm-latitude"  value="${monitor.latitude  || 0}">
+        <input type="hidden" id="lm-longitude" value="${monitor.longitude || 0}">
+      </div>
+
+      <div class="form-group">
+        <label for="lm-language">Alert language</label>
+        <select id="lm-language" style="width:160px">
+          <option value="it" ${(monitor.language || "it") === "it" ? "selected" : ""}>🇮🇹 Italiano</option>
+          <option value="en" ${monitor.language === "en" ? "selected" : ""}>🇬🇧 English</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="lm-radius">Radius (km)</label>
+        <input type="number" id="lm-radius" min="1" max="500" value="${monitor.radius_km || 100}" style="width:80px">
+      </div>
+
+      <div class="form-group">
+        <label for="lm-cooldown">Alert cooldown (minutes)</label>
+        <input type="number" id="lm-cooldown" min="1" max="1440" value="${monitor.cooldown_min || 30}" style="width:80px">
+        <small style="color:var(--text-muted)">After an alert, silence for this many minutes before the next one.</small>
+      </div>
+
+      <div class="form-group" id="lm-status-group" style="display:none">
+        <label>Status</label>
+        <span id="lm-status-badge" style="font-size:1rem">—</span>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-save" id="btn-save-live-monitor">Save</button>
+        <button class="btn-save" id="btn-duplicate-live-monitor" style="background:var(--text-muted,#888)">⎘ Copy</button>
+        <button class="btn-save" id="btn-delete-live-monitor" style="background:var(--danger,#e53935)">Delete</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("lm-type").addEventListener("change", e => {
+    document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[e.target.value] || "";
+  });
+
+  // Live geocoding
+  let _lmLocTimer = null;
+  async function resolveLiveLocation(q) {
+    const hint = document.getElementById("lm-location-hint");
+    if (!q.trim()) { hint.textContent = ""; return; }
+    try {
+      const data = await api("GET", `/api/monitors/geocode?q=${encodeURIComponent(q)}`);
+      document.getElementById("lm-latitude").value  = data.latitude;
+      document.getElementById("lm-longitude").value = data.longitude;
+      hint.textContent = `✅ ${data.name}, ${data.country} (${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)})`;
+      hint.style.color = "var(--success)";
+    } catch (e) {
+      hint.textContent = `❌ ${e.message || "Location not found"}`;
+      hint.style.color = "var(--danger)";
+    }
+  }
+  if (monitor.location) resolveLiveLocation(monitor.location);
+  document.getElementById("lm-location").addEventListener("input", e => {
+    clearTimeout(_lmLocTimer);
+    _lmLocTimer = setTimeout(() => resolveLiveLocation(e.target.value), 600);
+  });
+
+  // Show status badge if monitor is already saved (has an id from server)
+  if (monitor.id) {
+    const sg = document.getElementById("lm-status-group");
+    sg.style.display = "";
+    api("GET", `/api/live-monitors/${monitor.id}/status`).then(data => {
+      const badge = document.getElementById("lm-status-badge");
+      badge.textContent = data.status === "running" ? "🟢 Running" : "🔴 Stopped";
+    }).catch(() => {});
+  }
+
+  document.getElementById("btn-save-live-monitor").addEventListener("click", async () => {
+    const payload = {
+      name:         document.getElementById("lm-name").value.trim(),
+      enabled:      document.getElementById("lm-enabled").checked,
+      type:         document.getElementById("lm-type").value,
+      location:     document.getElementById("lm-location").value.trim(),
+      latitude:     parseFloat(document.getElementById("lm-latitude").value)  || 0,
+      longitude:    parseFloat(document.getElementById("lm-longitude").value) || 0,
+      radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 100,
+      cooldown_min: parseFloat(document.getElementById("lm-cooldown").value)  || 30,
+      language:     document.getElementById("lm-language").value,
+    };
+    try {
+      const updated = await api("PUT", `/api/live-monitors/${selectedLiveMonitorId}`, payload);
+      liveMonitors = liveMonitors.map(m => m.id === selectedLiveMonitorId ? { ...m, ...updated } : m);
+      renderSidebarLiveMonitors();
+      renderLiveMonitorForm(liveMonitors.find(m => m.id === selectedLiveMonitorId));
+      navigateTo("live-monitor", document.querySelector(`[data-live-monitor-id="${selectedLiveMonitorId}"]`));
+      showToast("Live monitor saved.");
+    } catch (err) {
+      showToast(err.message || "Error saving live monitor", true);
+    }
+  });
+
+  document.getElementById("btn-delete-live-monitor").addEventListener("click", async () => {
+    if (!confirm("Delete this live monitor?")) return;
+    try {
+      await api("DELETE", `/api/live-monitors/${selectedLiveMonitorId}`);
+      liveMonitors = liveMonitors.filter(m => m.id !== selectedLiveMonitorId);
+      selectedLiveMonitorId = null;
+      renderSidebarLiveMonitors();
+      document.getElementById("panel-live-monitor").classList.remove("active");
+      document.getElementById("panel-settings").classList.add("active");
+    } catch (err) {
+      showToast(err.message || "Error deleting live monitor", true);
+    }
+  });
+
+  document.getElementById("btn-duplicate-live-monitor").addEventListener("click", async () => {
+    const src = liveMonitors.find(m => m.id === selectedLiveMonitorId);
+    if (!src) return;
+    try {
+      const copy = await api("POST", "/api/live-monitors", {
+        name:         `Copy of ${src.name}`,
+        enabled:      false,
+        type:         src.type,
+        location:     src.location,
+        latitude:     src.latitude,
+        longitude:    src.longitude,
+        radius_km:    src.radius_km,
+        cooldown_min: src.cooldown_min,
+        language:     src.language,
+      });
+      liveMonitors.push(copy);
+      selectedLiveMonitorId = copy.id;
+      renderSidebarLiveMonitors();
+      renderLiveMonitorForm(copy);
+      navigateTo("live-monitor", document.querySelector(`[data-live-monitor-id="${copy.id}"]`));
+    } catch (err) {
+      showToast(err.message || "Error duplicating live monitor", true);
+    }
+  });
+}
+
+document.getElementById("btn-new-live-monitor").addEventListener("click", async () => {
+  try {
+    const monitor = await api("POST", "/api/live-monitors", {
+      name: "New Live Monitor", enabled: false,
+      type: "lightning", location: "Rome",
+      latitude: 41.9028, longitude: 12.4964,
+      radius_km: 100, cooldown_min: 30, language: "it",
+    });
+    liveMonitors.push(monitor);
+    selectedLiveMonitorId = monitor.id;
+    renderSidebarLiveMonitors();
+    renderLiveMonitorForm(monitor);
+    navigateTo("live-monitor", document.querySelector(`[data-live-monitor-id="${monitor.id}"]`));
+  } catch (err) {
+    showToast(err.message || "Error creating live monitor", true);
   }
 });
 

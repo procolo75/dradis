@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [2.14.0] - 2026-05-09
+- **Feature — Live Monitors**: new sidebar section separate from "Scheduled Monitors". Live monitors are persistent push-based integrations with no cron scheduling. First type: `lightning` — persistent MQTT listener on the public Blitzortung broker (`blitzortung.ha.sed.pl:1883`). Sends a Telegram alert on the first strike within a configurable radius after each cooldown period. Reconnects automatically on disconnect. Geohash-based topic subscription (cell + 8 neighbours).
+- **Web UI — Live Monitors section**: sidebar renamed "Scheduled Monitors" / "Live Monitors". Live monitor form includes: location with live geocoding (auto lat/lon), radius km, cooldown minutes, language, status badge (🟢/🔴). No cron fields. Save, Copy, Delete buttons.
+- **Telegram `/monitors` command**: shows scheduled monitors (tap to run) and live monitors (tap to see status with 🟢/🔴 badge).
+- **New dependency**: `aiomqtt`.
+- **Storage**: live monitors saved to `/data/live_monitors.json` (separate from `/data/monitors.json`).
+
 ## [2.13.4] - 2026-05-08
 - **Fix — Google Tasks name-to-ID resolution**: all `_sync_*` functions now call `_resolve_task_list_id()` before using the `task_list` parameter. The helper fetches `tasklists().list()` and resolves a human-readable name (e.g. "Procolo") to the actual API ID via case-insensitive title match, so the LLM no longer has to know the internal ID.
 

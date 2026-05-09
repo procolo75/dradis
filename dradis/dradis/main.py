@@ -29,6 +29,7 @@ from web.server import (
     save_settings, SETTINGS_KEYS,
     register_tasks_changed_callback, register_run_task_callback, load_tasks,
     register_monitors_changed_callback, register_run_monitor_callback, load_monitors,
+    register_live_monitors_changed_callback, register_live_monitor_status_callback, load_live_monitors,
     set_gcal_code_event, pop_gcal_pending_code,
     set_gmail_code_event, pop_gmail_pending_code,
     set_gtasks_code_event, pop_gtasks_pending_code,
@@ -41,6 +42,7 @@ from agents.weather import create_weather_agent
 from agents.web_search import create_web_search_agent
 from agents.thunderstorm_monitor import run_thunderstorm_monitor
 from agents.rain_monitor import run_rain_monitor
+from agents.lightning_live_monitor import live_monitor_manager
 
 WEB_PORT = 8099
 
@@ -807,6 +809,21 @@ def reload_monitor_jobs():
                 print(f"[DRADIS] WARNING: invalid cron for monitor '{monitor.get('name')}': {e}")
 
 
+def reload_live_monitors():
+    settings = read_settings()
+    tz_name  = settings.get("timezone", "UTC") or "UTC"
+
+    async def _send(text: str):
+        if _telegram_bot:
+            await _telegram_bot.send_message(
+                chat_id=ALLOWED_CHAT_ID,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+
+    live_monitor_manager.reload(load_live_monitors(), _send, tz_name)
+
+
 # ── Telegram handlers ─────────────────────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1354,19 +1371,29 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ALLOWED_CHAT_ID:
         return
-    monitors = [m for m in load_monitors() if m.get("enabled")]
-    if not monitors:
+    scheduled = [m for m in load_monitors() if m.get("enabled")]
+    live      = [m for m in load_live_monitors() if m.get("enabled")]
+    if not scheduled and not live:
         await update.message.reply_text("No enabled monitors. Enable monitors from the Web UI.")
         return
-    keyboard = [
-        [InlineKeyboardButton(
+    keyboard = []
+    for m in scheduled:
+        keyboard.append([InlineKeyboardButton(
             f"{m['name']} ({m.get('location', '?')})",
-            callback_data=f"monitor:{m['id']}"
-        )]
-        for m in monitors
-    ]
+            callback_data=f"monitor:{m['id']}",
+        )])
+    for m in live:
+        status = live_monitor_manager.status(m["id"])
+        badge  = "🟢" if status == "running" else "🔴"
+        keyboard.append([InlineKeyboardButton(
+            f"{badge} {m['name']} ({m.get('location', '?')})",
+            callback_data=f"live:{m['id']}",
+        )])
+    header = "Scheduled monitors — tap to run now:" if scheduled else ""
+    if live:
+        header += ("\n\n" if header else "") + "Live monitors — tap to see status:"
     await update.message.reply_text(
-        "Select a monitor to run now:",
+        header.strip(),
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -1408,6 +1435,28 @@ async def handle_monitor_callback(update: Update, context: ContextTypes.DEFAULT_
     asyncio.create_task(run_scheduled_monitor(monitor))
 
 
+async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    item_id = query.data.removeprefix("live:")
+    monitor = next((m for m in load_live_monitors() if m["id"] == item_id), None)
+    await query.answer()
+    if not monitor:
+        await query.message.reply_text("❌ Live monitor not found.")
+        return
+    status = live_monitor_manager.status(item_id)
+    badge  = "🟢 Running" if status == "running" else "🔴 Stopped"
+    await query.message.reply_text(
+        f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
+        f"📍 {html.escape(monitor.get('location', '?'))}\n"
+        f"Status: {badge}\n"
+        f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: {monitor.get('cooldown_min', '?')} min",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def build_telegram_app():
@@ -1422,8 +1471,9 @@ def build_telegram_app():
     app.add_handler(CommandHandler("gmailauth",    cmd_gmailauth))
     app.add_handler(CommandHandler("gtasksauth",   cmd_gtasksauth))
     app.add_handler(CommandHandler("todo",         cmd_todo))
-    app.add_handler(CallbackQueryHandler(handle_task_callback,    pattern=r"^task:"))
-    app.add_handler(CallbackQueryHandler(handle_monitor_callback, pattern=r"^monitor:"))
+    app.add_handler(CallbackQueryHandler(handle_task_callback,         pattern=r"^task:"))
+    app.add_handler(CallbackQueryHandler(handle_monitor_callback,      pattern=r"^monitor:"))
+    app.add_handler(CallbackQueryHandler(handle_live_monitor_callback, pattern=r"^live:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     return app
@@ -1459,6 +1509,9 @@ async def main():
         register_run_task_callback(run_scheduled_task)
         register_monitors_changed_callback(reload_monitor_jobs)
         register_run_monitor_callback(run_scheduled_monitor)
+        register_live_monitors_changed_callback(reload_live_monitors)
+        register_live_monitor_status_callback(live_monitor_manager.status)
+        reload_live_monitors()
         settings    = read_settings()
         startup_msg = settings.get("startup_message", SETTINGS_DEFAULTS["startup_message"])
         await telegram_app.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=startup_msg)
