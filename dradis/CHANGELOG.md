@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [2.15.3] - 2026-05-10
+- **Fix — HA Monitor cooldown bug**: il cooldown per entità veniva aggiornato anche quando il LLM rispondeva SKIP, impedendo alert successivi entro il periodo di cooldown. Ora il cooldown si aggiorna solo quando viene effettivamente inviato un alert.
+- **UX — input entità manuale**: il campo accetta ora anche il formato HA nativo (`switch.my_switch`) e lo converte automaticamente in formato MQTT (`switch/my_switch`). Aggiornato il placeholder con entrambi i formati.
+- **UX — istruzioni LLM**: aggiunto placeholder con 3 esempi concreti (avvisa solo a "off", avvisa per tutti i cambi, avvisa solo a "unavailable"). Aggiunto hint che spiega quando usare SKIP.
+
 ## [2.15.2] - 2026-05-10
 - **UX — HA MQTT settings moved to dedicated panel**: MQTT broker settings (host, port, username, password, statestream prefix) removed from the main Settings panel and promoted to a dedicated "⚙ MQTT Settings" nav-item inside the "HA Monitors" sidebar section, consistent with the Web Search / Weather / Google agent pattern.
 - **Fix — password field**: replaced the grid-layout password input with a standard `form-group` + show/hide toggle button (👁/🙈).

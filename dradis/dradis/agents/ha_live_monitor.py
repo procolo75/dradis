@@ -112,13 +112,13 @@ class HaLiveMonitor:
         last = self._cooldowns.get(entity_id, 0.0)
         if (now - last) / 60.0 < self.cooldown_min:
             return
-        self._cooldowns[entity_id] = now
 
         print(f"[HAMonitor] '{self.name}' entity={entity_id} state={state!r}")
         try:
             prompt = self._build_prompt(entity_id, state)
             alert_text = await self._llm(prompt)
             if alert_text and alert_text.strip():
+                self._cooldowns[entity_id] = now   # cooldown only on actual alert
                 await self._send(alert_text.strip())
         except Exception as e:
             print(f"[HAMonitor] '{self.name}' LLM/send error: {e}")
