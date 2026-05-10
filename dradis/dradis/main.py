@@ -865,7 +865,7 @@ def reload_ha_monitors():
         if text.upper() == "SKIP":
             return ""
         if s.get("show_metrics"):
-            text = text + "\n\n" + format_metrics(response, duration)
+            asyncio.create_task(_send(format_metrics(response, duration)))
         return text
 
     ha_monitor_manager.reload(load_ha_monitors(), _send, _llm, mqtt_cfg, tz_name)

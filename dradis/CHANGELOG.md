@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.15.7] - 2026-05-10
+- **Fix — HA Monitor metrics**: metrics are now sent as a separate Telegram message (same behaviour as regular DRADIS responses), not appended to the alert text.
+
 ## [2.15.6] - 2026-05-10
 - **Fix — HA Monitor metrics**: when show_metrics is enabled, the alert message now includes the real `📊` line (actual duration, not hardcoded 0.0). Token tracking via `_track_tokens` was already in place.
 
