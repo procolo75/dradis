@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [2.15.2] - 2026-05-10
+- **UX — HA MQTT settings moved to dedicated panel**: MQTT broker settings (host, port, username, password, statestream prefix) removed from the main Settings panel and promoted to a dedicated "⚙ MQTT Settings" nav-item inside the "HA Monitors" sidebar section, consistent with the Web Search / Weather / Google agent pattern.
+- **Fix — password field**: replaced the grid-layout password input with a standard `form-group` + show/hide toggle button (👁/🙈).
+- **Feature — MQTT test connection**: new "Test connection" button in the HA MQTT panel — calls `POST /api/ha/test`, shows ✅ / ❌ result with host:port.
+
 ## [2.15.1] - 2026-05-10
 - **Fix — HA Monitor entity input**: added manual "domain/object_id" text field + "+ Add" button (Enter key supported) as fallback when MQTT discovery returns no results. `mqtt_statestream` only publishes on state changes, so retained messages may not exist for entities that haven't changed since statestream was enabled.
 

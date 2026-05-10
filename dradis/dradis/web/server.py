@@ -1191,6 +1191,27 @@ async def get_ha_monitor_status(item_id: str):
     return {"status": "unknown"}
 
 
+@app.post("/api/ha/test")
+async def test_ha_connection():
+    """Test MQTT broker connectivity with the configured credentials."""
+    settings = load_settings()
+    host     = settings.get("mqtt_host", "core-mosquitto")
+    port     = int(settings.get("mqtt_port", 1883))
+    username = settings.get("mqtt_username") or None
+    password = settings.get("mqtt_password") or None
+    kwargs   = {}
+    if username:
+        kwargs["username"] = username
+    if password:
+        kwargs["password"] = password
+    try:
+        async with aiomqtt.Client(host, port, **kwargs):
+            pass
+        return {"ok": True, "host": host, "port": port}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/ha/discover")
 async def discover_ha_entities():
     """Subscribe briefly to the statestream wildcard and return discovered entity IDs."""

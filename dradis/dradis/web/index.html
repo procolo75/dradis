@@ -382,6 +382,12 @@
         <span>▾ HA Monitors</span>
         <button id="btn-new-ha-monitor" title="New HA monitor" class="nav-section-btn" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
       </span>
+      <ul class="nav-list">
+        <li class="nav-item" data-panel="ha-mqtt" id="nav-ha-mqtt">
+          <span class="nav-dot" id="ha-mqtt-dot"></span>
+          <span class="nav-label">⚙ MQTT Settings</span>
+        </li>
+      </ul>
       <ul class="nav-list" id="sidebar-ha-monitors"></ul>
     </div>
 
@@ -544,35 +550,6 @@
               <option value="America/Anchorage">America/Anchorage (AKST/AKDT)</option>
             </optgroup>
           </select>
-        </div>
-
-        <div class="form-group" style="margin-top:24px">
-          <h3 style="margin:0 0 12px;font-size:1rem;border-bottom:1px solid var(--border);padding-bottom:6px">🏠 MQTT / Home Assistant</h3>
-          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-bottom:8px">
-            <div>
-              <label for="s-mqtt-host" style="font-size:0.85rem">Broker Host</label>
-              <input type="text" id="s-mqtt-host" placeholder="core-mosquitto" style="width:100%">
-            </div>
-            <div style="width:90px">
-              <label for="s-mqtt-port" style="font-size:0.85rem">Port</label>
-              <input type="number" id="s-mqtt-port" min="1" max="65535" style="width:100%">
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-            <div>
-              <label for="s-mqtt-username" style="font-size:0.85rem">Username</label>
-              <input type="text" id="s-mqtt-username" autocomplete="off" style="width:100%">
-            </div>
-            <div>
-              <label for="s-mqtt-password" style="font-size:0.85rem">Password</label>
-              <input type="password" id="s-mqtt-password" autocomplete="new-password" style="width:100%">
-            </div>
-          </div>
-          <div>
-            <label for="s-mqtt-prefix" style="font-size:0.85rem">Statestream prefix</label>
-            <input type="text" id="s-mqtt-prefix" placeholder="homeassistant" style="width:200px">
-            <small style="color:var(--text-muted);display:block;margin-top:2px">Must match <code>base_topic</code> in your HA <code>mqtt_statestream</code> config.</small>
-          </div>
         </div>
 
         <div class="btn-row">
@@ -1247,6 +1224,54 @@
       </div>
     </div>
 
+    <!-- Panel: HA MQTT Settings -->
+    <div class="panel" id="panel-ha-mqtt">
+      <div class="form-card">
+        <h2>🏠 MQTT / Home Assistant</h2>
+
+        <div class="form-group">
+          <label for="ha-mqtt-host">Broker Host</label>
+          <input type="text" id="ha-mqtt-host" placeholder="core-mosquitto" style="max-width:280px">
+        </div>
+
+        <div class="form-group">
+          <label for="ha-mqtt-port">Port</label>
+          <input type="number" id="ha-mqtt-port" min="1" max="65535" style="width:100px">
+        </div>
+
+        <div class="form-group">
+          <label for="ha-mqtt-username">Username</label>
+          <input type="text" id="ha-mqtt-username" autocomplete="off" style="max-width:280px">
+        </div>
+
+        <div class="form-group">
+          <label for="ha-mqtt-password">Password</label>
+          <div style="display:flex;gap:6px;max-width:280px">
+            <input type="password" id="ha-mqtt-password" autocomplete="off" style="flex:1">
+            <button class="btn-icon" id="btn-mqtt-show-pw" type="button" title="Show / hide password">👁</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="ha-mqtt-prefix">Statestream base_topic prefix</label>
+          <input type="text" id="ha-mqtt-prefix" placeholder="homeassistant" style="max-width:220px">
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Must match <code>base_topic</code> in your HA <code>mqtt_statestream</code> config.</small>
+        </div>
+
+        <div class="form-group">
+          <label>Connection test</label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn-icon" id="btn-ha-mqtt-test">Test connection</button>
+            <span id="ha-mqtt-test-result" style="font-size:0.85rem;color:var(--text-muted)"></span>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-ha-mqtt">Save</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Panel: Agent edit (injected by renderAgentForm) -->
     <div class="panel" id="panel-agent">
       <div class="empty-state">
@@ -1359,11 +1384,6 @@ async function loadSettings() {
   tzSel.value = tzVal;
   _serverTz = tzVal;
 
-  document.getElementById("s-mqtt-host").value     = s.mqtt_host                    || "core-mosquitto";
-  document.getElementById("s-mqtt-port").value     = s.mqtt_port                    ?? 1883;
-  document.getElementById("s-mqtt-username").value = s.mqtt_username                || "";
-  document.getElementById("s-mqtt-password").value = s.mqtt_password                || "";
-  document.getElementById("s-mqtt-prefix").value   = s.mqtt_statestream_prefix      || "homeassistant";
 }
 
 // ── Provider-aware model loader ───────────────────────────────────────────────
@@ -1666,11 +1686,6 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     show_metrics:       document.getElementById("s-metrics").checked,
     history_depth:      parseInt(document.getElementById("s-history-depth").value, 10) || 2,
     timezone:                 document.getElementById("s-timezone").value.trim() || "UTC",
-    mqtt_host:                document.getElementById("s-mqtt-host").value.trim()     || "core-mosquitto",
-    mqtt_port:                parseInt(document.getElementById("s-mqtt-port").value, 10) || 1883,
-    mqtt_username:            document.getElementById("s-mqtt-username").value.trim(),
-    mqtt_password:            document.getElementById("s-mqtt-password").value,
-    mqtt_statestream_prefix:  document.getElementById("s-mqtt-prefix").value.trim()  || "homeassistant",
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -3609,6 +3624,72 @@ document.getElementById("btn-new-live-monitor").addEventListener("click", async 
   } catch (err) {
     showToast(err.message || "Error creating live monitor", true);
   }
+});
+
+// ── HA MQTT Settings panel ────────────────────────────────────────────────────
+
+async function loadHaMqttSettings() {
+  const s = await api("GET", "/api/settings");
+  document.getElementById("ha-mqtt-host").value     = s.mqtt_host                 || "core-mosquitto";
+  document.getElementById("ha-mqtt-port").value     = s.mqtt_port                 ?? 1883;
+  document.getElementById("ha-mqtt-username").value = s.mqtt_username             || "";
+  document.getElementById("ha-mqtt-password").value = s.mqtt_password             || "";
+  document.getElementById("ha-mqtt-prefix").value   = s.mqtt_statestream_prefix   || "homeassistant";
+}
+
+document.getElementById("btn-mqtt-show-pw").addEventListener("click", () => {
+  const inp = document.getElementById("ha-mqtt-password");
+  const btn = document.getElementById("btn-mqtt-show-pw");
+  if (inp.type === "password") { inp.type = "text";     btn.textContent = "🙈"; }
+  else                         { inp.type = "password"; btn.textContent = "👁";  }
+});
+
+document.getElementById("btn-ha-mqtt-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-ha-mqtt-test");
+  const result = document.getElementById("ha-mqtt-test-result");
+  btn.disabled = true;
+  result.textContent = "Testing…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("POST", "/api/ha/test");
+    result.textContent = `✅ Connected to ${data.host}:${data.port}`;
+    result.style.color = "var(--success, #43a047)";
+  } catch (e) {
+    result.textContent = `❌ ${e.message || "Connection failed"}`;
+    result.style.color = "var(--danger, #e53935)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-save-ha-mqtt").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-ha-mqtt");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    mqtt_host:               document.getElementById("ha-mqtt-host").value.trim()   || "core-mosquitto",
+    mqtt_port:               parseInt(document.getElementById("ha-mqtt-port").value, 10) || 1883,
+    mqtt_username:           document.getElementById("ha-mqtt-username").value.trim(),
+    mqtt_password:           document.getElementById("ha-mqtt-password").value,
+    mqtt_statestream_prefix: document.getElementById("ha-mqtt-prefix").value.trim() || "homeassistant",
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const dot = document.getElementById("ha-mqtt-dot");
+    if (dot) dot.classList.toggle("on", !!(payload.mqtt_host && payload.mqtt_username));
+    showToast("MQTT settings saved.");
+  } catch (e) {
+    showToast(e.message || "Error saving MQTT settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("nav-ha-mqtt").addEventListener("click", async () => {
+  navigateTo("ha-mqtt", document.getElementById("nav-ha-mqtt"));
+  try { await loadHaMqttSettings(); } catch {}
 });
 
 // ── HA Monitors ───────────────────────────────────────────────────────────────
