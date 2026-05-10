@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.15.5] - 2026-05-10
+- **Fix — HA Monitor token tracking**: HA Monitor LLM calls now call `_track_tokens` so usage is counted in `/tokens` totals. Removed the hardcoded `📊` line from alert messages — metrics belong in `/tokens`, not in Telegram alerts.
+
 ## [2.15.4] - 2026-05-10
 - **Fix — HA Monitor metrics**: LLM calls from HA Monitor now track tokens (counted in `/tokens` totals) and, when metrics are enabled, append the `📊` stats line to the Telegram alert.
 - **UX — MQTT Settings relocated**: MQTT / Home Assistant panel moved to the Settings section, immediately below DRADIS Agentic AI, removed from HA Monitors section.
