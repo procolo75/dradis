@@ -30,6 +30,7 @@ from web.server import (
     register_tasks_changed_callback, register_run_task_callback, load_tasks,
     register_monitors_changed_callback, register_run_monitor_callback, load_monitors,
     register_live_monitors_changed_callback, register_live_monitor_status_callback, load_live_monitors,
+    register_ha_monitors_changed_callback, register_ha_monitor_status_callback, load_ha_monitors,
     set_gcal_code_event, pop_gcal_pending_code,
     set_gmail_code_event, pop_gmail_pending_code,
     set_gtasks_code_event, pop_gtasks_pending_code,
@@ -43,6 +44,7 @@ from agents.web_search import create_web_search_agent
 from agents.thunderstorm_monitor import run_thunderstorm_monitor
 from agents.rain_monitor import run_rain_monitor
 from agents.lightning_live_monitor import live_monitor_manager
+from agents.ha_live_monitor import ha_monitor_manager
 
 WEB_PORT = 8099
 
@@ -824,6 +826,46 @@ def reload_live_monitors():
     live_monitor_manager.reload(load_live_monitors(), _send, tz_name)
 
 
+def reload_ha_monitors():
+    settings = read_settings()
+    tz_name  = settings.get("timezone", "UTC") or "UTC"
+    mqtt_cfg = {k: settings[k] for k in [
+        "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password", "mqtt_statestream_prefix"
+    ] if k in settings}
+
+    async def _send(text: str):
+        if _telegram_bot:
+            await _telegram_bot.send_message(
+                chat_id=ALLOWED_CHAT_ID,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+
+    async def _llm(prompt: str) -> str:
+        s           = read_settings()
+        sys_prompt  = build_system_prompt()
+        model       = s.get("model",    SETTINGS_DEFAULTS["model"])
+        provider    = s.get("provider", SETTINGS_DEFAULTS["provider"])
+        executor    = _build_executor(sys_prompt, model, provider, [], s)
+        response, _, error = await _run_with_fallback(
+            executor         = executor,
+            prompt           = prompt,
+            settings         = s,
+            system_prompt    = sys_prompt,
+            primary_model    = model,
+            primary_provider = provider,
+            context_label    = "HAMonitor",
+        )
+        if error or response is None:
+            return ""
+        text = (response.content or "").strip()
+        if text.upper() == "SKIP":
+            return ""
+        return text
+
+    ha_monitor_manager.reload(load_ha_monitors(), _send, _llm, mqtt_cfg, tz_name)
+
+
 # ── Telegram handlers ─────────────────────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1512,6 +1554,9 @@ async def main():
         register_live_monitors_changed_callback(reload_live_monitors)
         register_live_monitor_status_callback(live_monitor_manager.status)
         reload_live_monitors()
+        register_ha_monitors_changed_callback(reload_ha_monitors)
+        register_ha_monitor_status_callback(ha_monitor_manager.status)
+        reload_ha_monitors()
         settings    = read_settings()
         startup_msg = settings.get("startup_message", SETTINGS_DEFAULTS["startup_message"])
         await telegram_app.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=startup_msg)

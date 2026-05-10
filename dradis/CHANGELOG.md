@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [2.15.0] - 2026-05-10
+- **Feature — HA Monitors**: new sidebar section "🏠 HA Monitors" for monitoring Home Assistant entities via MQTT statestream. Each monitor subscribes to selected HA entities and sends an LLM-generated Telegram alert on state changes, with per-entity cooldown.
+- **Feature — MQTT entity discovery**: "🔍 Discover" button in the HA Monitor form connects to the broker, subscribes to the statestream wildcard (`{prefix}/+/+/state`) for 3 seconds, and returns all discovered entity IDs. Requires `retain: true` in `mqtt_statestream` for instant results.
+- **Feature — MQTT / Home Assistant settings**: new sub-section in the Settings panel for broker host, port, username, password, and statestream prefix (default: `core-mosquitto:1883`, prefix `homeassistant`).
+- **Architecture — LLM-driven alerts**: the LLM receives entity ID, new state, timestamp, and custom instructions. It can respond `SKIP` to suppress the alert, or write a concise Telegram message otherwise.
+- **Storage**: HA monitors saved to `/data/ha_monitors.json`.
+
 ## [2.14.2] - 2026-05-09
 - **UX — sidebar `+` button**: hidden when the section is collapsed, visible only when expanded.
 - **UX — Tasks section renamed**: sidebar label changed from "Tasks" to "LLM Scheduled Tasks".

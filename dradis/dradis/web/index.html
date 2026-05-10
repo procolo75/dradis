@@ -377,6 +377,13 @@
       <ul class="nav-list" id="sidebar-live-monitors"></ul>
     </div>
 
+    <div class="nav-section collapsed" id="section-ha-monitors">
+      <span class="nav-section-label">
+        <span>▾ HA Monitors</span>
+        <button id="btn-new-ha-monitor" title="New HA monitor" class="nav-section-btn" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
+      </span>
+      <ul class="nav-list" id="sidebar-ha-monitors"></ul>
+    </div>
 
   </nav>
 
@@ -537,6 +544,35 @@
               <option value="America/Anchorage">America/Anchorage (AKST/AKDT)</option>
             </optgroup>
           </select>
+        </div>
+
+        <div class="form-group" style="margin-top:24px">
+          <h3 style="margin:0 0 12px;font-size:1rem;border-bottom:1px solid var(--border);padding-bottom:6px">🏠 MQTT / Home Assistant</h3>
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-bottom:8px">
+            <div>
+              <label for="s-mqtt-host" style="font-size:0.85rem">Broker Host</label>
+              <input type="text" id="s-mqtt-host" placeholder="core-mosquitto" style="width:100%">
+            </div>
+            <div style="width:90px">
+              <label for="s-mqtt-port" style="font-size:0.85rem">Port</label>
+              <input type="number" id="s-mqtt-port" min="1" max="65535" style="width:100%">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div>
+              <label for="s-mqtt-username" style="font-size:0.85rem">Username</label>
+              <input type="text" id="s-mqtt-username" autocomplete="off" style="width:100%">
+            </div>
+            <div>
+              <label for="s-mqtt-password" style="font-size:0.85rem">Password</label>
+              <input type="password" id="s-mqtt-password" autocomplete="new-password" style="width:100%">
+            </div>
+          </div>
+          <div>
+            <label for="s-mqtt-prefix" style="font-size:0.85rem">Statestream prefix</label>
+            <input type="text" id="s-mqtt-prefix" placeholder="homeassistant" style="width:200px">
+            <small style="color:var(--text-muted);display:block;margin-top:2px">Must match <code>base_topic</code> in your HA <code>mqtt_statestream</code> config.</small>
+          </div>
         </div>
 
         <div class="btn-row">
@@ -1322,6 +1358,12 @@ async function loadSettings() {
   }
   tzSel.value = tzVal;
   _serverTz = tzVal;
+
+  document.getElementById("s-mqtt-host").value     = s.mqtt_host                    || "core-mosquitto";
+  document.getElementById("s-mqtt-port").value     = s.mqtt_port                    ?? 1883;
+  document.getElementById("s-mqtt-username").value = s.mqtt_username                || "";
+  document.getElementById("s-mqtt-password").value = s.mqtt_password                || "";
+  document.getElementById("s-mqtt-prefix").value   = s.mqtt_statestream_prefix      || "homeassistant";
 }
 
 // ── Provider-aware model loader ───────────────────────────────────────────────
@@ -1623,7 +1665,12 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     history_enabled:    document.getElementById("s-history").checked,
     show_metrics:       document.getElementById("s-metrics").checked,
     history_depth:      parseInt(document.getElementById("s-history-depth").value, 10) || 2,
-    timezone:           document.getElementById("s-timezone").value.trim() || "UTC",
+    timezone:                 document.getElementById("s-timezone").value.trim() || "UTC",
+    mqtt_host:                document.getElementById("s-mqtt-host").value.trim()     || "core-mosquitto",
+    mqtt_port:                parseInt(document.getElementById("s-mqtt-port").value, 10) || 1883,
+    mqtt_username:            document.getElementById("s-mqtt-username").value.trim(),
+    mqtt_password:            document.getElementById("s-mqtt-password").value,
+    mqtt_statestream_prefix:  document.getElementById("s-mqtt-prefix").value.trim()  || "homeassistant",
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -2748,6 +2795,13 @@ async function init() {
     console.error("loadLiveMonitors:", e);
   }
   renderSidebarLiveMonitors();
+
+  try {
+    haMonitors = await api("GET", "/api/ha-monitors");
+  } catch (e) {
+    console.error("loadHaMonitors:", e);
+  }
+  renderSidebarHaMonitors();
 }
 
 // ── Tasks sidebar ─────────────────────────────────────────────────────────────
@@ -3554,6 +3608,213 @@ document.getElementById("btn-new-live-monitor").addEventListener("click", async 
     navigateTo("live-monitor", document.querySelector(`[data-live-monitor-id="${monitor.id}"]`));
   } catch (err) {
     showToast(err.message || "Error creating live monitor", true);
+  }
+});
+
+// ── HA Monitors ───────────────────────────────────────────────────────────────
+
+let haMonitors = [];
+let selectedHaMonitorId = null;
+
+function renderSidebarHaMonitors() {
+  const ul = document.getElementById("sidebar-ha-monitors");
+  ul.innerHTML = "";
+  haMonitors.forEach(m => {
+    const li = document.createElement("li");
+    li.className = "nav-item" + (m.id === selectedHaMonitorId ? " active" : "");
+    li.dataset.panel       = "ha-monitor";
+    li.dataset.haMonitorId = m.id;
+    li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
+                    <span class="nav-icon">🏠</span>
+                    <span class="nav-label">${m.name}</span>`;
+    li.addEventListener("click", () => {
+      selectedHaMonitorId = m.id;
+      renderSidebarHaMonitors();
+      renderHaMonitorForm(haMonitors.find(x => x.id === m.id));
+      navigateTo("ha-monitor", li);
+    });
+    ul.appendChild(li);
+  });
+}
+
+function renderHaMonitorForm(monitor) {
+  let panel = document.getElementById("panel-ha-monitor");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "panel";
+    panel.id        = "panel-ha-monitor";
+    document.getElementById("content").appendChild(panel);
+  }
+
+  const entitiesJson = JSON.stringify(monitor.entities || []);
+
+  panel.innerHTML = `
+    <div class="form-card">
+      <h2>HA Monitor</h2>
+
+      <div class="form-group">
+        <label for="ha-name">Name</label>
+        <input type="text" id="ha-name" value="${monitor.name || ""}">
+      </div>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="ha-enabled" ${monitor.enabled ? "checked" : ""}>
+          Enabled
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label>Entities to monitor</label>
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <button class="btn-icon" id="btn-ha-discover" title="Discover entities from MQTT broker">🔍 Discover</button>
+          <small style="color:var(--text-muted);align-self:center">Connects to the broker and lists entities published by statestream (retain=true required).</small>
+        </div>
+        <div id="ha-entity-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--bg)"></div>
+        <input type="hidden" id="ha-entities-json" value='${entitiesJson}'>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Selected: <span id="ha-entities-count">0</span> entities</small>
+      </div>
+
+      <div class="form-group">
+        <label for="ha-instructions">LLM Instructions</label>
+        <textarea id="ha-instructions" rows="4" style="width:100%;resize:vertical">${monitor.instructions || ""}</textarea>
+        <small style="color:var(--text-muted)">Tell the LLM what to alert on. It can respond "SKIP" to suppress an alert.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="ha-language">Alert language</label>
+        <select id="ha-language" style="width:160px">
+          <option value="it" ${(monitor.language || "it") === "it" ? "selected" : ""}>🇮🇹 Italiano</option>
+          <option value="en" ${monitor.language === "en" ? "selected" : ""}>🇬🇧 English</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="ha-cooldown">Cooldown per entity (minutes)</label>
+        <input type="number" id="ha-cooldown" min="1" max="1440" value="${monitor.cooldown_min || 60}" style="width:80px">
+        <small style="color:var(--text-muted)">Minimum time between alerts for the same entity.</small>
+      </div>
+
+      <div class="form-group" id="ha-status-group" style="display:none">
+        <label>Status</label>
+        <span id="ha-status-badge" style="font-size:1rem">—</span>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-save" id="btn-save-ha-monitor">Save</button>
+        <button class="btn-save" id="btn-delete-ha-monitor" style="background:var(--danger,#e53935)">Delete</button>
+      </div>
+    </div>
+  `;
+
+  // Populate entity checkboxes from stored selection
+  function _renderEntityList(allEntities, selected) {
+    const container = document.getElementById("ha-entity-list");
+    if (!allEntities.length) {
+      container.innerHTML = '<small style="color:var(--text-muted);padding:4px">No entities discovered yet. Press 🔍 Discover.</small>';
+      document.getElementById("ha-entities-count").textContent = selected.length;
+      return;
+    }
+    const selectedSet = new Set(selected);
+    container.innerHTML = allEntities.map(e => `
+      <label style="display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer">
+        <input type="checkbox" class="ha-entity-cb" value="${e}" ${selectedSet.has(e) ? "checked" : ""}>
+        <code style="font-size:0.82rem">${e}</code>
+      </label>
+    `).join("");
+    container.querySelectorAll(".ha-entity-cb").forEach(cb => {
+      cb.addEventListener("change", _syncEntitySelection);
+    });
+    document.getElementById("ha-entities-count").textContent = selectedSet.size;
+  }
+
+  function _syncEntitySelection() {
+    const checked = [...document.querySelectorAll(".ha-entity-cb:checked")].map(cb => cb.value);
+    document.getElementById("ha-entities-json").value = JSON.stringify(checked);
+    document.getElementById("ha-entities-count").textContent = checked.length;
+  }
+
+  // Show stored entities as pre-selected (no full list yet — user must Discover)
+  _renderEntityList(monitor.entities || [], monitor.entities || []);
+
+  document.getElementById("btn-ha-discover").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-ha-discover");
+    btn.disabled = true;
+    btn.textContent = "⏳ Discovering…";
+    try {
+      const entities = await api("POST", "/api/ha/discover");
+      const currentSelected = JSON.parse(document.getElementById("ha-entities-json").value || "[]");
+      // Merge: keep selected ones even if not in discovered list
+      const all = [...new Set([...entities, ...currentSelected])].sort();
+      _renderEntityList(all, currentSelected);
+      showToast(`Discovered ${entities.length} entities`);
+    } catch (e) {
+      showToast(e.message || "Discovery failed. Check MQTT settings.", true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "🔍 Discover";
+    }
+  });
+
+  if (monitor.id) {
+    const sg = document.getElementById("ha-status-group");
+    sg.style.display = "";
+    api("GET", `/api/ha-monitors/${monitor.id}/status`).then(data => {
+      const badge = document.getElementById("ha-status-badge");
+      badge.textContent = data.status === "running" ? "🟢 Running" : "🔴 Stopped";
+    }).catch(() => {});
+  }
+
+  document.getElementById("btn-save-ha-monitor").addEventListener("click", async () => {
+    const entities = JSON.parse(document.getElementById("ha-entities-json").value || "[]");
+    const payload = {
+      name:         document.getElementById("ha-name").value.trim(),
+      enabled:      document.getElementById("ha-enabled").checked,
+      entities,
+      instructions: document.getElementById("ha-instructions").value.trim(),
+      cooldown_min: parseFloat(document.getElementById("ha-cooldown").value) || 60,
+      language:     document.getElementById("ha-language").value,
+    };
+    try {
+      const updated = await api("PUT", `/api/ha-monitors/${selectedHaMonitorId}`, payload);
+      haMonitors = haMonitors.map(m => m.id === selectedHaMonitorId ? { ...m, ...updated } : m);
+      renderSidebarHaMonitors();
+      renderHaMonitorForm(haMonitors.find(m => m.id === selectedHaMonitorId));
+      navigateTo("ha-monitor", document.querySelector(`[data-ha-monitor-id="${selectedHaMonitorId}"]`));
+      showToast("HA monitor saved.");
+    } catch (err) {
+      showToast(err.message || "Error saving HA monitor", true);
+    }
+  });
+
+  document.getElementById("btn-delete-ha-monitor").addEventListener("click", async () => {
+    if (!confirm("Delete this HA monitor?")) return;
+    try {
+      await api("DELETE", `/api/ha-monitors/${selectedHaMonitorId}`);
+      haMonitors = haMonitors.filter(m => m.id !== selectedHaMonitorId);
+      selectedHaMonitorId = null;
+      renderSidebarHaMonitors();
+      document.getElementById("panel-ha-monitor").classList.remove("active");
+      document.getElementById("panel-settings").classList.add("active");
+    } catch (err) {
+      showToast(err.message || "Error deleting HA monitor", true);
+    }
+  });
+}
+
+document.getElementById("btn-new-ha-monitor").addEventListener("click", async () => {
+  try {
+    const monitor = await api("POST", "/api/ha-monitors", {
+      name: "New HA Monitor", enabled: false,
+      entities: [], instructions: "", cooldown_min: 60, language: "it",
+    });
+    haMonitors.push(monitor);
+    selectedHaMonitorId = monitor.id;
+    renderSidebarHaMonitors();
+    renderHaMonitorForm(monitor);
+    navigateTo("ha-monitor", document.querySelector(`[data-ha-monitor-id="${monitor.id}"]`));
+  } catch (err) {
+    showToast(err.message || "Error creating HA monitor", true);
   }
 });
 

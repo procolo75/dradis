@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import httpx
+import aiomqtt
 from apscheduler.triggers.cron import CronTrigger
 
 AGENTS_FILE    = Path("/data/agents.json")
@@ -70,6 +71,7 @@ SETTINGS_KEYS = [
     "gmail_fallback_provider", "gmail_fallback_model",
     "gtasks_enabled", "gtasks_provider", "gtasks_model", "gtasks_instructions", "gtasks_show_metrics",
     "gtasks_fallback_provider", "gtasks_fallback_model",
+    "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password", "mqtt_statestream_prefix",
 ]
 
 # Maps old key names to current names for transparent migration.
@@ -139,6 +141,8 @@ _on_monitors_changed: Callable | None = None
 _run_monitor_fn: Callable | None = None
 _on_live_monitors_changed: Callable | None = None
 _get_live_monitor_status_fn: Callable | None = None
+_on_ha_monitors_changed: Callable | None = None
+_get_ha_monitor_status_fn: Callable | None = None
 
 
 def register_tasks_changed_callback(fn: Callable):
@@ -186,7 +190,23 @@ def register_live_monitor_status_callback(fn: Callable):
     _get_live_monitor_status_fn = fn
 
 
+def register_ha_monitors_changed_callback(fn: Callable):
+    global _on_ha_monitors_changed
+    _on_ha_monitors_changed = fn
+
+
+def _notify_ha_monitors_changed():
+    if _on_ha_monitors_changed:
+        _on_ha_monitors_changed()
+
+
+def register_ha_monitor_status_callback(fn: Callable):
+    global _get_ha_monitor_status_fn
+    _get_ha_monitor_status_fn = fn
+
+
 LIVE_MONITORS_FILE = Path("/data/live_monitors.json")
+HA_MONITORS_FILE   = Path("/data/ha_monitors.json")
 
 
 def load_live_monitors() -> list[dict]:
@@ -198,6 +218,17 @@ def load_live_monitors() -> list[dict]:
 
 def save_live_monitors(items: list[dict]):
     LIVE_MONITORS_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2))
+
+
+def load_ha_monitors() -> list[dict]:
+    try:
+        return json.loads(HA_MONITORS_FILE.read_text())
+    except Exception:
+        return []
+
+
+def save_ha_monitors(items: list[dict]):
+    HA_MONITORS_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2))
 
 
 def load_monitors() -> list[dict]:
@@ -264,6 +295,11 @@ SETTINGS_DEFAULTS = {
     "gmail_fallback_model":          "",
     "gtasks_fallback_provider":      "",
     "gtasks_fallback_model":         "",
+    "mqtt_host":                     "core-mosquitto",
+    "mqtt_port":                     1883,
+    "mqtt_username":                 "",
+    "mqtt_password":                 "",
+    "mqtt_statestream_prefix":       "homeassistant",
 }
 
 def load_settings() -> dict:
@@ -315,6 +351,15 @@ class LiveMonitorPayload(BaseModel):
     longitude:    float = 0.0
     radius_km:    float = 100.0
     cooldown_min: float = 30.0
+    language:     str   = "it"
+
+
+class HaMonitorPayload(BaseModel):
+    name:         str
+    enabled:      bool  = False
+    entities:     list  = []
+    instructions: str   = ""
+    cooldown_min: float = 60.0
     language:     str   = "it"
 
 
@@ -371,6 +416,11 @@ class SettingsPayload(BaseModel):
     gtasks_show_metrics:      bool = False
     gtasks_fallback_provider: str  = ""
     gtasks_fallback_model:    str  = ""
+    mqtt_host:                str  = "core-mosquitto"
+    mqtt_port:                int  = 1883
+    mqtt_username:            str  = ""
+    mqtt_password:            str  = ""
+    mqtt_statestream_prefix:  str  = "homeassistant"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1091,6 +1141,89 @@ async def get_live_monitor_status(item_id: str):
     if _get_live_monitor_status_fn:
         return {"status": _get_live_monitor_status_fn(item_id)}
     return {"status": "unknown"}
+
+
+# ── HA Monitors ───────────────────────────────────────────────────────────────
+
+@app.get("/api/ha-monitors")
+async def list_ha_monitors():
+    return load_ha_monitors()
+
+
+@app.post("/api/ha-monitors")
+async def create_ha_monitor(payload: HaMonitorPayload):
+    items = load_ha_monitors()
+    item = {
+        "id":         str(uuid4()),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **payload.model_dump(),
+    }
+    items.append(item)
+    save_ha_monitors(items)
+    _notify_ha_monitors_changed()
+    return item
+
+
+@app.put("/api/ha-monitors/{item_id}")
+async def update_ha_monitor(item_id: str, payload: HaMonitorPayload):
+    items = load_ha_monitors()
+    for i, m in enumerate(items):
+        if m["id"] == item_id:
+            items[i] = {**m, **payload.model_dump()}
+            save_ha_monitors(items)
+            _notify_ha_monitors_changed()
+            return items[i]
+    raise HTTPException(status_code=404, detail="HA monitor not found")
+
+
+@app.delete("/api/ha-monitors/{item_id}")
+async def delete_ha_monitor(item_id: str):
+    items = [m for m in load_ha_monitors() if m["id"] != item_id]
+    save_ha_monitors(items)
+    _notify_ha_monitors_changed()
+    return {"ok": True}
+
+
+@app.get("/api/ha-monitors/{item_id}/status")
+async def get_ha_monitor_status(item_id: str):
+    if _get_ha_monitor_status_fn:
+        return {"status": _get_ha_monitor_status_fn(item_id)}
+    return {"status": "unknown"}
+
+
+@app.post("/api/ha/discover")
+async def discover_ha_entities():
+    """Subscribe briefly to the statestream wildcard and return discovered entity IDs."""
+    settings = load_settings()
+    host     = settings.get("mqtt_host", "core-mosquitto")
+    port     = int(settings.get("mqtt_port", 1883))
+    username = settings.get("mqtt_username") or None
+    password = settings.get("mqtt_password") or None
+    prefix   = settings.get("mqtt_statestream_prefix", "homeassistant").rstrip("/")
+
+    discovered: set[str] = set()
+    kwargs = {}
+    if username:
+        kwargs["username"] = username
+    if password:
+        kwargs["password"] = password
+
+    try:
+        async with aiomqtt.Client(host, port, **kwargs) as client:
+            await client.subscribe(f"{prefix}/+/+/state")
+            deadline = asyncio.get_event_loop().time() + 3.0
+            async for message in client.messages:
+                topic  = str(message.topic)
+                suffix = topic[len(prefix):].lstrip("/")   # "domain/object_id/state"
+                if suffix.endswith("/state"):
+                    entity_id = suffix[: -len("/state")]
+                    discovered.add(entity_id)
+                if asyncio.get_event_loop().time() >= deadline:
+                    break
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MQTT discovery failed: {e}")
+
+    return sorted(discovered)
 
 
 @app.get("/api/monitors/geocode")
