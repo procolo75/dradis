@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.15.6] - 2026-05-10
+- **Fix — HA Monitor metrics**: when show_metrics is enabled, the alert message now includes the real `📊` line (actual duration, not hardcoded 0.0). Token tracking via `_track_tokens` was already in place.
+
 ## [2.15.5] - 2026-05-10
 - **Fix — HA Monitor token tracking**: HA Monitor LLM calls now call `_track_tokens` so usage is counted in `/tokens` totals. Removed the hardcoded `📊` line from alert messages — metrics belong in `/tokens`, not in Telegram alerts.
 

@@ -847,6 +847,7 @@ def reload_ha_monitors():
         model       = s.get("model",    SETTINGS_DEFAULTS["model"])
         provider    = s.get("provider", SETTINGS_DEFAULTS["provider"])
         executor    = _build_executor(sys_prompt, model, provider, [], s)
+        start_time  = time.time()
         response, _, error = await _run_with_fallback(
             executor         = executor,
             prompt           = prompt,
@@ -858,10 +859,13 @@ def reload_ha_monitors():
         )
         if error or response is None:
             return ""
+        duration = time.time() - start_time
         _track_tokens(response, [])
         text = (response.content or "").strip()
         if text.upper() == "SKIP":
             return ""
+        if s.get("show_metrics"):
+            text = text + "\n\n" + format_metrics(response, duration)
         return text
 
     ha_monitor_manager.reload(load_ha_monitors(), _send, _llm, mqtt_cfg, tz_name)
