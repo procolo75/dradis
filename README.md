@@ -16,7 +16,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Scheduled Monitors** — LLM-free cron-based monitors (Thunderstorm risk, Rain alert) that fetch data from Open-Meteo and compute results in Python — no token cost, deterministic output
 - **Live Monitors** — persistent push-based monitors that stay connected and react to external events in real time, with no polling and no cron schedule. First type: ⚡ **Lightning alert** via MQTT — sends a Telegram alert on the first strike within a configurable radius after each cooldown period
-- **HA Monitors** — monitor any Home Assistant entity via `mqtt_statestream`. Select entities from the broker via 🔍 Discover, define binding LLM instructions (which states alert, which reply SKIP), and receive LLM-written Telegram alerts on state changes. Per-entity cooldown avoids spam. Requires: Mosquitto broker add-on + `mqtt_statestream` integration. → [How-to on the Wiki](https://github.com/procolo75/dradis/wiki/HA-Monitors)
+- **HA Monitors** — monitor any Home Assistant entity via `mqtt_statestream`. Select entities from the broker via 🔍 Discover, define binding LLM instructions (which states alert, which reply SKIP), and receive LLM-written Telegram alerts on state changes. Per-entity cooldown avoids spam. Requires: Mosquitto broker add-on + MQTT integration + `mqtt_statestream`. → [How-to on the Wiki](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 - **Collapsible sidebar** — all Web UI sidebar sections (Agents, Tools, Tasks, Scheduled Monitors, Live Monitors, HA Monitors) are collapsed by default for a clean overview; click any header to expand
 - **Duplicate task / monitor** — copy any task or monitor with the ⎘ button; the copy is created disabled and ready to edit
 - **Fallback model** — each agent has a configurable fallback provider and model; when any agent fails (including sub-agents) DRADIS retries with the fallback and notifies which specific models switched; if both fail, a clear `❌` message lists all model names
@@ -65,7 +65,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 > DRADIS subscribes to selected door/window sensors via MQTT statestream. When any sensor state becomes `unavailable`, the LLM generates a contextual Telegram alert. Instructions are binding — specify exactly which states trigger an alert and which should be silently ignored (reply `SKIP`).
 >
 > Configure in Web UI → **Settings → MQTT / Home Assistant** → save → **HA Monitors** → `+` → 🔍 Discover → select entities → write instructions.
-> Full setup guide (Mosquitto, mqtt_statestream, DRADIS config): [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
+> Full setup guide (Mosquitto broker, MQTT integration, mqtt_statestream, DRADIS MQTT config): [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 
 **Daily thunderstorm risk digest** *(scheduled monitor)*
 > Every morning DRADIS fetches atmospheric instability data and sends a risk summary by time band — no LLM, no token cost.
