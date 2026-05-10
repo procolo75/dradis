@@ -3763,8 +3763,8 @@ function renderHaMonitorForm(monitor) {
 
       <div class="form-group">
         <label for="ha-instructions">LLM Instructions</label>
-        <textarea id="ha-instructions" rows="4" style="width:100%;resize:vertical" placeholder="Esempi:&#10;• Avvisami solo quando lo stato è &#34;off&#34;. Per tutti gli altri stati rispondi SKIP.&#10;• Avvisami quando lo stato diventa &#34;on&#34; o &#34;off&#34;. Includi l'orario nel messaggio.&#10;• Avvisami solo se lo stato è &#34;unavailable&#34;. Per gli altri stati rispondi SKIP.">${monitor.instructions || ""}</textarea>
-        <small style="color:var(--text-muted)">Scrivi cosa deve fare il LLM. Usa "SKIP" nelle istruzioni per bloccare un certo stato. Il LLM valuta ogni cambio di stato e decide se inviare l'alert o no.</small>
+        <textarea id="ha-instructions" rows="4" style="width:100%;resize:vertical" placeholder="Esempi:&#10;• Avvisami solo quando lo stato è &quot;off&quot;. Per tutti gli altri stati rispondi SKIP.&#10;• Avvisami quando lo stato diventa &quot;on&quot; o &quot;off&quot;. Per gli altri stati rispondi SKIP.&#10;• Avvisami solo se lo stato è &quot;unavailable&quot;. Per gli altri stati rispondi SKIP.&#10;&#10;Se lasci vuoto: invia sempre un alert per ogni cambio di stato.">${monitor.instructions || ""}</textarea>
+        <small style="color:var(--text-muted)">Le istruzioni sono <strong>vincolanti</strong>: il LLM le segue senza valutare autonomamente. Specifica sempre per quali stati inviare e per quali rispondere SKIP. Se vuoto: alert per ogni cambio.</small>
       </div>
 
       <div class="form-group">

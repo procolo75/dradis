@@ -130,16 +130,25 @@ class HaLiveMonitor:
             tz = ZoneInfo("UTC")
         now_str   = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
         lang_hint = "Respond in Italian." if self.language == "it" else "Respond in English."
-        custom    = f"\n\nCustom instructions:\n{self.instructions}" if self.instructions.strip() else ""
+        if self.instructions.strip():
+            decision = (
+                f"Instructions (follow strictly — they override your judgment):\n{self.instructions}\n\n"
+                "If the instructions require an alert for this state → write a concise Telegram message "
+                "(plain text, max 3 lines, no markdown).\n"
+                "If the instructions say to ignore this state, or the state does not match the alert condition "
+                "→ respond with exactly: SKIP"
+            )
+        else:
+            decision = (
+                "Write a concise Telegram message about this state change "
+                "(plain text, max 3 lines, no markdown)."
+            )
         return (
             f"Home Assistant entity state change — {now_str}\n"
             f"Entity: {html.escape(entity_id)}\n"
             f"New state: {html.escape(state)}\n"
-            f"{lang_hint}"
-            f"{custom}\n\n"
-            "Decide whether this state change is worth alerting the user about. "
-            "If yes, write a concise Telegram message (plain text, max 3 lines, no markdown). "
-            "If no, respond with exactly: SKIP"
+            f"{lang_hint}\n\n"
+            f"{decision}"
         )
 
 
