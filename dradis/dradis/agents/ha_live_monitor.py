@@ -140,8 +140,9 @@ class HaLiveMonitor:
             )
         else:
             decision = (
-                "Write a concise Telegram message about this state change "
-                "(plain text, max 3 lines, no markdown)."
+                "Decide whether this state change is worth alerting the user about. "
+                "If yes, write a concise Telegram message (plain text, max 3 lines, no markdown). "
+                "If no, respond with exactly: SKIP"
             )
         return (
             f"Home Assistant entity state change — {now_str}\n"
