@@ -858,9 +858,12 @@ def reload_ha_monitors():
         )
         if error or response is None:
             return ""
+        _track_tokens(response, [])
         text = (response.content or "").strip()
         if text.upper() == "SKIP":
             return ""
+        if s.get("show_metrics"):
+            text = text + "\n\n" + format_metrics(response, 0.0)
         return text
 
     ha_monitor_manager.reload(load_ha_monitors(), _send, _llm, mqtt_cfg, tz_name)

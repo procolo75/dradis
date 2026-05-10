@@ -305,6 +305,10 @@
           <span class="nav-icon">⚙️</span>
           <span class="nav-label">DRADIS Agentic AI</span>
         </li>
+        <li class="nav-item" data-panel="ha-mqtt" id="nav-ha-mqtt">
+          <span class="nav-dot" id="ha-mqtt-dot"></span>
+          <span class="nav-label">MQTT / Home Assistant</span>
+        </li>
       </ul>
     </div>
 
@@ -382,12 +386,6 @@
         <span>▾ HA Monitors</span>
         <button id="btn-new-ha-monitor" title="New HA monitor" class="nav-section-btn" style="background:none;border:none;color:var(--accent);font-size:1.2rem;cursor:pointer;padding:0 4px;line-height:1;">+</button>
       </span>
-      <ul class="nav-list">
-        <li class="nav-item" data-panel="ha-mqtt" id="nav-ha-mqtt">
-          <span class="nav-dot" id="ha-mqtt-dot"></span>
-          <span class="nav-label">⚙ MQTT Settings</span>
-        </li>
-      </ul>
       <ul class="nav-list" id="sidebar-ha-monitors"></ul>
     </div>
 
@@ -3706,7 +3704,6 @@ function renderSidebarHaMonitors() {
     li.dataset.panel       = "ha-monitor";
     li.dataset.haMonitorId = m.id;
     li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
-                    <span class="nav-icon">🏠</span>
                     <span class="nav-label">${m.name}</span>`;
     li.addEventListener("click", () => {
       selectedHaMonitorId = m.id;

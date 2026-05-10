@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [2.15.4] - 2026-05-10
+- **Fix — HA Monitor metrics**: le chiamate LLM degli HA Monitor ora tracciano i token (inclusi nei totali `/tokens`) e, se le metriche sono abilitate, appendono la riga `📊` all'alert Telegram.
+- **UX — MQTT Settings spostato**: il pannello MQTT / Home Assistant è ora nella sezione Settings subito sotto DRADIS Agentic AI, non più nella sezione HA Monitors.
+- **UX — HA Monitor sidebar**: rimosso l'emoji 🏠 dagli item HA Monitor nel sidebar; rimane solo il dot di stato + il nome.
+
 ## [2.15.3] - 2026-05-10
 - **Fix — HA Monitor cooldown bug**: il cooldown per entità veniva aggiornato anche quando il LLM rispondeva SKIP, impedendo alert successivi entro il periodo di cooldown. Ora il cooldown si aggiorna solo quando viene effettivamente inviato un alert.
 - **Fix — prompt LLM istruzioni vincolanti**: il prompt precedente lasciava al LLM l'autonomia di rispondere SKIP anche con istruzioni esplicite. Ora, se le istruzioni sono presenti, il LLM le segue in modo vincolante (override del suo giudizio). Se non ci sono istruzioni, invia sempre un alert senza decidere.
