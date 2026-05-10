@@ -1,9 +1,9 @@
 # CHANGELOG
 
 ## [2.15.4] - 2026-05-10
-- **Fix — HA Monitor metrics**: le chiamate LLM degli HA Monitor ora tracciano i token (inclusi nei totali `/tokens`) e, se le metriche sono abilitate, appendono la riga `📊` all'alert Telegram.
-- **UX — MQTT Settings spostato**: il pannello MQTT / Home Assistant è ora nella sezione Settings subito sotto DRADIS Agentic AI, non più nella sezione HA Monitors.
-- **UX — HA Monitor sidebar**: rimosso l'emoji 🏠 dagli item HA Monitor nel sidebar; rimane solo il dot di stato + il nome.
+- **Fix — HA Monitor metrics**: LLM calls from HA Monitor now track tokens (counted in `/tokens` totals) and, when metrics are enabled, append the `📊` stats line to the Telegram alert.
+- **UX — MQTT Settings relocated**: MQTT / Home Assistant panel moved to the Settings section, immediately below DRADIS Agentic AI, removed from HA Monitors section.
+- **UX — HA Monitor sidebar**: removed 🏠 emoji from HA Monitor sidebar items; only status dot + name are shown.
 
 ## [2.15.3] - 2026-05-10
 - **Fix — HA Monitor cooldown bug**: il cooldown per entità veniva aggiornato anche quando il LLM rispondeva SKIP, impedendo alert successivi entro il periodo di cooldown. Ora il cooldown si aggiorna solo quando viene effettivamente inviato un alert.
