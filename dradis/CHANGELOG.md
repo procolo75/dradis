@@ -1,5 +1,8 @@
 # CHANGELOG
 
+## [2.15.1] - 2026-05-10
+- **Fix — HA Monitor entity input**: added manual "domain/object_id" text field + "+ Add" button (Enter key supported) as fallback when MQTT discovery returns no results. `mqtt_statestream` only publishes on state changes, so retained messages may not exist for entities that haven't changed since statestream was enabled.
+
 ## [2.15.0] - 2026-05-10
 - **Feature — HA Monitors**: new sidebar section "🏠 HA Monitors" for monitoring Home Assistant entities via MQTT statestream. Each monitor subscribes to selected HA entities and sends an LLM-generated Telegram alert on state changes, with per-entity cooldown.
 - **Feature — MQTT entity discovery**: "🔍 Discover" button in the HA Monitor form connects to the broker, subscribes to the statestream wildcard (`{prefix}/+/+/state`) for 3 seconds, and returns all discovered entity IDs. Requires `retain: true` in `mqtt_statestream` for instant results.

@@ -3666,9 +3666,14 @@ function renderHaMonitorForm(monitor) {
 
       <div class="form-group">
         <label>Entities to monitor</label>
-        <div style="display:flex;gap:8px;margin-bottom:6px">
-          <button class="btn-icon" id="btn-ha-discover" title="Discover entities from MQTT broker">🔍 Discover</button>
-          <small style="color:var(--text-muted);align-self:center">Connects to the broker and lists entities published by statestream (retain=true required).</small>
+        <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+          <button class="btn-icon" id="btn-ha-discover" title="Discover entities from MQTT broker (requires retain=true)">🔍 Discover</button>
+          <small style="color:var(--text-muted)">Works if <code>retain: true</code> and entity has published at least once.</small>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <input type="text" id="ha-entity-input" placeholder="domain/object_id  (es. binary_sensor/porta_cucina)"
+                 style="flex:1;font-family:monospace;font-size:0.83rem">
+          <button class="btn-icon" id="btn-ha-add-entity" title="Add entity manually">+ Add</button>
         </div>
         <div id="ha-entity-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--bg)"></div>
         <input type="hidden" id="ha-entities-json" value='${entitiesJson}'>
@@ -3754,6 +3759,28 @@ function renderHaMonitorForm(monitor) {
       btn.disabled = false;
       btn.textContent = "🔍 Discover";
     }
+  });
+
+  document.getElementById("btn-ha-add-entity").addEventListener("click", () => {
+    const input = document.getElementById("ha-entity-input");
+    const val   = input.value.trim().toLowerCase();
+    if (!val || !val.includes("/")) {
+      showToast("Format: domain/object_id  (es. binary_sensor/porta_cucina)", true);
+      return;
+    }
+    const currentSelected = JSON.parse(document.getElementById("ha-entities-json").value || "[]");
+    if (currentSelected.includes(val)) {
+      showToast("Entity already in the list", true);
+      input.value = "";
+      return;
+    }
+    const all = [...new Set([...currentSelected, val])].sort();
+    _renderEntityList(all, all);   // new entity pre-checked
+    input.value = "";
+  });
+
+  document.getElementById("ha-entity-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("btn-ha-add-entity").click();
   });
 
   if (monitor.id) {
