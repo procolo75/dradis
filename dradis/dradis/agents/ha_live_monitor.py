@@ -12,7 +12,7 @@ Pipeline per state change
 3. State filter — if filter_states is non-empty and state not in set, skip
 4. Cooldown check — skip if within cooldown window
 5. Alert mode:
-   - "llm"    → call LLM with instructions, send result (unless LLM returns empty/SKIP)
+   - "llm"    → call LLM with instructions, send result (skipped only if LLM returns empty)
    - "direct" → build message from direct_template (or default), send immediately
 
 One HaLiveMonitor instance per enabled HA monitor entry.
