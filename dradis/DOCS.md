@@ -460,7 +460,7 @@ Subscribes to geohash-based MQTT topics covering the configured location and its
 
 ### HA Monitors
 
-Monitor any Home Assistant entity via MQTT and receive LLM-written Telegram alerts on state changes. Each monitor has per-entity cooldown and binding LLM instructions. HA monitors are stored in `/data/ha_monitors.json`.
+Monitor any Home Assistant entity via MQTT and receive a Telegram alert whenever its state changes. Each monitor has a configurable **alert mode**: **LLM** (DRADIS writes the message using your instructions and its full capabilities) or **Direct Telegram** (immediate fixed-format message, no LLM call). Per-entity cooldown and an optional state filter prevent spam. HA monitors are stored in `/data/ha_monitors.json`.
 
 **Prerequisites:**
 - Mosquitto broker add-on (HA Add-on store)
@@ -485,7 +485,7 @@ mqtt_discoverystream_alt:
 ```
 
 2. In the DRADIS Web UI go to **Settings → MQTT / Home Assistant**, fill in broker host/port/credentials, set **Statestream prefix** to `homeassistant`, and click **Save**.
-3. Expand **HA Monitors** → click `+` → 🔍 **Discover** entities from the broker → write instructions → click **Save**.
+3. Expand **HA Monitors** → click `+` → 🔍 **Discover** entities → select **Alert mode** → configure LLM instructions or message template → click **Save**.
 
 → Full setup guide: [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 
