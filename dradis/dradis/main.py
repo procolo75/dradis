@@ -48,15 +48,6 @@ from agents.ha_live_monitor import ha_monitor_manager
 
 WEB_PORT = 8099
 
-# Maps Team member agent names to token-tracking categories
-_MEMBER_TOKEN_MAP = {
-    "weather":    "weather",
-    "web_search": "ws",
-    "gcal":       "gcal",
-    "gmail":      "gmail",
-    "gtasks":     "gtasks",
-}
-
 
 def _load_startup_options() -> dict:
     try:
@@ -169,21 +160,18 @@ def _init_settings():
 
 
 _LEGACY_SETTINGS_MAP = {
-    "openrouter_model":      "model",
-    "istruzioni_agente":     "agent_instructions",
-    "mostra_metriche":       "show_metrics",
-    "memoria_attiva":        "history_enabled",
-    "num_conversazioni":     "history_depth",
-    "messaggio_avvio":       "startup_message",
-    "ws_abilitato":          "ws_enabled",
-    "ws_modello":            "ws_model",
-    "ws_istruzioni":         "ws_instructions",
-    "ws_mostra_metriche":    "ws_show_metrics",
-    "meteo_abilitato":       "weather_enabled",
-    "meteo_provider":        "weather_provider",
-    "meteo_modello":         "weather_model",
-    "meteo_istruzioni":      "weather_instructions",
-    "meteo_mostra_metriche": "weather_show_metrics",
+    "openrouter_model":  "model",
+    "istruzioni_agente": "agent_instructions",
+    "memoria_attiva":    "history_enabled",
+    "num_conversazioni": "history_depth",
+    "messaggio_avvio":   "startup_message",
+    "ws_abilitato":      "ws_enabled",
+    "ws_modello":        "ws_model",
+    "ws_istruzioni":     "ws_instructions",
+    "meteo_abilitato":   "weather_enabled",
+    "meteo_provider":    "weather_provider",
+    "meteo_modello":     "weather_model",
+    "meteo_istruzioni":  "weather_instructions",
 }
 
 
@@ -212,51 +200,6 @@ def build_context(question: str) -> str:
         for m in _history
     )
     return f"Conversation history:\n{history}\n\nUser: {question}"
-
-
-# ── Metrics formatting ────────────────────────────────────────────────────────
-
-def _safe_sum(a: str, b: str) -> str:
-    try:
-        return str(int(a) + int(b))
-    except (ValueError, TypeError):
-        return "?"
-
-
-def _count_model_calls(msgs: list) -> int:
-    return sum(1 for m in msgs if getattr(m, "role", "") == "assistant")
-
-
-def _val_metric(m, key: str) -> str:
-    if m is None:
-        return "?"
-    v = m.get(key) if isinstance(m, dict) else getattr(m, key, None)
-    if v is None:
-        return "?"
-    if isinstance(v, list):
-        try:
-            return str(sum(int(x) for x in v if x is not None))
-        except (TypeError, ValueError):
-            return str(v)
-    return str(v)
-
-
-def format_metrics(response, duration: float) -> str:
-    try:
-        m           = response.metrics
-        msgs        = response.messages or []
-        model_calls = _count_model_calls(msgs)
-        model       = getattr(response, "model", None) or "?"
-        # Use agno-tracked duration when available (e.g. Team member RunOutput)
-        actual_dur  = getattr(m, "duration", None) or duration
-        return (
-            f"📊 {actual_dur:.1f}s | 🤖 {model} | 📞 {model_calls}\n"
-            f"🔢 in:{_val_metric(m,'input_tokens')} "
-            f"out:{_val_metric(m,'output_tokens')} "
-            f"tot:{_safe_sum(_val_metric(m,'input_tokens'), _val_metric(m,'output_tokens'))}"
-        )
-    except Exception as e:
-        return f"📊 {duration:.1f}s | metrics error: {e}"
 
 
 # ── read_url tool (no LLM — plain HTTP fetch via Jina Reader) ─────────────────
@@ -351,14 +294,6 @@ def _agents_label(member_responses: list) -> str:
     if "gmail"      in invoked: parts.append("Gmail")
     if "gtasks"     in invoked: parts.append("Google Tasks")
     return "🤖 " + " · ".join(parts)
-
-
-def _track_tokens(response, member_responses: list):
-    agent_core._add_tokens("dradis", response)
-    for mr in member_responses:
-        cat = _MEMBER_TOKEN_MAP.get(mr.agent_name, "")
-        if cat:
-            agent_core._add_tokens(cat, mr)
 
 
 def _is_failed_response(response) -> bool:
@@ -518,24 +453,6 @@ def _build_fallback_used_msg(settings: dict, primary_model: str, task_name: str 
     return f"{prefix}fallback triggered ✅{detail}"
 
 
-def _build_metrics_parts(response, duration: float, member_responses: list, settings: dict) -> list:
-    member_map = {mr.agent_name: mr for mr in member_responses}
-    parts = []
-    if settings.get("ws_show_metrics") and "web_search" in member_map:
-        parts.append("🔍 Web Search\n" + format_metrics(member_map["web_search"], 0.0))
-    if settings.get("weather_show_metrics") and "weather" in member_map:
-        parts.append("🌤 Weather\n" + format_metrics(member_map["weather"], 0.0))
-    if settings.get("gcal_show_metrics") and "gcal" in member_map:
-        parts.append("📅 Google Calendar\n" + format_metrics(member_map["gcal"], 0.0))
-    if settings.get("gmail_show_metrics") and "gmail" in member_map:
-        parts.append("📧 Gmail\n" + format_metrics(member_map["gmail"], 0.0))
-    if settings.get("gtasks_show_metrics") and "gtasks" in member_map:
-        parts.append("📝 Google Tasks\n" + format_metrics(member_map["gtasks"], 0.0))
-    if settings.get("show_metrics"):
-        parts.append("🤖 DRADIS\n" + format_metrics(response, duration))
-    return parts
-
-
 # ── Voice transcription ───────────────────────────────────────────────────────
 
 async def transcribe_voice(file_path: str, model: str, language: str) -> str:
@@ -567,10 +484,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🎙️ Voice agent is not enabled. You can enable it from the Web UI.")
         return
 
-    voice_model      = settings.get("voice_model",    SETTINGS_DEFAULTS["voice_model"])
-    voice_language   = settings.get("voice_language", SETTINGS_DEFAULTS["voice_language"])
-    send_transcript  = settings.get("voice_send_transcription", True)
-    voice_metrics_on = settings.get("voice_metrics", False)
+    voice_model     = settings.get("voice_model",    SETTINGS_DEFAULTS["voice_model"])
+    voice_language  = settings.get("voice_language", SETTINGS_DEFAULTS["voice_language"])
+    send_transcript = settings.get("voice_send_transcription", True)
 
     t0    = time.time()
     voice = update.message.voice
@@ -612,11 +528,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
         )
 
-    if voice_metrics_on:
-        await update.message.reply_text(
-            f"🎙️ Voice\n📊 {duration:.1f}s | 🤖 {voice_model}"
-        )
-
     class _VoiceMessage:
         def __init__(self, real_msg, text: str):
             self._msg = real_msg
@@ -653,11 +564,6 @@ async def run_scheduled_task(task: dict):
     executor = _build_executor(system_prompt, model, provider, members, settings)
     print(f"[DRADIS] Scheduled task '{task_name}': model={model} members={[m.name for m in members]}")
 
-    start_time = time.time()
-    await _send_error_telegram(
-        f"⚠️ Task <b>{html.escape(task_name)}</b> starting with model <code>{html.escape(model)}</code>…"
-    ) if False else None  # placeholder — removed; real notifications below
-
     response, used_fallback, error = await _run_with_fallback(
         executor       = executor,
         prompt         = instructions,
@@ -685,10 +591,7 @@ async def run_scheduled_task(task: dict):
     if used_fallback:
         await _send_error_telegram(_build_fallback_used_msg(settings, model, task_name))
 
-    duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)
-    _track_tokens(response, member_responses)
-
     text  = (response.content or "").strip()
     label = _agents_label(member_responses) + f" · <i>{html.escape(task_name)}</i>"
 
@@ -697,13 +600,6 @@ async def run_scheduled_task(task: dict):
             chat_id=ALLOWED_CHAT_ID,
             text=md_to_html(text) + f"\n\n{label}",
             parse_mode=ParseMode.HTML,
-        )
-
-    parts = _build_metrics_parts(response, duration, member_responses, settings)
-    if parts:
-        await _telegram_bot.send_message(
-            chat_id=ALLOWED_CHAT_ID,
-            text="\n\n".join(parts),
         )
 
 
@@ -842,12 +738,12 @@ def reload_ha_monitors():
             )
 
     async def _llm(prompt: str) -> str:
-        s           = read_settings()
-        sys_prompt  = build_system_prompt()
-        model       = s.get("model",    SETTINGS_DEFAULTS["model"])
-        provider    = s.get("provider", SETTINGS_DEFAULTS["provider"])
-        executor    = _build_executor(sys_prompt, model, provider, [], s)
-        start_time  = time.time()
+        s          = read_settings()
+        sys_prompt = build_system_prompt()
+        model      = s.get("model",    SETTINGS_DEFAULTS["model"])
+        provider   = s.get("provider", SETTINGS_DEFAULTS["provider"])
+        members    = _build_members(s)
+        executor   = _build_executor(sys_prompt, model, provider, members, s)
         response, _, error = await _run_with_fallback(
             executor         = executor,
             prompt           = prompt,
@@ -859,14 +755,7 @@ def reload_ha_monitors():
         )
         if error or response is None:
             return ""
-        duration = time.time() - start_time
-        _track_tokens(response, [])
-        text = (response.content or "").strip()
-        if text.upper() == "SKIP":
-            return ""
-        if s.get("show_metrics"):
-            asyncio.create_task(_send(format_metrics(response, duration)))
-        return text
+        return (response.content or "").strip()
 
     ha_monitor_manager.reload(load_ha_monitors(), _send, _llm, mqtt_cfg, tz_name)
 
@@ -890,8 +779,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     members  = _build_members(settings)
     executor = _build_executor(system_prompt, model, provider, members, settings)
     print(f"[DRADIS] model: {model} | members: {[m.name for m in members]}")
-
-    start_time = time.time()
 
     response, used_fallback, error = await _run_with_fallback(
         executor         = executor,
@@ -925,10 +812,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if used_fallback:
         await _send_error_telegram(_build_fallback_used_msg(settings, model))
 
-    duration         = time.time() - start_time
     member_responses = _collect_member_responses(response)
-    _track_tokens(response, member_responses)
-
     text = (response.content or "").strip()
 
     if history_enabled:
@@ -948,10 +832,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
         )
 
-    parts = _build_metrics_parts(response, duration, member_responses, settings)
-    if parts:
-        await update.message.reply_text("\n\n".join(parts))
-
 
 async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ALLOWED_CHAT_ID:
@@ -962,7 +842,6 @@ async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>DRADIS</b>",
         f"Provider: {settings.get('provider', SETTINGS_DEFAULTS['provider'])}",
         f"Model: {settings.get('model', SETTINGS_DEFAULTS['model'])}",
-        f"Metrics: {'on' if settings.get('show_metrics') else 'off'}",
         f"History: {'on' if settings.get('history_enabled', True) else 'off'} "
         f"({settings.get('history_depth', SETTINGS_DEFAULTS['history_depth'])} exchanges)",
     ]
@@ -1297,16 +1176,13 @@ async def cmd_todo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📝 Google Tasks not authenticated. Send /gtasksauth to connect.",
         )
         return
-    agent      = create_gtasks_agent(settings)
-    start_time = time.time()
+    agent = create_gtasks_agent(settings)
     try:
         response = await agent.arun("List all open tasks")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
         return
-    duration = time.time() - start_time
-    text     = (response.content or "").strip()
-    agent_core._add_tokens("gtasks", response)
+    text = (response.content or "").strip()
     if text:
         await update.message.reply_text(
             md_to_html(text) + "\n\n<i>🤖 DRADIS · Google Tasks</i>",
@@ -1317,16 +1193,14 @@ async def cmd_todo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 COMMANDS = [
-    BotCommand("info",         "Status and configuration of all agents"),
-    BotCommand("menu",         "List all available commands"),
-    BotCommand("tasks",        "List and run enabled tasks"),
-    BotCommand("monitors",     "List and run enabled monitors"),
-    BotCommand("tokens",       "Show total token usage"),
-    BotCommand("tokens_reset", "Reset token counters"),
-    BotCommand("gcalauth",     "Connect Google Calendar (OAuth2)"),
-    BotCommand("gmailauth",    "Connect Gmail (OAuth2)"),
-    BotCommand("gtasksauth",   "Connect Google Tasks (OAuth2)"),
-    BotCommand("todo",         "List open Google Tasks"),
+    BotCommand("info",       "Status and configuration of all agents"),
+    BotCommand("menu",       "List all available commands"),
+    BotCommand("tasks",      "List and run enabled tasks"),
+    BotCommand("monitors",   "List and run enabled monitors"),
+    BotCommand("gcalauth",   "Connect Google Calendar (OAuth2)"),
+    BotCommand("gmailauth",  "Connect Gmail (OAuth2)"),
+    BotCommand("gtasksauth", "Connect Google Tasks (OAuth2)"),
+    BotCommand("todo",       "List open Google Tasks"),
 ]
 
 
@@ -1335,70 +1209,6 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = "\n".join(f"/{c.command} — {c.description}" for c in COMMANDS)
     await update.message.reply_text(f"<b>DRADIS Commands:</b>\n\n{lines}", parse_mode=ParseMode.HTML)
-
-
-async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ALLOWED_CHAT_ID:
-        return
-    agents = [
-        ("dradis",  "🤖 DRADIS",         "model"),
-        ("weather", "🌤 Weather",         "weather_model"),
-        ("ws",      "🔍 Web Search",      "ws_model"),
-        ("gcal",    "📅 Calendar",        "gcal_model"),
-        ("gmail",   "📧 Gmail",           "gmail_model"),
-        ("gtasks",  "📝 Google Tasks",    "gtasks_model"),
-    ]
-    settings  = read_settings()
-    raw_reset = agent_core._TOKEN_STATS.get("last_reset")
-    if raw_reset:
-        try:
-            reset_str = datetime.fromisoformat(raw_reset).strftime("%Y-%m-%d %H:%M UTC")
-        except Exception:
-            reset_str = raw_reset
-    else:
-        reset_str = "—"
-    lines = ["<b>Token usage</b>", f"🕐 Last reset: {reset_str}", ""]
-    total_in = total_out = total_cr = total_cw = 0
-    for key, label, _model_key in agents:
-        cat_models = agent_core._TOKEN_STATS.get(key, {}).get("models", {})
-        if not cat_models:
-            continue
-        cat_in = sum(m["in"] for m in cat_models.values())
-        cat_out = sum(m["out"] for m in cat_models.values())
-        cat_cr  = sum(m["cr"] for m in cat_models.values())
-        cat_cw  = sum(m["cw"] for m in cat_models.values())
-        total_in  += cat_in
-        total_out += cat_out
-        total_cr  += cat_cr
-        total_cw  += cat_cw
-        lines.append(f"<b>{label}</b>")
-        for model_name, m in cat_models.items():
-            if m["in"] == 0 and m["out"] == 0 and m["cr"] == 0 and m["cw"] == 0:
-                continue
-            lines.append(f"  <code>{html.escape(model_name)}</code>")
-            lines.append(f"  • Input: {m['in']:,}")
-            lines.append(f"  • Output: {m['out']:,}")
-            lines.append(f"  • Cache read: {m['cr']:,}")
-            lines.append(f"  • Cache write: {m['cw']:,}")
-            lines.append(f"  • Total: {m['in']+m['out']+m['cr']+m['cw']:,}")
-        lines.append("")
-    lines.append("<b>Grand total</b>")
-    lines.append(f"  • Input: {total_in:,}")
-    lines.append(f"  • Output: {total_out:,}")
-    lines.append(f"  • Cache read: {total_cr:,}")
-    lines.append(f"  • Cache write: {total_cw:,}")
-    lines.append(f"  • Total: {total_in+total_out+total_cr+total_cw:,}")
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
-
-
-async def cmd_tokens_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ALLOWED_CHAT_ID:
-        return
-    for key in agent_core._TOKEN_CATEGORIES:
-        agent_core._TOKEN_STATS[key] = {"models": {}}
-    agent_core._TOKEN_STATS["last_reset"] = datetime.now(timezone.utc).isoformat()
-    agent_core._save_token_stats()
-    await update.message.reply_text("✅ Token counters reset.")
 
 
 async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1508,16 +1318,14 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
 
 def build_telegram_app():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("info",         cmd_info))
-    app.add_handler(CommandHandler("menu",         cmd_menu))
-    app.add_handler(CommandHandler("tasks",        cmd_tasks))
-    app.add_handler(CommandHandler("monitors",     cmd_monitors))
-    app.add_handler(CommandHandler("tokens",       cmd_tokens))
-    app.add_handler(CommandHandler("tokens_reset", cmd_tokens_reset))
-    app.add_handler(CommandHandler("gcalauth",     cmd_gcalauth))
-    app.add_handler(CommandHandler("gmailauth",    cmd_gmailauth))
-    app.add_handler(CommandHandler("gtasksauth",   cmd_gtasksauth))
-    app.add_handler(CommandHandler("todo",         cmd_todo))
+    app.add_handler(CommandHandler("info",       cmd_info))
+    app.add_handler(CommandHandler("menu",       cmd_menu))
+    app.add_handler(CommandHandler("tasks",      cmd_tasks))
+    app.add_handler(CommandHandler("monitors",   cmd_monitors))
+    app.add_handler(CommandHandler("gcalauth",   cmd_gcalauth))
+    app.add_handler(CommandHandler("gmailauth",  cmd_gmailauth))
+    app.add_handler(CommandHandler("gtasksauth", cmd_gtasksauth))
+    app.add_handler(CommandHandler("todo",       cmd_todo))
     app.add_handler(CallbackQueryHandler(handle_task_callback,         pattern=r"^task:"))
     app.add_handler(CallbackQueryHandler(handle_monitor_callback,      pattern=r"^monitor:"))
     app.add_handler(CallbackQueryHandler(handle_live_monitor_callback, pattern=r"^live:"))
@@ -1538,7 +1346,6 @@ async def _register_commands(bot):
 async def main():
     global _telegram_bot, _main_loop
     _init_settings()
-    agent_core.init_token_stats()
     _main_loop = asyncio.get_running_loop()
     telegram_app = build_telegram_app()
     web_server   = uvicorn.Server(

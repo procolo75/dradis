@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [2.16.0] - 2026-05-12
+- **Removed — Token tracking & metrics**: completely removed all token counting infrastructure (`agent_core` token stats, `_track_tokens`, `format_metrics`, `_build_metrics_parts`), Telegram commands `/tokens` and `/tokens_reset`, and all "Show metrics" toggles from the Web UI (DRADIS, Web Search, Weather, Voice, Google Calendar, Gmail, Google Tasks panels). Token/metrics fields removed from settings schema and defaults.
+
+## [2.15.9] - 2026-05-11
+- **Fix — HA Monitor LLM mode**: the `_llm` executor now uses the full DRADIS agent (all tools: Telegram, Gmail, Google Tasks, etc.) instead of a stripped-down no-tools call. Instructions are now a real task for DRADIS, not a filter hint.
+- **Fix — HA Monitor prompt**: removed the "reply SKIP" logic from the LLM prompt. The state filter already blocks irrelevant states; DRADIS now always executes the instructions when a state passes the filter.
+- **UX — HA Monitor instructions label**: renamed "LLM Instructions" → "DRADIS Instructions" with updated placeholder examples (send Telegram, send email, create task).
+
+## [2.15.8] - 2026-05-11
+- **Fix — HA Monitor spurious alert on save/connect**: on MQTT (re)connect the broker sends a retained message with the current state; this was incorrectly triggering an alert and consuming the cooldown window. The monitor now silently records the initial state per entity and only alerts on actual subsequent changes.
+- **Fix — HA Monitor no alert on state change**: consequence of the above — once the retained message consumed the cooldown, real state changes arriving within the cooldown window were silently dropped. Now correctly resolved.
+- **Feature — HA Monitor state filter**: new "State filter" field (comma-separated values). States not in the list are silently discarded before any LLM call or Telegram send, eliminating unnecessary token usage. Empty = all states pass through.
+- **Feature — HA Monitor alert mode**: user can now choose between two alert modes per monitor:
+  - **LLM** (default): existing behaviour — calls the AI model with instructions to decide whether to send an alert (replies SKIP to suppress).
+  - **Direct Telegram**: sends a formatted Telegram message immediately, with no LLM call. Message uses a configurable template with `{entity}`, `{state}`, `{time}` variables (default: `⚡ {entity}: {state} — {time}`).
+- LLM Instructions and Alert language fields are hidden in Direct mode; Message template is hidden in LLM mode.
+
 ## [2.15.7] - 2026-05-10
 - **Fix — HA Monitor metrics**: metrics are now sent as a separate Telegram message (same behaviour as regular DRADIS responses), not appended to the alert text.
 

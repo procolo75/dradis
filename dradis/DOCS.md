@@ -43,14 +43,14 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 
 **Additional instructions**: each member applies its own per-agent `*_instructions` setting from the Web UI, appended to the member's system prompt at runtime.
 
-**Extensibility**: adding a new member requires creating a new `create_X_agent(settings)` factory file and registering it in `_build_members()` in `main.py`. No changes to message handling, metrics, or token tracking are needed.
+**Extensibility**: adding a new member requires creating a new `create_X_agent(settings)` factory file and registering it in `_build_members()` in `main.py`. No changes to message handling are needed.
 
 **Source layout:**
 
 | File | Responsibility |
 |------|---------------|
 | `main.py` | Telegram bot, message handlers, cron scheduler, OAuth flows, team assembly, live monitor management |
-| `agent_core.py` | `create_agent()`, `create_team()`, provider helpers, token tracking |
+| `agent_core.py` | `create_agent()`, `create_team()`, provider helpers |
 | `agents/web_search.py` | Web Search member agent — `create_web_search_agent()` |
 | `agents/weather.py` | Weather member agent — `fetch_weather()` + `create_weather_agent()` |
 | `agents/gmail.py` | Gmail member agent — `create_gmail_agent()` + OAuth token management |
@@ -59,6 +59,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `agents/thunderstorm_monitor.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
 | `agents/rain_monitor.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `agents/lightning_live_monitor.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
+| `agents/ha_live_monitor.py` | HA Monitor — persistent MQTT listener for Home Assistant entity state changes; `HaLiveMonitor` + `HaMonitorManager` singleton |
 
 ---
 
@@ -156,7 +157,6 @@ Lets you edit all non-sensitive DRADIS settings at runtime without restarting th
 | Agent instructions | `You are DRADIS, a versatile AI assistant.` | System prompt — defines the agent's role, behaviour, and any persistent facts about the user (name, preferences, language, etc.). |
 | Startup message | `✅ DRADIS online and ready.` | Telegram message sent when the app starts. |
 | Conversation history | `true` | Prepend the last N exchanges as context to each request. |
-| Show metrics | `false` | Send token usage and response time after each reply. |
 | Conversation history depth | `2` | Number of past exchanges kept in context (resets on restart). |
 | Timezone for scheduled tasks | `UTC` | Timezone used to interpret all cron expressions. Select from the dropdown (covers Europe, Americas, Asia, Africa, Pacific). Changes take effect on next save — no restart required. |
 
@@ -192,7 +192,6 @@ When enabled, DRADIS automatically decides which tool to call — no prompt engi
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
-| Show metrics | `false` | Send a separate 🔍 metrics message after each web search (tokens, latency, model). |
 
 ### Agents -> Weather
 
@@ -209,7 +208,6 @@ When enabled, DRADIS automatically calls `get_weather` when the user asks about 
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
-| Show metrics | `false` | Send a separate 🌤 metrics message after each weather lookup (tokens, latency, model). |
 
 #### Weather variables fetched
 
@@ -236,7 +234,6 @@ Configure voice message transcription, powered by [Groq Whisper](https://console
 | Whisper Model | `whisper-large-v3-turbo` | Groq Whisper model for transcription. Click 🔄 to fetch available Whisper models (this list is separate from LLM models). |
 | Language | `it` | ISO 639-1 language code for transcription (e.g. `en`, `fr`, `de`). |
 | Send transcription | `true` | Echo the transcribed text to Telegram as `🎙️ <text>` before the agent replies. |
-| Show metrics | `false` | Send a separate 🎙️ metrics message with transcription latency and model name. |
 
 ### Agents → Google Calendar
 
@@ -261,7 +258,6 @@ A calendar sub-agent formats the raw API response using the configured LLM model
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the calendar sub-agent's system prompt. |
-| Show metrics | `false` | Send a separate 📅 metrics message after each calendar operation (tokens, latency, model). |
 
 ### Agents → Gmail
 
@@ -287,7 +283,6 @@ A synthesis sub-agent formats the raw email data using the configured LLM model 
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the Gmail sub-agent's system prompt. |
-| Show metrics | `false` | Send a separate 📧 metrics message after each Gmail operation (tokens, latency, model). |
 
 ### Agents → Google Tasks
 
@@ -314,7 +309,6 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
 | Additional instructions | — | Optional extra instructions appended to the Google Tasks sub-agent's system prompt. |
-| Show metrics | `false` | Send a separate 📝 metrics message after each Tasks operation (tokens, latency, model). |
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
 
@@ -461,6 +455,39 @@ Subscribes to geohash-based MQTT topics covering the configured location and its
 | Language | 🇮🇹 Italiano |
 
 **Duplicating a live monitor:** click **⎘ Copy** to create a copy named `Copy of <name>`. The duplicate is disabled by default, with all fields copied. Useful for monitoring multiple locations.
+
+---
+
+### HA Monitors
+
+Monitor any Home Assistant entity via MQTT and receive LLM-written Telegram alerts on state changes. Each monitor has per-entity cooldown and binding LLM instructions. HA monitors are stored in `/data/ha_monitors.json`.
+
+**Prerequisites:**
+- Mosquitto broker add-on (HA Add-on store)
+- MQTT integration (HA Devices & Services)
+- `mqtt_discoverystream_alt` custom integration installed via HACS
+
+**Quick setup:**
+
+1. Install `mqtt_discoverystream_alt` from HACS and add to `configuration.yaml`:
+
+```yaml
+mqtt_discoverystream_alt:
+  - base_topic: homeassistant
+    publish_attributes: true
+    publish_timestamps: true
+    publish_retain: true
+    republish_time: 1
+    publish_discovery: true
+    include:
+      entities:
+        - switch.your_entity_here
+```
+
+2. In the DRADIS Web UI go to **Settings → MQTT / Home Assistant**, fill in broker host/port/credentials, set **Statestream prefix** to `homeassistant`, and click **Save**.
+3. Expand **HA Monitors** → click `+` → 🔍 **Discover** entities from the broker → write instructions → click **Save**.
+
+→ Full setup guide: [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 
 ---
 
@@ -649,12 +676,10 @@ Type `/` in Telegram to see the full command list with descriptions.
 
 | Command | Description |
 |---------|-------------|
-| `/info` | Show status and configuration of all agents (provider, model, metrics, history, sub-agents) |
+| `/info` | Show status and configuration of all agents (provider, model, history, sub-agents) |
 | `/menu` | List all available commands |
 | `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
 | `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see 🟢 Running / 🔴 Stopped status). |
-| `/tokens` | Show cumulative token usage (input / output / total) broken down by agent: DRADIS, Weather, Web Search, Calendar, Gmail, Google Tasks |
-| `/tokens_reset` | Reset all token counters to zero |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
 | `/gmailauth` | Start Gmail OAuth2 authorization. Same flow as `/gcalauth` but authorizes Gmail read and send scopes. Send `/gmailauth <url>` as fallback if the automatic redirect fails. |
 | `/gtasksauth` | Start Google Tasks OAuth2 authorization. Same flow as `/gcalauth`. Send `/gtasksauth <url>` as fallback if the automatic redirect fails. |
@@ -697,7 +722,7 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/tasks.json` | Scheduled task configuration (managed from Web UI) |
 | `/data/monitors.json` | Scheduled monitor configuration (managed from Web UI) |
 | `/data/live_monitors.json` | Live monitor configuration (managed from Web UI) |
+| `/data/ha_monitors.json` | HA monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |
 | `/data/google_tasks_token.json` | Google Tasks OAuth2 token (auto-refreshed) |
-| `/data/dradis_token_stats.json` | Cumulative token usage counters (input/output per agent, persisted across restarts) |

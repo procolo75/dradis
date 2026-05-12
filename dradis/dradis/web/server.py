@@ -58,39 +58,36 @@ GEMINI_MODELS = [
 
 SETTINGS_KEYS = [
     "provider", "agent_instructions", "model", "fallback_provider", "fallback_model",
-    "show_metrics", "history_enabled", "history_depth", "startup_message", "timezone",
-    "ws_enabled", "ws_provider", "ws_model", "ws_instructions", "ws_show_metrics",
+    "history_enabled", "history_depth", "startup_message", "timezone",
+    "ws_enabled", "ws_provider", "ws_model", "ws_instructions",
     "ws_fallback_provider", "ws_fallback_model",
     "read_url_enabled",
-    "weather_enabled", "weather_provider", "weather_model", "weather_instructions", "weather_show_metrics",
+    "weather_enabled", "weather_provider", "weather_model", "weather_instructions",
     "weather_fallback_provider", "weather_fallback_model",
-    "voice_enabled", "voice_provider", "voice_model", "voice_language", "voice_send_transcription", "voice_metrics",
-    "gcal_enabled", "gcal_provider", "gcal_model", "gcal_instructions", "gcal_show_metrics",
+    "voice_enabled", "voice_provider", "voice_model", "voice_language", "voice_send_transcription",
+    "gcal_enabled", "gcal_provider", "gcal_model", "gcal_instructions",
     "gcal_fallback_provider", "gcal_fallback_model",
-    "gmail_enabled", "gmail_provider", "gmail_model", "gmail_instructions", "gmail_show_metrics",
+    "gmail_enabled", "gmail_provider", "gmail_model", "gmail_instructions",
     "gmail_fallback_provider", "gmail_fallback_model",
-    "gtasks_enabled", "gtasks_provider", "gtasks_model", "gtasks_instructions", "gtasks_show_metrics",
+    "gtasks_enabled", "gtasks_provider", "gtasks_model", "gtasks_instructions",
     "gtasks_fallback_provider", "gtasks_fallback_model",
     "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password", "mqtt_statestream_prefix",
 ]
 
 # Maps old key names to current names for transparent migration.
 _LEGACY_SETTINGS_MAP = {
-    "openrouter_model":   "model",
-    "istruzioni_agente":  "agent_instructions",
-    "mostra_metriche":    "show_metrics",
-    "memoria_attiva":     "history_enabled",
-    "num_conversazioni":  "history_depth",
-    "messaggio_avvio":    "startup_message",
-    "ws_abilitato":       "ws_enabled",
-    "ws_modello":         "ws_model",
-    "ws_istruzioni":      "ws_instructions",
-    "ws_mostra_metriche": "ws_show_metrics",
-    "meteo_abilitato":    "weather_enabled",
-    "meteo_provider":     "weather_provider",
-    "meteo_modello":      "weather_model",
-    "meteo_istruzioni":   "weather_instructions",
-    "meteo_mostra_metriche": "weather_show_metrics",
+    "openrouter_model":  "model",
+    "istruzioni_agente": "agent_instructions",
+    "memoria_attiva":    "history_enabled",
+    "num_conversazioni": "history_depth",
+    "messaggio_avvio":   "startup_message",
+    "ws_abilitato":      "ws_enabled",
+    "ws_modello":        "ws_model",
+    "ws_istruzioni":     "ws_instructions",
+    "meteo_abilitato":   "weather_enabled",
+    "meteo_provider":    "weather_provider",
+    "meteo_modello":     "weather_model",
+    "meteo_istruzioni":  "weather_instructions",
 }
 
 _LEGACY_AGENT_MAP = {
@@ -246,7 +243,6 @@ SETTINGS_DEFAULTS = {
     "provider":             "openrouter",
     "agent_instructions":   "You are DRADIS, a versatile AI assistant.",
     "model":                "nvidia/nemotron-3-nano-30b-a3b:free",
-    "show_metrics":         False,
     "history_enabled":      True,
     "history_depth":        2,
     "startup_message":      "✅ DRADIS online and ready.",
@@ -255,34 +251,28 @@ SETTINGS_DEFAULTS = {
     "ws_provider":          "openrouter",
     "ws_model":             "nvidia/nemotron-3-nano-30b-a3b:free",
     "ws_instructions":      "",
-    "ws_show_metrics":      False,
     "read_url_enabled":     False,
     "weather_enabled":      False,
     "weather_provider":     "openrouter",
     "weather_model":        "nvidia/nemotron-3-nano-30b-a3b:free",
     "weather_instructions": "",
-    "weather_show_metrics": False,
     "voice_enabled":            False,
     "voice_provider":           "groq",
     "voice_model":              "whisper-large-v3-turbo",
     "voice_language":           "it",
     "voice_send_transcription": True,
-    "voice_metrics":            False,
     "gcal_enabled":             False,
     "gcal_provider":            "openrouter",
     "gcal_model":               "nvidia/nemotron-3-nano-30b-a3b:free",
     "gcal_instructions":        "",
-    "gcal_show_metrics":        False,
     "gmail_enabled":            False,
     "gmail_provider":           "openrouter",
     "gmail_model":              "nvidia/nemotron-3-nano-30b-a3b:free",
     "gmail_instructions":       "",
-    "gmail_show_metrics":       False,
     "gtasks_enabled":           False,
     "gtasks_provider":          "openrouter",
     "gtasks_model":             "nvidia/nemotron-3-nano-30b-a3b:free",
     "gtasks_instructions":      "",
-    "gtasks_show_metrics":      False,
     "fallback_provider":             "",
     "fallback_model":                "",
     "ws_fallback_provider":          "",
@@ -355,19 +345,21 @@ class LiveMonitorPayload(BaseModel):
 
 
 class HaMonitorPayload(BaseModel):
-    name:         str
-    enabled:      bool  = False
-    entities:     list  = []
-    instructions: str   = ""
-    cooldown_min: float = 60.0
-    language:     str   = "it"
+    name:            str
+    enabled:         bool  = False
+    entities:        list  = []
+    instructions:    str   = ""
+    cooldown_min:    float = 60.0
+    language:        str   = "it"
+    filter_states:   list  = []
+    alert_mode:      str   = "llm"
+    direct_template: str   = ""
 
 
 class SettingsPayload(BaseModel):
     provider:             str  = "openrouter"
     agent_instructions:   str  = "You are DRADIS, a versatile AI assistant."
     model:                str  = "nvidia/nemotron-3-nano-30b-a3b:free"
-    show_metrics:         bool = False
     history_enabled:      bool = True
     history_depth:        int  = 2
     startup_message:      str  = "✅ DRADIS online and ready."
@@ -376,29 +368,24 @@ class SettingsPayload(BaseModel):
     ws_provider:          str  = "openrouter"
     ws_model:             str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     ws_instructions:      str  = ""
-    ws_show_metrics:      bool = False
     read_url_enabled:     bool = False
     weather_enabled:      bool = False
     weather_provider:     str  = "openrouter"
     weather_model:        str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     weather_instructions: str  = ""
-    weather_show_metrics: bool = False
     voice_enabled:            bool = False
     voice_provider:           str  = "groq"
     voice_model:              str  = "whisper-large-v3-turbo"
     voice_language:           str  = "it"
     voice_send_transcription: bool = True
-    voice_metrics:            bool = False
     gcal_enabled:             bool = False
     gcal_provider:            str  = "openrouter"
     gcal_model:               str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     gcal_instructions:        str  = ""
-    gcal_show_metrics:        bool = False
     gmail_enabled:            bool = False
     gmail_provider:           str  = "openrouter"
     gmail_model:              str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     gmail_instructions:       str  = ""
-    gmail_show_metrics:       bool = False
     fallback_provider:             str = ""
     fallback_model:                str = ""
     ws_fallback_provider:          str = ""
@@ -413,7 +400,6 @@ class SettingsPayload(BaseModel):
     gtasks_provider:          str  = "openrouter"
     gtasks_model:             str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     gtasks_instructions:      str  = ""
-    gtasks_show_metrics:      bool = False
     gtasks_fallback_provider: str  = ""
     gtasks_fallback_model:    str  = ""
     mqtt_host:                str  = "core-mosquitto"

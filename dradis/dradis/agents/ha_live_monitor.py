@@ -2,17 +2,18 @@
 agents/ha_live_monitor.py
 ─────────────────────────────────
 MQTT listener for Home Assistant mqtt_statestream.
-Monitors selected HA entities and sends an LLM-generated Telegram alert
-when their state changes, with per-entity cooldown to avoid spam.
+Monitors selected HA entities and sends a Telegram alert when their state
+changes, with per-entity cooldown to avoid spam.
 
-Behaviour
-─────────
-- Connects to the local Mosquitto broker (configurable host/port/credentials).
-- Subscribes to statestream topics for the configured entities.
-- On each incoming state message:
-    • checks per-entity cooldown
-    • if cooldown expired → calls llm_fn with context → sends Telegram alert
-- Reconnects automatically on disconnect (15 s delay).
+Pipeline per state change
+─────────────────────────
+1. First message after (re)connect: record state silently (MQTT retained) — no alert
+2. State unchanged from last known → skip
+3. State filter — if filter_states is non-empty and state not in set, skip
+4. Cooldown check — skip if within cooldown window
+5. Alert mode:
+   - "llm"    → call LLM with instructions, send result (unless LLM returns empty/SKIP)
+   - "direct" → build message from direct_template (or default), send immediately
 
 One HaLiveMonitor instance per enabled HA monitor entry.
 All instances are owned by HaMonitorManager (singleton ha_monitor_manager).
@@ -37,18 +38,22 @@ class HaLiveMonitor:
     """Persistent MQTT listener for one HA monitor entry."""
 
     def __init__(self, cfg: dict, telegram_send_fn, llm_fn, mqtt_cfg: dict, tz_name: str = "UTC"):
-        self.monitor_id   = cfg["id"]
-        self.name         = cfg.get("name", "HA Monitor")
-        self.entities     = cfg.get("entities", [])     # list of "domain/object_id"
-        self.instructions = cfg.get("instructions", "")
-        self.cooldown_min = float(cfg.get("cooldown_min", 60))
-        self.language     = cfg.get("language", "it")
-        self.tz_name      = tz_name
+        self.monitor_id      = cfg["id"]
+        self.name            = cfg.get("name", "HA Monitor")
+        self.entities        = cfg.get("entities", [])
+        self.instructions    = cfg.get("instructions", "")
+        self.cooldown_min    = float(cfg.get("cooldown_min", 60))
+        self.language        = cfg.get("language", "it")
+        self.tz_name         = tz_name
+        self.alert_mode      = cfg.get("alert_mode", "llm")   # "llm" | "direct"
+        self.filter_states   = {s.strip().lower() for s in cfg.get("filter_states", []) if s.strip()}
+        self.direct_template = cfg.get("direct_template", "").strip()
 
         self._send    = telegram_send_fn
         self._llm     = llm_fn
         self._mqtt    = mqtt_cfg
-        self._cooldowns: dict[str, float] = {}   # entity_id → last alert timestamp
+        self._cooldowns: dict[str, float] = {}
+        self._last_states: dict[str, str] = {}   # entity_id → last known state (used to skip retained msgs on connect)
         self._task: asyncio.Task | None = None
 
     def start(self):
@@ -97,60 +102,84 @@ class HaLiveMonitor:
 
     async def _on_message(self, message, prefix: str):
         topic = str(message.topic)
-        # topic format: {prefix}/{domain}/{object_id}/state
-        suffix = topic[len(prefix):].lstrip("/")            # "domain/object_id/state"
+        suffix = topic[len(prefix):].lstrip("/")
         if not suffix.endswith("/state"):
             return
-        entity_id = suffix[: -len("/state")]                # "domain/object_id"
+        entity_id = suffix[: -len("/state")]
 
         if entity_id not in self.entities:
             return
 
         state = message.payload.decode("utf-8", errors="replace").strip()
 
-        now = time.time()
-        last = self._cooldowns.get(entity_id, 0.0)
-        if (now - last) / 60.0 < self.cooldown_min:
+        # First message for this entity after (re)connect is the retained state — record it, don't alert
+        if entity_id not in self._last_states:
+            print(f"[HAMonitor] '{self.name}' INIT entity={entity_id} state={state!r} (retained, no alert)")
+            self._last_states[entity_id] = state
             return
 
-        print(f"[HAMonitor] '{self.name}' entity={entity_id} state={state!r}")
+        # No actual change → nothing to do
+        if state == self._last_states[entity_id]:
+            print(f"[HAMonitor] '{self.name}' SKIP entity={entity_id} state={state!r} (unchanged)")
+            return
+        self._last_states[entity_id] = state
+
+        # State filter — avoids LLM calls for states that are never actionable
+        if self.filter_states and state.lower() not in self.filter_states:
+            print(f"[HAMonitor] '{self.name}' FILTERED entity={entity_id} state={state!r} (not in {self.filter_states})")
+            return
+
+        now = time.time()
+        last = self._cooldowns.get(entity_id, 0.0)
+        elapsed_min = (now - last) / 60.0
+        if elapsed_min < self.cooldown_min:
+            print(f"[HAMonitor] '{self.name}' COOLDOWN entity={entity_id} state={state!r} ({elapsed_min:.1f}/{self.cooldown_min:.0f} min)")
+            return
+
+        print(f"[HAMonitor] '{self.name}' entity={entity_id} state={state!r} mode={self.alert_mode}")
         try:
-            prompt = self._build_prompt(entity_id, state)
-            alert_text = await self._llm(prompt)
-            if alert_text and alert_text.strip():
-                self._cooldowns[entity_id] = now   # cooldown only on actual alert
-                await self._send(alert_text.strip())
+            if self.alert_mode == "direct":
+                msg = self._build_direct_message(entity_id, state)
+                self._cooldowns[entity_id] = now
+                await self._send(msg)
+            else:
+                prompt = self._build_prompt(entity_id, state)
+                alert_text = await self._llm(prompt)
+                if alert_text and alert_text.strip():
+                    self._cooldowns[entity_id] = now
+                    await self._send(alert_text.strip())
+                else:
+                    print(f"[HAMonitor] '{self.name}' LLM→SKIP entity={entity_id} state={state!r}")
         except Exception as e:
-            print(f"[HAMonitor] '{self.name}' LLM/send error: {e}")
+            print(f"[HAMonitor] '{self.name}' error: {e}")
+
+    def _build_direct_message(self, entity_id: str, state: str) -> str:
+        try:
+            tz = ZoneInfo(self.tz_name)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+        now_str  = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+        template = self.direct_template or "⚡ {entity}: {state} — {time}"
+        return template.format(
+            entity=html.escape(entity_id),
+            state=html.escape(state),
+            time=now_str,
+        )
 
     def _build_prompt(self, entity_id: str, state: str) -> str:
         try:
             tz = ZoneInfo(self.tz_name)
         except ZoneInfoNotFoundError:
             tz = ZoneInfo("UTC")
-        now_str   = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
-        lang_hint = "Respond in Italian." if self.language == "it" else "Respond in English."
+        now_str = datetime.now(tz).strftime("%Y-%m-%d %H:%M")
+        parts = [
+            f"Home Assistant entity state change — {now_str}",
+            f"Entity: {html.escape(entity_id)}",
+            f"New state: {html.escape(state)}",
+        ]
         if self.instructions.strip():
-            decision = (
-                f"Instructions (follow strictly — they override your judgment):\n{self.instructions}\n\n"
-                "If the instructions require an alert for this state → write a concise Telegram message "
-                "(plain text, max 3 lines, no markdown).\n"
-                "If the instructions say to ignore this state, or the state does not match the alert condition "
-                "→ respond with exactly: SKIP"
-            )
-        else:
-            decision = (
-                "Decide whether this state change is worth alerting the user about. "
-                "If yes, write a concise Telegram message (plain text, max 3 lines, no markdown). "
-                "If no, respond with exactly: SKIP"
-            )
-        return (
-            f"Home Assistant entity state change — {now_str}\n"
-            f"Entity: {html.escape(entity_id)}\n"
-            f"New state: {html.escape(state)}\n"
-            f"{lang_hint}\n\n"
-            f"{decision}"
-        )
+            parts.append(f"\n{self.instructions}")
+        return "\n".join(parts)
 
 
 class HaMonitorManager:

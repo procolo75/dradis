@@ -453,15 +453,6 @@
               </label>
             </div>
           </div>
-          <div class="form-group">
-            <div class="toggle-row">
-              <span class="toggle-label">Show metrics</span>
-              <label class="toggle">
-                <input type="checkbox" id="s-metrics">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          </div>
         </div>
 
         <div class="form-group">
@@ -621,15 +612,7 @@
           <textarea id="ws-instructions" placeholder="Optional: extra instructions for the web search sub-agent..."></textarea>
         </div>
 
-        <div class="form-group">
-          <div class="toggle-row">
-            <span class="toggle-label">Show metrics</span>
-            <label class="toggle">
-              <input type="checkbox" id="ws-metrics">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
+
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-ws">Save</button>
@@ -731,15 +714,6 @@
           <textarea id="weather-instructions" placeholder="Optional: extra instructions for the weather sub-agent..."></textarea>
         </div>
 
-        <div class="form-group">
-          <div class="toggle-row">
-            <span class="toggle-label">Show metrics</span>
-            <label class="toggle">
-              <input type="checkbox" id="weather-metrics">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-weather">Save</button>
@@ -844,15 +818,6 @@
               </label>
             </div>
           </div>
-          <div class="form-group">
-            <div class="toggle-row">
-              <span class="toggle-label">Show metrics</span>
-              <label class="toggle">
-                <input type="checkbox" id="voice-metrics">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-          </div>
         </div>
 
         <div class="btn-row">
@@ -924,15 +889,6 @@
           <textarea id="gcal-instructions" placeholder="Optional: extra instructions for the calendar sub-agent…"></textarea>
         </div>
 
-        <div class="form-group">
-          <div class="toggle-row">
-            <span class="toggle-label">Show metrics</span>
-            <label class="toggle">
-              <input type="checkbox" id="gcal-metrics">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
 
         <div class="form-group">
           <details>
@@ -1042,15 +998,6 @@
           <textarea id="gmail-instructions" placeholder="Optional: extra instructions for the Gmail sub-agent…"></textarea>
         </div>
 
-        <div class="form-group">
-          <div class="toggle-row">
-            <span class="toggle-label">Show metrics</span>
-            <label class="toggle">
-              <input type="checkbox" id="gmail-metrics">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
 
         <div class="form-group">
           <details>
@@ -1166,15 +1113,6 @@
           <textarea id="gtasks-instructions" placeholder="Optional: extra instructions for the Google Tasks sub-agent…"></textarea>
         </div>
 
-        <div class="form-group">
-          <div class="toggle-row">
-            <span class="toggle-label">Show metrics</span>
-            <label class="toggle">
-              <input type="checkbox" id="gtasks-metrics">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
 
         <div class="form-group">
           <details>
@@ -1370,7 +1308,6 @@ async function loadSettings() {
   document.getElementById("s-instructions").value    = s.agent_instructions || "";
   document.getElementById("s-startup").value         = s.startup_message    || "";
   document.getElementById("s-history").checked       = s.history_enabled    !== false;
-  document.getElementById("s-metrics").checked       = !!s.show_metrics;
   document.getElementById("s-history-depth").value   = s.history_depth      ?? 2;
   const tzVal = s.timezone || "UTC";
   const tzSel = document.getElementById("s-timezone");
@@ -1681,7 +1618,6 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     fallback_model:     document.getElementById("s-fallback-model").value.trim(),
     startup_message:    document.getElementById("s-startup").value.trim(),
     history_enabled:    document.getElementById("s-history").checked,
-    show_metrics:       document.getElementById("s-metrics").checked,
     history_depth:      parseInt(document.getElementById("s-history-depth").value, 10) || 2,
     timezone:                 document.getElementById("s-timezone").value.trim() || "UTC",
   };
@@ -1804,7 +1740,6 @@ async function loadWsSettings() {
 
   document.getElementById("ws-enabled").checked  = !!s.ws_enabled;
   document.getElementById("ws-instructions").value = s.ws_instructions  || "";
-  document.getElementById("ws-metrics").checked   = !!s.ws_show_metrics;
 
   const wsFbProvOptions = providers.map(p =>
     `<option value="${p.id}" ${(s.ws_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
@@ -1926,7 +1861,6 @@ document.getElementById("btn-save-ws").addEventListener("click", async () => {
     ws_fallback_provider: document.getElementById("ws-fallback-provider").value,
     ws_fallback_model:    document.getElementById("ws-fallback-model").value.trim(),
     ws_instructions:      document.getElementById("ws-instructions").value.trim(),
-    ws_show_metrics:      document.getElementById("ws-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -1989,7 +1923,6 @@ async function loadWeatherSettings() {
 
   document.getElementById("weather-enabled").checked      = !!s.weather_enabled;
   document.getElementById("weather-instructions").value   = s.weather_instructions || "";
-  document.getElementById("weather-metrics").checked      = !!s.weather_show_metrics;
 
   const weatherFbProvOptions = providers.map(p =>
     `<option value="${p.id}" ${(s.weather_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
@@ -2111,7 +2044,6 @@ document.getElementById("btn-save-weather").addEventListener("click", async () =
     weather_fallback_provider: document.getElementById("weather-fallback-provider").value,
     weather_fallback_model:    document.getElementById("weather-fallback-model").value.trim(),
     weather_instructions:      document.getElementById("weather-instructions").value.trim(),
-    weather_show_metrics:      document.getElementById("weather-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -2139,7 +2071,6 @@ async function loadVoiceSettings() {
 
   document.getElementById("voice-language").value             = s.voice_language || "it";
   document.getElementById("voice-send-transcription").checked = s.voice_send_transcription !== false;
-  document.getElementById("voice-metrics").checked            = !!s.voice_metrics;
 
   // Check if Groq key is configured; disable toggle if not.
   let groqOk = false;
@@ -2232,7 +2163,6 @@ document.getElementById("btn-save-voice").addEventListener("click", async () => 
     voice_model:              document.getElementById("voice-model").value.trim(),
     voice_language:           document.getElementById("voice-language").value.trim() || "it",
     voice_send_transcription: document.getElementById("voice-send-transcription").checked,
-    voice_metrics:            document.getElementById("voice-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -2293,7 +2223,6 @@ async function loadGcalSettings() {
   if (savedModel) sel.value = savedModel;
 
   document.getElementById("gcal-instructions").value = s.gcal_instructions || "";
-  document.getElementById("gcal-metrics").checked    = !!s.gcal_show_metrics;
 
   const gcalFbProvOptions = providers.map(p =>
     `<option value="${p.id}" ${(s.gcal_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
@@ -2397,7 +2326,6 @@ document.getElementById("btn-save-gcal").addEventListener("click", async () => {
     gcal_fallback_provider: document.getElementById("gcal-fallback-provider").value,
     gcal_fallback_model:    document.getElementById("gcal-fallback-model").value.trim(),
     gcal_instructions:      document.getElementById("gcal-instructions").value.trim(),
-    gcal_show_metrics:      document.getElementById("gcal-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -2451,7 +2379,6 @@ async function loadGmailSettings() {
   if (savedModel) sel.value = savedModel;
 
   document.getElementById("gmail-instructions").value = s.gmail_instructions || "";
-  document.getElementById("gmail-metrics").checked    = !!s.gmail_show_metrics;
 
   const gmailFbProvOptions = providers.map(p =>
     `<option value="${p.id}" ${(s.gmail_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
@@ -2555,7 +2482,6 @@ document.getElementById("btn-save-gmail").addEventListener("click", async () => 
     gmail_fallback_provider: document.getElementById("gmail-fallback-provider").value,
     gmail_fallback_model:    document.getElementById("gmail-fallback-model").value.trim(),
     gmail_instructions:      document.getElementById("gmail-instructions").value.trim(),
-    gmail_show_metrics:      document.getElementById("gmail-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -2609,7 +2535,6 @@ async function loadGtasksSettings() {
   if (savedModel) sel.value = savedModel;
 
   document.getElementById("gtasks-instructions").value = s.gtasks_instructions || "";
-  document.getElementById("gtasks-metrics").checked    = !!s.gtasks_show_metrics;
 
   const gtasksFbProvOptions = providers.map(p =>
     `<option value="${p.id}" ${(s.gtasks_fallback_provider || "") === p.id ? "selected" : ""}>${p.label}</option>`
@@ -2713,7 +2638,6 @@ document.getElementById("btn-save-gtasks").addEventListener("click", async () =>
     gtasks_fallback_provider: document.getElementById("gtasks-fallback-provider").value,
     gtasks_fallback_model:    document.getElementById("gtasks-fallback-model").value.trim(),
     gtasks_instructions:      document.getElementById("gtasks-instructions").value.trim(),
-    gtasks_show_metrics:      document.getElementById("gtasks-metrics").checked,
   };
   try {
     await api("PUT", "/api/settings", payload);
@@ -3759,17 +3683,44 @@ function renderHaMonitorForm(monitor) {
       </div>
 
       <div class="form-group">
-        <label for="ha-instructions">LLM Instructions</label>
-        <textarea id="ha-instructions" rows="4" style="width:100%;resize:vertical" placeholder="Examples:&#10;• Alert me only when state is &quot;off&quot;. For all other states reply SKIP.&#10;• Alert me when state becomes &quot;on&quot; or &quot;off&quot;. For all other states reply SKIP.&#10;• Alert me only if state is &quot;unavailable&quot;. For all other states reply SKIP.">${monitor.instructions || ""}</textarea>
-        <small style="color:var(--text-muted)">Instructions are <strong>binding</strong>: the LLM follows them without autonomous judgment. Always specify which states trigger an alert and which should reply SKIP. If empty: the LLM autonomously decides whether the state change is relevant.</small>
+        <label for="ha-filter-states">State filter</label>
+        <input type="text" id="ha-filter-states" placeholder="e.g. on, off, unavailable"
+               value="${(monitor.filter_states || []).join(', ')}">
+        <small style="color:var(--text-muted)">Comma-separated list of state values that pass through. Empty = all states trigger the alert pipeline. This filter runs before any LLM call.</small>
       </div>
 
       <div class="form-group">
-        <label for="ha-language">Alert language</label>
-        <select id="ha-language" style="width:160px">
-          <option value="it" ${(monitor.language || "it") === "it" ? "selected" : ""}>🇮🇹 Italiano</option>
-          <option value="en" ${monitor.language === "en" ? "selected" : ""}>🇬🇧 English</option>
+        <label for="ha-alert-mode">Alert mode</label>
+        <select id="ha-alert-mode" style="width:100%;max-width:320px">
+          <option value="llm"    ${(monitor.alert_mode || "llm") === "llm"    ? "selected" : ""}>LLM — analyse state with AI instructions</option>
+          <option value="direct" ${monitor.alert_mode === "direct" ? "selected" : ""}>Direct Telegram — send message without LLM</option>
         </select>
+        <small style="color:var(--text-muted)">LLM mode calls the AI model on every passing state change. Direct mode sends the message immediately — no tokens consumed.</small>
+      </div>
+
+      <div id="ha-llm-section" style="${(monitor.alert_mode || 'llm') === 'llm' ? '' : 'display:none'}">
+        <div class="form-group">
+          <label for="ha-instructions">DRADIS Instructions</label>
+          <textarea id="ha-instructions" rows="4" style="width:100%;resize:vertical" placeholder="Examples:&#10;• Send me a Telegram message to warn me the switch is off.&#10;• Send an email to me with subject &quot;Sensor alert&quot;.&#10;• Create a Google Task called &quot;Check sensor&quot;.">${monitor.instructions || ""}</textarea>
+          <small style="color:var(--text-muted)">DRADIS receives the entity state change and executes these instructions using its full capabilities (Telegram, email, tasks…). If empty, DRADIS decides autonomously what to do.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="ha-language">Alert language</label>
+          <select id="ha-language" style="width:160px">
+            <option value="it" ${(monitor.language || "it") === "it" ? "selected" : ""}>🇮🇹 Italiano</option>
+            <option value="en" ${monitor.language === "en" ? "selected" : ""}>🇬🇧 English</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="ha-direct-section" style="${monitor.alert_mode === 'direct' ? '' : 'display:none'}">
+        <div class="form-group">
+          <label for="ha-direct-template">Message template</label>
+          <textarea id="ha-direct-template" rows="3" style="width:100%;resize:vertical"
+            placeholder="⚡ {entity}: {state} — {time}&#10;Available variables: {entity}, {state}, {time}">${monitor.direct_template || ""}</textarea>
+          <small style="color:var(--text-muted)">Leave empty for default: <code>⚡ {entity}: {state} — {time}</code>. Variables: <code>{entity}</code>, <code>{state}</code>, <code>{time}</code>.</small>
+        </div>
       </div>
 
       <div class="form-group">
@@ -3819,6 +3770,12 @@ function renderHaMonitorForm(monitor) {
 
   // Show stored entities as pre-selected (no full list yet — user must Discover)
   _renderEntityList(monitor.entities || [], monitor.entities || []);
+
+  document.getElementById("ha-alert-mode").addEventListener("change", function () {
+    const isLlm = this.value === "llm";
+    document.getElementById("ha-llm-section").style.display    = isLlm ? "" : "none";
+    document.getElementById("ha-direct-section").style.display = isLlm ? "none" : "";
+  });
 
   document.getElementById("btn-ha-discover").addEventListener("click", async () => {
     const btn = document.getElementById("btn-ha-discover");
@@ -3873,14 +3830,22 @@ function renderHaMonitorForm(monitor) {
   }
 
   document.getElementById("btn-save-ha-monitor").addEventListener("click", async () => {
-    const entities = JSON.parse(document.getElementById("ha-entities-json").value || "[]");
+    const entities    = JSON.parse(document.getElementById("ha-entities-json").value || "[]");
+    const filterInput = document.getElementById("ha-filter-states").value.trim();
+    const filterStates = filterInput
+      ? filterInput.split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+      : [];
+    const alertMode = document.getElementById("ha-alert-mode").value;
     const payload = {
-      name:         document.getElementById("ha-name").value.trim(),
-      enabled:      document.getElementById("ha-enabled").checked,
+      name:            document.getElementById("ha-name").value.trim(),
+      enabled:         document.getElementById("ha-enabled").checked,
       entities,
-      instructions: document.getElementById("ha-instructions").value.trim(),
-      cooldown_min: parseFloat(document.getElementById("ha-cooldown").value) || 60,
-      language:     document.getElementById("ha-language").value,
+      instructions:    alertMode === "llm" ? document.getElementById("ha-instructions").value.trim() : "",
+      cooldown_min:    parseFloat(document.getElementById("ha-cooldown").value) || 60,
+      language:        alertMode === "llm" ? document.getElementById("ha-language").value : "it",
+      filter_states:   filterStates,
+      alert_mode:      alertMode,
+      direct_template: alertMode === "direct" ? document.getElementById("ha-direct-template").value.trim() : "",
     };
     try {
       const updated = await api("PUT", `/api/ha-monitors/${selectedHaMonitorId}`, payload);
@@ -3914,6 +3879,7 @@ document.getElementById("btn-new-ha-monitor").addEventListener("click", async ()
     const monitor = await api("POST", "/api/ha-monitors", {
       name: "New HA Monitor", enabled: false,
       entities: [], instructions: "", cooldown_min: 60, language: "it",
+      filter_states: [], alert_mode: "llm", direct_template: "",
     });
     haMonitors.push(monitor);
     selectedHaMonitorId = monitor.id;
