@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [2.17.4] - 2026-05-13
+- **Docs — Web UI sections**: added missing Settings → MQTT / Home Assistant, Tasks, Scheduled Monitors, Live Monitors, and HA Monitors sections (with full field tables) to DOCS.md and the GitHub Wiki Web-UI page.
+- **Fix — index.html**: updated Live Monitor type description and helper text to reflect STAZIONARIO silent behaviour.
+- **Fix — sidebar count**: updated "six collapsible sections" → "eight collapsible sections" in DOCS.md and wiki to include HA Monitors.
+
 ## [2.17.3] - 2026-05-13
 - **Fix — Lightning Monitor STAZIONARIO silent**: state STAZIONARIO no longer sends any alert. Only directional states (AVVICINAMENTO, ALLONTANAMENTO) trigger notifications; STAZIONARIO and UNKNOWN are both silent.
 
