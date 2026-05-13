@@ -142,7 +142,7 @@ Fill in at least one LLM provider key. The active provider is selected from the 
 
 After startup, the app exposes a web panel accessible directly from the Home Assistant sidebar (via HA Ingress — no external port required).
 
-The UI uses a **vertical left sidebar** with six collapsible sections: **Settings**, **Agents**, **Tools**, **Tasks**, **Scheduled Monitors**, and **Live Monitors**. All sections except Settings are collapsed by default — click any header to expand it.
+The UI uses a **vertical left sidebar** with eight collapsible sections: **Settings**, **Agents**, **Tools**, **Tasks**, **Scheduled Monitors**, **Live Monitors**, and **HA Monitors**. All sections except Settings are collapsed by default — click any header to expand it.
 
 ### Settings → DRADIS
 
@@ -311,6 +311,20 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 | Additional instructions | — | Optional extra instructions appended to the Google Tasks sub-agent's system prompt. |
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
+
+### Settings → MQTT / Home Assistant
+
+Configure the MQTT broker connection used by HA Monitors. Required before creating any HA Monitor.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Broker host | `core-mosquitto` | Hostname or IP of the MQTT broker. Use `core-mosquitto` for the HA Mosquitto add-on. |
+| Port | `1883` | MQTT broker port. |
+| Username | *(blank)* | MQTT username (leave blank if the broker has no authentication). |
+| Password | *(blank)* | MQTT password. |
+| Statestream prefix | `homeassistant` | Base topic prefix used by `mqtt_discoverystream_alt`. Must match the `base_topic` set in `configuration.yaml`. |
+
+Click **Save** to apply. Changes take effect immediately — no restart required.
 
 ### Scheduled Monitors
 
@@ -507,6 +521,21 @@ mqtt_discoverystream_alt:
 
 2. In the DRADIS Web UI go to **Settings → MQTT / Home Assistant**, fill in broker host/port/credentials, set **Statestream prefix** to `homeassistant`, and click **Save**.
 3. Expand **HA Monitors** → click `+` → 🔍 **Discover** entities → select **Alert mode** → configure LLM instructions or message template → click **Save**.
+
+**Configuration fields:**
+
+| Field | Description |
+|-------|-------------|
+| Name | Display name shown in the sidebar. |
+| Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
+| Entities | One or more HA entities to watch. Type a domain/entity (e.g. `switch.lights`) or click **🔍 Discover** to browse entities currently publishing to the broker. |
+| State filter | Optional comma-separated list of states that trigger an alert (e.g. `on, off`). Leave blank to alert on any state change. |
+| Alert mode | **LLM** — DRADIS processes the state change with your instructions. **Direct Telegram** — sends a fixed-format message immediately, no LLM call. |
+| DRADIS Instructions | *(LLM mode only)* What DRADIS should do when the state changes. Examples: *"Send a Telegram message warning the switch is off."* / *"Send an email with subject 'Sensor alert'."* |
+| Message template | *(Direct mode only)* Fixed message text sent to Telegram. Supports placeholders: `{entity}`, `{state}`, `{previous_state}`, `{time}`. |
+| Alert language | Language of the alert: 🇮🇹 Italiano or 🇬🇧 English. |
+| Cooldown per entity (minutes) | Minimum time between alerts for the same entity (1–1440 min, default 60). Prevents spam on rapidly toggling sensors. |
+| Status badge | Shows 🟢 Running or 🔴 Stopped, fetched live from the backend. |
 
 → Full setup guide: [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 

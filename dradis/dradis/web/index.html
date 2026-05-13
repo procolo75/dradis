@@ -3363,7 +3363,7 @@ function renderLiveMonitorForm(monitor) {
   }
 
   const _TYPE_DESCS_LIVE = {
-    lightning: "Persistent MQTT listener on Blitzortung. Monitors strikes in real time and analyses storm trajectory (60-min sliding window, 5-min windows, linear regression). Alert frequency adapts automatically: approaching → every 5 min with ETA · stationary → every 15 min · moving away → every 30 min. No LLM, no cron.",
+    lightning: "Persistent MQTT listener on Blitzortung. Monitors strikes in real time and analyses storm trajectory (60-min sliding window, 5-min windows, linear regression). Alerts only when the storm is approaching or moving away — silent when stationary or data is insufficient. Approaching → every 5 min with ETA · moving away → every 30 min. No LLM, no cron.",
   };
 
   panel.innerHTML = `
@@ -3412,7 +3412,7 @@ function renderLiveMonitorForm(monitor) {
       </div>
 
       <div class="form-group">
-        <small style="color:var(--text-muted)">Alert frequency is managed automatically based on storm trajectory: <b>approaching</b> → every 5 min with ETA · <b>stationary</b> → every 15 min · <b>moving away</b> → every 30 min.</small>
+        <small style="color:var(--text-muted)">Alerts only when the storm is <b>approaching</b> (every 5 min, with ETA) or <b>moving away</b> (every 30 min). Silent when stationary or when data is insufficient.</small>
       </div>
 
       <div class="form-group" id="lm-status-group" style="display:none">
