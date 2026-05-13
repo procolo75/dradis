@@ -2,18 +2,26 @@
 agents/lightning_live_monitor.py
 ─────────────────────────────────
 LLM-free live monitor: persistent MQTT listener on the Blitzortung public broker.
-Sends a Telegram alert on the FIRST lightning strike within radius_km after each
-cooldown period expires. No polling — pure push via MQTT.
+Sends Telegram alerts with adaptive frequency based on storm trajectory analysis.
+No polling — pure push via MQTT.
 
 Behaviour
 ─────────
 - Connects once to blitzortung.ha.sed.pl:1883 and stays connected.
 - Subscribes to geohash-based topics covering the configured area.
-- On each incoming strike:
-    • computes distance and azimuth from the configured lat/lon
-    • if distance <= radius_km AND cooldown has expired → fires alert, resets timer
-- After cooldown_min minutes the counter resets and the next strike triggers a new alert.
+- On each incoming strike within radius_km:
+    • adds the event to a 60-minute sliding window buffer
+    • runs trajectory analysis (linear regression over 5-min windows)
+    • classifies the storm: AVVICINAMENTO / ALLONTANAMENTO / STAZIONARIO / UNKNOWN
+    • applies adaptive cooldown based on the classification
+    • fires a rich Telegram alert including ETA, velocity, and intensity trend
 - Reconnects automatically on disconnect.
+
+Cooldown logic (automatic, not user-configurable):
+    AVVICINAMENTO  → alert every 5 min with updated ETA
+    ALLONTANAMENTO → alert every 30 min (low frequency)
+    STAZIONARIO    → silent (no alert — only directional storms trigger notifications)
+    UNKNOWN        → silent (insufficient data — waits for 2 populated 5-min windows)
 
 One LightningLiveMonitor instance per enabled live monitor entry.
 All instances are owned by LiveMonitorManager (singleton live_monitor_manager).
@@ -36,6 +44,16 @@ _LOGGER = logging.getLogger(__name__)
 MQTT_HOST       = "blitzortung.ha.sed.pl"
 MQTT_PORT       = 1883
 RECONNECT_DELAY = 15
+
+# ── Trajectory analysis constants ─────────────────────────────────────────────
+
+TRAJ_BUFFER_MIN          = 60   # minutes of history kept in the sliding buffer
+TRAJ_WINDOW_MIN          = 5    # minutes per analysis window
+TRAJ_MIN_WINDOWS         = 2    # minimum populated windows before analysis
+TRAJ_APPROACH_SLOPE      = 0.5  # km/window threshold for a significant trend
+TRAJ_APPROACH_COOLDOWN   = 5    # minutes between alerts when AVVICINAMENTO
+TRAJ_AWAY_COOLDOWN       = 30   # minutes between alerts when ALLONTANAMENTO
+TRAJ_STATIONARY_COOLDOWN = 15   # minutes between alerts when STAZIONARIO
 
 
 # ── Geo helpers ───────────────────────────────────────────────────────────────
@@ -132,24 +150,216 @@ def _topics_for_area(lat: float, lon: float) -> list[str]:
     return [f"blitzortung/1.1/{c[0]}/{c[1]}/{c[2]}/#" for c in cells]
 
 
+# ── Trajectory analysis ───────────────────────────────────────────────────────
+
+def _linear_regression_slope(xs: list[float], ys: list[float]) -> float:
+    """Return the slope of the least-squares line through the given points."""
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    sx  = sum(xs)
+    sy  = sum(ys)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    sxx = sum(x * x for x in xs)
+    denom = n * sxx - sx * sx
+    if denom == 0.0:
+        return 0.0
+    return (n * sxy - sx * sy) / denom
+
+
+def _classify_storm(n_windows: int, slope_per_window: float) -> str:
+    if n_windows < TRAJ_MIN_WINDOWS:
+        return "UNKNOWN"
+    if n_windows < 3:
+        return "STAZIONARIO"
+    if slope_per_window <= -TRAJ_APPROACH_SLOPE:
+        return "AVVICINAMENTO"
+    if slope_per_window >= TRAJ_APPROACH_SLOPE:
+        return "ALLONTANAMENTO"
+    return "STAZIONARIO"
+
+
+def _build_traj_message(
+    stato: str,
+    dist: float,
+    az: float,
+    velocity: float | None,
+    eta: int | None,
+    density_trend: str,
+    lang: str,
+) -> str:
+    dir_lbl = _direction(az, lang)
+    if lang == "it":
+        if stato == "AVVICINAMENTO":
+            msg = f"Temporale in avvicinamento da {dir_lbl}"
+            if velocity:
+                msg += f" a ~{velocity:.0f} km/h"
+            if eta:
+                msg += f", arrivo stimato tra {eta} minuti"
+        elif stato == "ALLONTANAMENTO":
+            msg = f"Temporale in allontanamento verso {dir_lbl}"
+            if velocity:
+                msg += f" a ~{velocity:.0f} km/h"
+        elif stato == "STAZIONARIO":
+            msg = f"Temporale stazionario a {dist:.1f} km ({dir_lbl})"
+        else:
+            msg = f"Situazione non determinata — {dist:.1f} km"
+        if density_trend == "CRESCENTE":
+            msg += " · intensità crescente"
+        elif density_trend == "CALANTE":
+            msg += " · intensità in calo"
+    else:
+        if stato == "AVVICINAMENTO":
+            msg = f"Storm approaching from {dir_lbl}"
+            if velocity:
+                msg += f" at ~{velocity:.0f} km/h"
+            if eta:
+                msg += f", estimated arrival in {eta} min"
+        elif stato == "ALLONTANAMENTO":
+            msg = f"Storm moving away toward {dir_lbl}"
+            if velocity:
+                msg += f" at ~{velocity:.0f} km/h"
+        elif stato == "STAZIONARIO":
+            msg = f"Stationary storm at {dist:.1f} km ({dir_lbl})"
+        else:
+            msg = f"Undetermined — {dist:.1f} km"
+        if density_trend == "CRESCENTE":
+            msg += " · increasing intensity"
+        elif density_trend == "CALANTE":
+            msg += " · decreasing intensity"
+    return msg
+
+
+def _analyze_trajectory(
+    buffer: list,
+    ref_lat: float,
+    ref_lon: float,
+    lang: str = "it",
+) -> dict:
+    """
+    Analyse the trajectory of a storm from the sliding window buffer.
+
+    Each buffer element is a tuple (timestamp_s, lat, lon, dist_km).
+    Returns a dict with stato, distanza_attuale_km, velocita_kmh,
+    direzione_gradi, eta_minuti, densita_trend, messaggio.
+    """
+    current_dist = buffer[-1][3] if buffer else 0.0
+
+    def _unknown(msg: str) -> dict:
+        return {
+            "stato": "UNKNOWN",
+            "distanza_attuale_km": current_dist,
+            "velocita_kmh": None,
+            "direzione_gradi": None,
+            "eta_minuti": None,
+            "densita_trend": "STABILE",
+            "messaggio": msg,
+        }
+
+    if not buffer:
+        return _unknown(
+            "Dati insufficienti per analisi traiettoria"
+            if lang == "it" else
+            "Insufficient data for trajectory analysis"
+        )
+
+    t0      = buffer[0][0]
+    win_sec = TRAJ_WINDOW_MIN * 60
+
+    # Group events into time windows
+    windows_map: dict[int, list] = {}
+    for ts, lat, lon, dist in buffer:
+        idx = int((ts - t0) / win_sec)
+        windows_map.setdefault(idx, []).append((ts, lat, lon, dist))
+
+    # Build per-window summaries
+    win_data = []
+    for idx in sorted(windows_map):
+        evts    = windows_map[idx]
+        c_lat   = sum(e[1] for e in evts) / len(evts)
+        c_lon   = sum(e[2] for e in evts) / len(evts)
+        c_dist  = sum(e[3] for e in evts) / len(evts)
+        t_min   = idx * TRAJ_WINDOW_MIN
+        win_data.append({"t_min": t_min, "lat": c_lat, "lon": c_lon,
+                         "dist": c_dist, "count": len(evts)})
+
+    n_windows = len(win_data)
+    if n_windows < TRAJ_MIN_WINDOWS:
+        return _unknown(
+            "Dati insufficienti per analisi traiettoria"
+            if lang == "it" else
+            "Insufficient data for trajectory analysis"
+        )
+
+    # Linear regression: slope in km/min, convert to km/window
+    xs = [w["t_min"] for w in win_data]
+    ys = [w["dist"]  for w in win_data]
+    slope_km_per_min  = _linear_regression_slope(xs, ys)
+    slope_per_window  = slope_km_per_min * TRAJ_WINDOW_MIN
+
+    # Velocity from centroid displacement between first and last window
+    fw, lw   = win_data[0], win_data[-1]
+    time_h   = (lw["t_min"] - fw["t_min"]) / 60.0
+    c_dist_km = _distance_km(fw["lat"], fw["lon"], lw["lat"], lw["lon"])
+    velocity  = round(c_dist_km / time_h, 1) if time_h > 0 else None
+
+    # Direction: azimuth from reference to latest centroid (where the storm is)
+    az = _azimuth_deg(ref_lat, ref_lon, lw["lat"], lw["lon"])
+
+    # Density trend: compare lightning rate in first vs second half of buffer
+    mid         = max(len(buffer) // 2, 1)
+    first_half  = buffer[:mid]
+    second_half = buffer[mid:]
+    t_first  = max((first_half[-1][0]  - first_half[0][0])  / 60.0, 0.1) if len(first_half)  > 1 else 0.1
+    t_second = max((second_half[-1][0] - second_half[0][0]) / 60.0, 0.1) if len(second_half) > 1 else 0.1
+    rate_first  = len(first_half)  / t_first
+    rate_second = len(second_half) / t_second
+    if rate_second > rate_first * 1.2:
+        density_trend = "CRESCENTE"
+    elif rate_second < rate_first * 0.8:
+        density_trend = "CALANTE"
+    else:
+        density_trend = "STABILE"
+
+    stato = _classify_storm(n_windows, slope_per_window)
+
+    # ETA only when approaching and velocity is meaningful
+    eta = None
+    if stato == "AVVICINAMENTO" and velocity and velocity > 0:
+        eta = int(current_dist / (velocity / 60))
+
+    messaggio = _build_traj_message(stato, current_dist, az, velocity, eta, density_trend, lang)
+
+    return {
+        "stato":              stato,
+        "distanza_attuale_km": round(current_dist, 1),
+        "velocita_kmh":       velocity,
+        "direzione_gradi":    round(az, 1),
+        "eta_minuti":         eta,
+        "densita_trend":      density_trend,
+        "messaggio":          messaggio,
+    }
+
+
 # ── Monitor class ─────────────────────────────────────────────────────────────
 
 class LightningLiveMonitor:
     """Persistent MQTT listener for one live monitor entry of type 'lightning'."""
 
     def __init__(self, cfg: dict, telegram_send_fn, tz_name: str = "UTC"):
-        self.monitor_id   = cfg["id"]
-        self.name         = cfg.get("name", "Lightning")
-        self.location     = cfg.get("location", "")
-        self.lat          = float(cfg.get("latitude", 0))
-        self.lon          = float(cfg.get("longitude", 0))
-        self.radius_km    = float(cfg.get("radius_km", 100))
-        self.cooldown_min = float(cfg.get("cooldown_min", 30))
-        self.language     = cfg.get("language", "it")
-        self.tz_name      = tz_name
-        self._send        = telegram_send_fn
+        self.monitor_id = cfg["id"]
+        self.name       = cfg.get("name", "Lightning")
+        self.location   = cfg.get("location", "")
+        self.lat        = float(cfg.get("latitude", 0))
+        self.lon        = float(cfg.get("longitude", 0))
+        self.radius_km  = float(cfg.get("radius_km", 100))
+        self.language   = cfg.get("language", "it")
+        self.tz_name    = tz_name
+        self._send      = telegram_send_fn
         self._last_alert: float = 0.0
-        self._task: asyncio.Task | None = None
+        self._buffer: list      = []   # list of (ts, lat, lon, dist) tuples
+        self._task: asyncio.Task | None     = None
+        self._avv_task: asyncio.Task | None = None  # periodic AVVICINAMENTO heartbeat
 
     def start(self):
         if self._task is None or self._task.done():
@@ -157,9 +367,11 @@ class LightningLiveMonitor:
                 self._run(), name=f"live_lightning:{self.monitor_id}"
             )
             print(f"[LiveMonitor] '{self.name}' started "
-                  f"(radius={self.radius_km:.0f}km, cooldown={self.cooldown_min:.0f}min)")
+                  f"(radius={self.radius_km:.0f}km, adaptive cooldown)")
 
     def stop(self):
+        if self._avv_task and not self._avv_task.done():
+            self._avv_task.cancel()
         if self._task and not self._task.done():
             self._task.cancel()
             print(f"[LiveMonitor] '{self.name}' stopped")
@@ -184,6 +396,48 @@ class LightningLiveMonitor:
                 print(f"[LiveMonitor] '{self.name}' disconnected: {e} — retry in {RECONNECT_DELAY}s")
                 await asyncio.sleep(RECONNECT_DELAY)
 
+    def _start_avvicinamento_loop(self) -> None:
+        if self._avv_task and not self._avv_task.done():
+            self._avv_task.cancel()
+        self._avv_task = asyncio.create_task(
+            self._avvicinamento_loop(), name=f"avv_loop:{self.monitor_id}"
+        )
+
+    async def _avvicinamento_loop(self) -> None:
+        """Sends a periodic AVVICINAMENTO update every TRAJ_APPROACH_COOLDOWN minutes
+        even when no new MQTT strikes arrive, as long as the buffer still classifies
+        the storm as approaching."""
+        while True:
+            await asyncio.sleep(TRAJ_APPROACH_COOLDOWN * 60)
+            if not self._buffer:
+                return
+            analysis = _analyze_trajectory(self._buffer, self.lat, self.lon, self.language)
+            if analysis["stato"] != "AVVICINAMENTO":
+                return
+            last     = self._buffer[-1]
+            az       = _azimuth_deg(self.lat, self.lon, last[1], last[2])
+            direction = _direction(az, self.language)
+            self._last_alert = time.time()
+            _LOGGER.info(
+                "[Trajectory-loop] %s | state=AVVICINAMENTO dist=%.1fkm eta=%s buf=%d events",
+                self.name, analysis["distanza_attuale_km"], analysis.get("eta_minuti"),
+                len(self._buffer),
+            )
+            try:
+                await self._send(
+                    self._format_trajectory_alert(
+                        analysis["distanza_attuale_km"], az, direction, analysis
+                    )
+                )
+            except Exception as e:
+                print(f"[LiveMonitor] '{self.name}' avv-loop send error: {e}")
+
+    def _add_to_buffer(self, ts: float, lat: float, lon: float, dist: float) -> None:
+        self._buffer.append((ts, lat, lon, dist))
+        cutoff = ts - TRAJ_BUFFER_MIN * 60
+        while self._buffer and self._buffer[0][0] < cutoff:
+            self._buffer.pop(0)
+
     async def _on_message(self, message):
         try:
             data = json.loads(message.payload)
@@ -196,38 +450,133 @@ class LightningLiveMonitor:
         dist = _distance_km(self.lat, self.lon, float(s_lat), float(s_lon))
         if dist > self.radius_km:
             return
+
         now = time.time()
-        if (now - self._last_alert) / 60.0 < self.cooldown_min:
+        self._add_to_buffer(now, float(s_lat), float(s_lon), dist)
+
+        analysis = _analyze_trajectory(self._buffer, self.lat, self.lon, self.language)
+        stato    = analysis["stato"]
+
+        _LOGGER.info(
+            "[Trajectory] %s | state=%s dist=%.1fkm vel=%s dir=%s° buf=%d events",
+            self.name, stato, analysis["distanza_attuale_km"],
+            analysis.get("velocita_kmh"), analysis.get("direzione_gradi"),
+            len(self._buffer),
+        )
+
+        if stato in ("UNKNOWN", "STAZIONARIO"):
             return
+
+        cooldown_map = {
+            "AVVICINAMENTO":  TRAJ_APPROACH_COOLDOWN,
+            "ALLONTANAMENTO": TRAJ_AWAY_COOLDOWN,
+            "STAZIONARIO":    TRAJ_STATIONARY_COOLDOWN,
+        }
+        effective_cooldown = cooldown_map.get(stato, TRAJ_STATIONARY_COOLDOWN)
+
+        if (now - self._last_alert) / 60.0 < effective_cooldown:
+            return
+
         self._last_alert = now
         az        = _azimuth_deg(self.lat, self.lon, float(s_lat), float(s_lon))
         direction = _direction(az, self.language)
-        print(f"[LiveMonitor] '{self.name}' alert: {dist:.1f}km {direction}")
+        print(f"[LiveMonitor] '{self.name}' alert: {dist:.1f}km {direction} ({stato})")
         try:
-            await self._send(self._format_alert(dist, az, direction))
+            if stato in ("AVVICINAMENTO", "ALLONTANAMENTO"):
+                await self._send(self._format_trajectory_alert(dist, az, direction, analysis))
+                if stato == "AVVICINAMENTO":
+                    self._start_avvicinamento_loop()
+            else:
+                await self._send(self._format_alert(dist, az, direction, stato))
         except Exception as e:
             print(f"[LiveMonitor] '{self.name}' send error: {e}")
 
-    def _format_alert(self, dist: float, az: float, direction: str) -> str:
+    def _next_alert_label(self, stato: str) -> str:
+        cooldown_map = {
+            "AVVICINAMENTO":  TRAJ_APPROACH_COOLDOWN,
+            "ALLONTANAMENTO": TRAJ_AWAY_COOLDOWN,
+            "STAZIONARIO":    TRAJ_STATIONARY_COOLDOWN,
+        }
+        minutes = cooldown_map.get(stato, TRAJ_STATIONARY_COOLDOWN)
+        if self.language == "it":
+            return f"Prossimo alert tra {minutes} min"
+        return f"Next alert in {minutes} min"
+
+    def _format_alert(self, dist: float, az: float, direction: str, stato: str = "UNKNOWN") -> str:
         try:
             tz = ZoneInfo(self.tz_name)
         except ZoneInfoNotFoundError:
             tz = ZoneInfo("UTC")
         now_str = datetime.now(tz).strftime("%H:%M")
-        loc = html.escape(self.location or self.name)
+        loc     = html.escape(self.location or self.name)
+        next_lbl = self._next_alert_label(stato)
         if self.language == "it":
             return (
                 f"⚡ <b>Fulmine rilevato — {loc}</b>\n"
                 f"📍 Distanza: <b>{dist:.1f} km</b> a {direction} ({az:.0f}°)\n"
-                f"🔕 Prossimo alert tra {int(self.cooldown_min)} min\n"
+                f"🔕 {next_lbl}\n"
                 f"🕐 {now_str}"
             )
         return (
             f"⚡ <b>Lightning detected — {loc}</b>\n"
             f"📍 Distance: <b>{dist:.1f} km</b> to {direction} ({az:.0f}°)\n"
-            f"🔕 Next alert in {int(self.cooldown_min)} min\n"
+            f"🔕 {next_lbl}\n"
             f"🕐 {now_str}"
         )
+
+    def _format_trajectory_alert(
+        self, dist: float, az: float, direction: str, analysis: dict
+    ) -> str:
+        try:
+            tz = ZoneInfo(self.tz_name)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+        now_str     = datetime.now(tz).strftime("%H:%M")
+        loc         = html.escape(self.location or self.name)
+        stato       = analysis["stato"]
+        vel         = analysis.get("velocita_kmh")
+        eta         = analysis.get("eta_minuti")
+        density     = analysis.get("densita_trend", "STABILE")
+        next_lbl    = self._next_alert_label(stato)
+
+        if self.language == "it":
+            icon  = "🔴" if stato == "AVVICINAMENTO" else "🟢"
+            lines = [f"⚡ <b>Fulmine rilevato — {loc}</b>"]
+            lines.append(f"📍 Distanza: <b>{dist:.1f} km</b> a {direction} ({az:.0f}°)")
+            if stato == "AVVICINAMENTO":
+                if vel:
+                    lines.append(f"{icon} In avvicinamento a ~{vel:.0f} km/h")
+                if eta:
+                    lines.append(f"⏱ Arrivo stimato: <b>{eta} min</b>")
+            elif stato == "ALLONTANAMENTO":
+                if vel:
+                    lines.append(f"{icon} In allontanamento a ~{vel:.0f} km/h")
+            if density == "CRESCENTE":
+                lines.append("⚡ Intensità in aumento")
+            elif density == "CALANTE":
+                lines.append("📉 Intensità in diminuzione")
+            lines.append(f"🔕 {next_lbl}")
+            lines.append(f"🕐 {now_str}")
+        else:
+            icon  = "🔴" if stato == "AVVICINAMENTO" else "🟢"
+            lines = [f"⚡ <b>Lightning detected — {loc}</b>"]
+            lines.append(f"📍 Distance: <b>{dist:.1f} km</b> to {direction} ({az:.0f}°)")
+            if stato == "AVVICINAMENTO":
+                if vel:
+                    lines.append(f"{icon} Approaching at ~{vel:.0f} km/h")
+                if eta:
+                    lines.append(f"⏱ Estimated arrival: <b>{eta} min</b>")
+            elif stato == "ALLONTANAMENTO":
+                if vel:
+                    lines.append(f"{icon} Moving away at ~{vel:.0f} km/h")
+            if density == "CRESCENTE":
+                lines.append("⚡ Increasing intensity")
+            elif density == "CALANTE":
+                lines.append("📉 Decreasing intensity")
+            lines.append(f"🔕 {next_lbl}")
+            lines.append(f"🕐 {now_str}")
+
+        return "\n".join(lines)
 
 
 # ── Manager ───────────────────────────────────────────────────────────────────

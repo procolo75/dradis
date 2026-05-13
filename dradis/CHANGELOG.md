@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## [2.17.3] - 2026-05-13
+- **Fix — Lightning Monitor STAZIONARIO silent**: state STAZIONARIO no longer sends any alert. Only directional states (AVVICINAMENTO, ALLONTANAMENTO) trigger notifications; STAZIONARIO and UNKNOWN are both silent.
+
+## [2.17.2] - 2026-05-13
+- **Cleanup — HA Monitor logging**: removed all verbose `print()` log lines from the HA monitor (start, stop, connect, subscribe, init, skip, filtered, cooldown, alert, LLM-skip). Disconnection and runtime errors are now logged via `_LOGGER.warning` (silent in normal operation).
+
+## [2.17.1] - 2026-05-13
+- **Fix — Lightning Monitor UNKNOWN silent**: state UNKNOWN (insufficient data — fewer than 2 populated 5-min windows) no longer sends any alert. The first notification will always carry a real trajectory classification.
+- **Fix — Lightning Monitor AVVICINAMENTO heartbeat**: added a periodic asyncio loop that re-sends an AVVICINAMENTO update every 5 minutes even when no new MQTT strikes arrive. The loop re-runs trajectory analysis on the existing buffer and stops automatically when the state changes or the buffer empties.
+
+## [2.17.0] - 2026-05-13
+- **Feature — Lightning Monitor trajectory analysis**: the lightning monitor now maintains a 60-minute sliding window buffer of strike events and runs a trajectory analysis on every new event. Strikes within `radius_km` are grouped into 5-minute windows; linear regression (pure stdlib, no scipy) is applied to the mean distances to classify the storm:
+  - **AVVICINAMENTO** — negative slope ≥ 0.5 km/window over at least 3 windows. Alerts every **5 minutes** with velocity, ETA, and intensity trend.
+  - **ALLONTANAMENTO** — positive slope ≥ 0.5 km/window over at least 3 windows. Alerts every **30 minutes** (low frequency).
+  - **STAZIONARIO** — slope below threshold or fewer than 3 windows. Alerts every **15 minutes**.
+  - **UNKNOWN** — fewer than 2 populated windows (insufficient data). **Silent** — no alert sent until the trajectory can be classified.
+- **Removed — Lightning Monitor manual cooldown**: the "Alert cooldown (minutes)" field has been removed from the lightning monitor UI. Alert frequency is now managed automatically based on trajectory state. The HA monitor cooldown is unaffected.
+- **Updated — Lightning Monitor alert format**: trajectory alerts (AVVICINAMENTO/ALLONTANAMENTO) include storm velocity (km/h), estimated arrival time (ETA), intensity trend (CRESCENTE/CALANTE/STABILE), and the adaptive next-alert interval. STAZIONARIO/UNKNOWN alerts keep the original compact format.
+- **Structured logging**: each trajectory analysis emits a `[Trajectory]` log line (state, distance, velocity, direction, buffer size) — useful for debug and parameter tuning.
+
 ## [2.16.0] - 2026-05-12
 - **Removed — Token tracking & metrics**: completely removed all token counting infrastructure (`agent_core` token stats, `_track_tokens`, `format_metrics`, `_build_metrics_parts`), Telegram commands `/tokens` and `/tokens_reset`, and all "Show metrics" toggles from the Web UI (DRADIS, Web Search, Weather, Voice, Google Calendar, Gmail, Google Tasks panels). Token/metrics fields removed from settings schema and defaults.
 

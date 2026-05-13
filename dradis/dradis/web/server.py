@@ -340,7 +340,6 @@ class LiveMonitorPayload(BaseModel):
     latitude:     float = 0.0
     longitude:    float = 0.0
     radius_km:    float = 100.0
-    cooldown_min: float = 30.0
     language:     str   = "it"
 
 

@@ -3363,7 +3363,7 @@ function renderLiveMonitorForm(monitor) {
   }
 
   const _TYPE_DESCS_LIVE = {
-    lightning: "Persistent MQTT listener on Blitzortung. Sends an alert on the first strike within the configured radius after each cooldown period. No LLM, no cron.",
+    lightning: "Persistent MQTT listener on Blitzortung. Monitors strikes in real time and analyses storm trajectory (60-min sliding window, 5-min windows, linear regression). Alert frequency adapts automatically: approaching → every 5 min with ETA · stationary → every 15 min · moving away → every 30 min. No LLM, no cron.",
   };
 
   panel.innerHTML = `
@@ -3412,9 +3412,7 @@ function renderLiveMonitorForm(monitor) {
       </div>
 
       <div class="form-group">
-        <label for="lm-cooldown">Alert cooldown (minutes)</label>
-        <input type="number" id="lm-cooldown" min="1" max="1440" value="${monitor.cooldown_min || 30}" style="width:80px">
-        <small style="color:var(--text-muted)">After an alert, silence for this many minutes before the next one.</small>
+        <small style="color:var(--text-muted)">Alert frequency is managed automatically based on storm trajectory: <b>approaching</b> → every 5 min with ETA · <b>stationary</b> → every 15 min · <b>moving away</b> → every 30 min.</small>
       </div>
 
       <div class="form-group" id="lm-status-group" style="display:none">
@@ -3475,7 +3473,6 @@ function renderLiveMonitorForm(monitor) {
       latitude:     parseFloat(document.getElementById("lm-latitude").value)  || 0,
       longitude:    parseFloat(document.getElementById("lm-longitude").value) || 0,
       radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 100,
-      cooldown_min: parseFloat(document.getElementById("lm-cooldown").value)  || 30,
       language:     document.getElementById("lm-language").value,
     };
     try {
@@ -3516,7 +3513,6 @@ function renderLiveMonitorForm(monitor) {
         latitude:     src.latitude,
         longitude:    src.longitude,
         radius_km:    src.radius_km,
-        cooldown_min: src.cooldown_min,
         language:     src.language,
       });
       liveMonitors.push(copy);
@@ -3536,7 +3532,7 @@ document.getElementById("btn-new-live-monitor").addEventListener("click", async 
       name: "New Live Monitor", enabled: false,
       type: "lightning", location: "Rome",
       latitude: 41.9028, longitude: 12.4964,
-      radius_km: 100, cooldown_min: 30, language: "it",
+      radius_km: 100, language: "it",
     });
     liveMonitors.push(monitor);
     selectedLiveMonitorId = monitor.id;

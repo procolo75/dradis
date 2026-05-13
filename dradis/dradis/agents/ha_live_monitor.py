@@ -61,12 +61,10 @@ class HaLiveMonitor:
             self._task = asyncio.create_task(
                 self._run(), name=f"ha_monitor:{self.monitor_id}"
             )
-            print(f"[HAMonitor] '{self.name}' started ({len(self.entities)} entities, cooldown={self.cooldown_min:.0f}min)")
 
     def stop(self):
         if self._task and not self._task.done():
             self._task.cancel()
-            print(f"[HAMonitor] '{self.name}' stopped")
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
@@ -82,7 +80,6 @@ class HaLiveMonitor:
 
         while True:
             try:
-                print(f"[HAMonitor] '{self.name}' connecting to {host}:{port}")
                 kwargs = {}
                 if username:
                     kwargs["username"] = username
@@ -91,13 +88,12 @@ class HaLiveMonitor:
                 async with aiomqtt.Client(host, port, **kwargs) as client:
                     for topic in topics:
                         await client.subscribe(topic)
-                    print(f"[HAMonitor] '{self.name}' subscribed ({len(topics)} topics)")
                     async for message in client.messages:
                         await self._on_message(message, prefix)
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                print(f"[HAMonitor] '{self.name}' disconnected: {e} — retry in {RECONNECT_DELAY}s")
+                _LOGGER.warning("[HAMonitor] '%s' disconnected: %s — retry in %ds", self.name, e, RECONNECT_DELAY)
                 await asyncio.sleep(RECONNECT_DELAY)
 
     async def _on_message(self, message, prefix: str):
@@ -114,29 +110,24 @@ class HaLiveMonitor:
 
         # First message for this entity after (re)connect is the retained state — record it, don't alert
         if entity_id not in self._last_states:
-            print(f"[HAMonitor] '{self.name}' INIT entity={entity_id} state={state!r} (retained, no alert)")
             self._last_states[entity_id] = state
             return
 
         # No actual change → nothing to do
         if state == self._last_states[entity_id]:
-            print(f"[HAMonitor] '{self.name}' SKIP entity={entity_id} state={state!r} (unchanged)")
             return
         self._last_states[entity_id] = state
 
         # State filter — avoids LLM calls for states that are never actionable
         if self.filter_states and state.lower() not in self.filter_states:
-            print(f"[HAMonitor] '{self.name}' FILTERED entity={entity_id} state={state!r} (not in {self.filter_states})")
             return
 
         now = time.time()
         last = self._cooldowns.get(entity_id, 0.0)
         elapsed_min = (now - last) / 60.0
         if elapsed_min < self.cooldown_min:
-            print(f"[HAMonitor] '{self.name}' COOLDOWN entity={entity_id} state={state!r} ({elapsed_min:.1f}/{self.cooldown_min:.0f} min)")
             return
 
-        print(f"[HAMonitor] '{self.name}' entity={entity_id} state={state!r} mode={self.alert_mode}")
         try:
             if self.alert_mode == "direct":
                 msg = self._build_direct_message(entity_id, state)
@@ -148,10 +139,8 @@ class HaLiveMonitor:
                 if alert_text and alert_text.strip():
                     self._cooldowns[entity_id] = now
                     await self._send(alert_text.strip())
-                else:
-                    print(f"[HAMonitor] '{self.name}' LLM→SKIP entity={entity_id} state={state!r}")
         except Exception as e:
-            print(f"[HAMonitor] '{self.name}' error: {e}")
+            _LOGGER.warning("[HAMonitor] '%s' error: %s", self.name, e)
 
     def _build_direct_message(self, entity_id: str, state: str) -> str:
         try:

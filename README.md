@@ -15,7 +15,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 - **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
 - **Scheduled Tasks** — cron-based automation delivered to Telegram
 - **Scheduled Monitors** — LLM-free cron-based monitors (Thunderstorm risk, Rain alert) that fetch data from Open-Meteo and compute results in Python — no token cost, deterministic output
-- **Live Monitors** — persistent push-based monitors that stay connected and react to external events in real time, with no polling and no cron schedule. First type: ⚡ **Lightning alert** via MQTT — sends a Telegram alert on the first strike within a configurable radius after each cooldown period
+- **Live Monitors** — persistent push-based monitors that stay connected and react to external events in real time, with no polling and no cron schedule. First type: ⚡ **Lightning alert** via MQTT — trajectory analysis (linear regression over 5-min windows) classifies the storm as approaching or moving away and adapts alert frequency automatically; silent when stationary or when data is insufficient
 - **HA Monitors** — monitor any Home Assistant entity via MQTT. Select entities from the broker via 🔍 Discover, define binding LLM instructions (which states trigger an alert), and receive LLM-written Telegram alerts on state changes. Per-entity cooldown avoids spam. Requires: Mosquitto broker add-on + MQTT integration + `mqtt_discoverystream_alt` (HACS). → [How-to on the Wiki](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 - **Collapsible sidebar** — all Web UI sidebar sections (Agents, Tools, Tasks, Scheduled Monitors, Live Monitors, HA Monitors) are collapsed by default for a clean overview; click any header to expand
 - **Duplicate task / monitor** — copy any task or monitor with the ⎘ button; the copy is created disabled and ready to edit
@@ -50,12 +50,14 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 > → DRADIS calls `read_url` directly, fetches the page via Jina Reader, and analyses the content with its own model. No API key required, no extra LLM call.
 
 **Lightning alert** *(live monitor — no cron, no LLM, no token cost)*
-> DRADIS opens a persistent MQTT connection and listens for lightning strikes in real time. When a strike is detected within the configured radius (e.g. 50 km from Bacoli), it sends an immediate Telegram alert:
+> DRADIS opens a persistent MQTT connection and listens for lightning strikes in real time. Each strike feeds a 60-minute sliding window buffer; trajectory analysis classifies the storm and fires an alert only when it is approaching or moving away — silent when stationary.
 >
-> ⚡ **Fulmine rilevato — Bacoli**
-> 📍 Distanza: **23.4 km** a SE (138°)
-> 🔕 Prossimo alert tra 30 min
-> 🕐 14:37
+> ⚡ **Lightning detected — Bacoli**
+> 📍 Distance: **28.3 km** to NW (315°)
+> 🔴 Approaching at ~42 km/h
+> ⏱ Estimated arrival: 40 min
+> 🔕 Next update in 5 min
+> 🕐 14:32
 >
 > No cron schedule. Reconnects automatically on disconnect.
 > Configure in Web UI → **Live Monitors** → `+` → Type: ⚡ Lightning alert
@@ -90,10 +92,10 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 > Cron: `0 6 * * *` — Instructions: *"Fetch the latest TAF for airport LIRN from aviationweather.gov, decode it, and send a plain-language summary to Telegram."*
 
 **Task management** *(requires Google Tasks)*
-> *"Aggiungi comprare latte e chiamare il medico"*
+> *"Add buy milk and call the doctor"*
 > → DRADIS creates two tasks in your Google Tasks list and confirms.
-> *"Cosa ho da fare?"* → Lists all open tasks with IDs.
-> *"Segna come fatto il task 2"* → Marks the task as completed.
+> *"What do I have to do?"* → Lists all open tasks with IDs.
+> *"Mark task 2 as done"* → Marks the task as completed.
 
 ## Telegram Commands
 

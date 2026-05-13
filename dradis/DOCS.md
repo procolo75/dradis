@@ -418,29 +418,51 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 | Location | City name — resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and exact lat/lon as you type. Coordinates are stored and used for distance calculations. |
 | Alert language | Language of the Telegram alert: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Radius (km) | Strikes within this distance from the configured location trigger an alert (1–500 km, default 100). |
-| Alert cooldown (minutes) | After an alert fires, the monitor is silenced for this many minutes before the next strike can trigger a new alert (1–1440, default 30). |
 | Status badge | Shows 🟢 Running or 🔴 Stopped, fetched live from the backend. |
 
 There is no cron field, no **▶ Test** button, and no "run now" action — the monitor is always-on when enabled.
 
 #### Lightning alert
 
-Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells.
+Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. Each incoming strike within `radius_km` is added to a 60-minute sliding window buffer. A **trajectory analysis** runs on every event and classifies the storm into one of four states that automatically control alert frequency — no manual cooldown setting required.
+
+**Trajectory states and alert frequency:**
+
+| State | Condition | Alert interval |
+|-------|-----------|----------------|
+| AVVICINAMENTO | Distance slope ≤ −0.5 km/window over ≥ 3 windows | Every **5 min** (with ETA) |
+| ALLONTANAMENTO | Distance slope ≥ +0.5 km/window over ≥ 3 windows | Every **30 min** |
+| STAZIONARIO | Slope below threshold, or < 3 windows | **Silent** (no alert) |
+| UNKNOWN | Fewer than 2 populated 5-min windows (insufficient data) | **Silent** (no alert) |
+
+The analysis uses a least-squares linear regression on the mean distance per 5-minute window (pure Python stdlib, no scipy). Velocity is computed from centroid displacement between the oldest and newest populated window. Density trend (CRESCENTE / CALANTE / STABILE) compares the lightning rate in the first vs. second half of the buffer.
 
 **Behaviour:**
 1. On app startup (or save), if the monitor is enabled a persistent asyncio task is created.
 2. The task connects to the broker and subscribes to all geohash topics for the area.
-3. For every incoming strike payload, it computes the distance and azimuth from the configured coordinates.
-4. If `distance ≤ radius_km` **and** the cooldown period has expired → fires a Telegram alert and resets the timer.
-5. On disconnect, waits 15 seconds and reconnects automatically — the loop runs indefinitely until the monitor is disabled.
+3. For every incoming strike: computes distance and azimuth → if `distance ≤ radius_km`, adds to buffer → runs trajectory analysis → fires alert if the state-specific cooldown has expired.
+4. On disconnect, waits 15 seconds and reconnects automatically.
 
-**Telegram alert format:**
+**Alert format — AVVICINAMENTO:**
 
 ```
-⚡ Fulmine rilevato — Bacoli
-📍 Distanza: 23.4 km a SE (138°)
-🔕 Prossimo alert tra 30 min
-🕐 14:37
+⚡ Lightning detected — Bacoli
+📍 Distance: 28.3 km to NW (315°)
+🔴 Approaching at ~42 km/h
+⏱ Estimated arrival: 40 min
+⚡ Increasing intensity
+🔕 Next update in 5 min
+🕐 14:32
+```
+
+**Alert format — ALLONTANAMENTO:**
+
+```
+⚡ Lightning detected — Bacoli
+📍 Distance: 45.1 km to NW (315°)
+🟢 Moving away at ~38 km/h
+🔕 Next alert in 30 min
+🕐 14:55
 ```
 
 **Example configuration:**
@@ -451,7 +473,6 @@ Subscribes to geohash-based MQTT topics covering the configured location and its
 | Type | ⚡ Lightning alert |
 | Location | Bacoli (auto-resolves to 40.7961, 14.0820) |
 | Radius | 50 km |
-| Cooldown | 30 min |
 | Language | 🇮🇹 Italiano |
 
 **Duplicating a live monitor:** click **⎘ Copy** to create a copy named `Copy of <name>`. The duplicate is disabled by default, with all fields copied. Useful for monitoring multiple locations.
@@ -526,22 +547,24 @@ DRADIS routes the request to the Web Search sub-agent, which calls `read_url` vi
 
 ### Lightning alert *(live monitor)*
 
-DRADIS opens a persistent MQTT connection and listens for lightning strike data in real time. When a strike is detected within the configured radius, it fires an immediate Telegram alert — no polling, no cron, no LLM.
+DRADIS opens a persistent MQTT connection and listens for lightning strike data in real time. Each strike within the configured radius feeds a 60-minute sliding window buffer. Trajectory analysis (linear regression over 5-min windows) classifies the storm and adapts alert frequency automatically — no manual cooldown, no polling, no LLM.
 
 | Field | Value |
 |-------|-------|
 | Type | ⚡ Lightning alert |
 | Location | Bacoli (auto-resolves to lat/lon) |
 | Radius | 50 km |
-| Cooldown | 30 min |
 | Language | 🇮🇹 Italiano |
 
-Sample alert:
+Sample alert (AVVICINAMENTO):
 ```
-⚡ Fulmine rilevato — Bacoli
-📍 Distanza: 23.4 km a SE (138°)
-🔕 Prossimo alert tra 30 min
-🕐 14:37
+⚡ Lightning detected — Bacoli
+📍 Distance: 28.3 km to NW (315°)
+🔴 Approaching at ~42 km/h
+⏱ Estimated arrival: 40 min
+⚡ Increasing intensity
+🔕 Next update in 5 min
+🕐 14:32
 ```
 
 No API key required. No Google account. Reconnects automatically on disconnect.

@@ -1309,7 +1309,7 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
         f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
         f"📍 {html.escape(monitor.get('location', '?'))}\n"
         f"Status: {badge}\n"
-        f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: {monitor.get('cooldown_min', '?')} min",
+        f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: automatic (5/15/30 min)",
         parse_mode=ParseMode.HTML,
     )
 
