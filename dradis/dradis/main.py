@@ -43,8 +43,10 @@ from agents.weather import create_weather_agent
 from agents.web_search import create_web_search_agent
 from agents.thunderstorm_monitor import run_thunderstorm_monitor
 from agents.rain_monitor import run_rain_monitor
+from agents.seismic_monitor import run_seismic_monitor
 from agents.lightning_live_monitor import live_monitor_manager
 from agents.ha_live_monitor import ha_monitor_manager
+from agents.seismic_live_monitor import seismic_monitor_manager
 
 WEB_PORT = 8099
 
@@ -635,6 +637,7 @@ def reload_task_jobs():
 _MONITOR_RUNNERS = {
     "thunderstorm": run_thunderstorm_monitor,
     "rain":         run_rain_monitor,
+    "seismic":      run_seismic_monitor,
 }
 
 
@@ -719,7 +722,16 @@ def reload_live_monitors():
                 parse_mode=ParseMode.HTML,
             )
 
-    live_monitor_manager.reload(load_live_monitors(), _send, tz_name)
+    configs = load_live_monitors()
+    live_monitor_manager.reload(configs, _send, tz_name)
+    seismic_monitor_manager.reload(configs, _send, tz_name)
+
+
+def _live_status_dispatcher(monitor_id: str) -> str:
+    cfg = next((m for m in load_live_monitors() if m["id"] == monitor_id), None)
+    if cfg and cfg.get("type") == "seismic":
+        return seismic_monitor_manager.status(monitor_id)
+    return live_monitor_manager.status(monitor_id)
 
 
 def reload_ha_monitors():
@@ -1235,17 +1247,20 @@ async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard = []
     for m in scheduled:
+        detail = m.get("seismic_area", "?") if m.get("type") == "seismic" else m.get("location", "?")
         keyboard.append([InlineKeyboardButton(
-            f"{m['name']} ({m.get('location', '?')})",
+            f"{m['name']} ({detail})",
             callback_data=f"monitor:{m['id']}",
         )])
     for m in live:
-        status = live_monitor_manager.status(m["id"])
+        status = _live_status_dispatcher(m["id"])
         badge  = "🟢" if status == "running" else "🔴"
-        keyboard.append([InlineKeyboardButton(
-            f"{badge} {m['name']} ({m.get('location', '?')})",
-            callback_data=f"live:{m['id']}",
-        )])
+        if m.get("type") == "seismic":
+            areas = ", ".join(m.get("areas", [])) or "—"
+            label = f"{badge} {m['name']} ({areas})"
+        else:
+            label = f"{badge} {m['name']} ({m.get('location', '?')})"
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"live:{m['id']}")])
     header = "Scheduled monitors — tap to run now:" if scheduled else ""
     if live:
         header += ("\n\n" if header else "") + "Live monitors — tap to see status:"
@@ -1284,9 +1299,14 @@ async def handle_monitor_callback(update: Update, context: ContextTypes.DEFAULT_
     if not monitor:
         await query.message.reply_text("❌ Monitor not found.")
         return
+    detail = (
+        monitor.get("seismic_area", "?")
+        if monitor.get("type") == "seismic"
+        else monitor.get("location", "?")
+    )
     await query.message.reply_text(
         f"▶️ Launching monitor <b>{html.escape(monitor['name'])}</b> "
-        f"({html.escape(monitor.get('location', '?'))})…",
+        f"({html.escape(detail)})…",
         parse_mode=ParseMode.HTML,
     )
     asyncio.create_task(run_scheduled_monitor(monitor))
@@ -1303,15 +1323,21 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
     if not monitor:
         await query.message.reply_text("❌ Live monitor not found.")
         return
-    status = live_monitor_manager.status(item_id)
+    mtype  = monitor.get("type", "lightning")
+    status = _live_status_dispatcher(item_id)
     badge  = "🟢 Running" if status == "running" else "🔴 Stopped"
-    await query.message.reply_text(
-        f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
-        f"📍 {html.escape(monitor.get('location', '?'))}\n"
-        f"Status: {badge}\n"
-        f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: automatic (5/15/30 min)",
-        parse_mode=ParseMode.HTML,
-    )
+    if mtype == "seismic":
+        areas = ", ".join(monitor.get("areas", [])) or "—"
+        msg = (f"🌍 <b>{html.escape(monitor['name'])}</b>\n"
+               f"Aree: {html.escape(areas)}\n"
+               f"Status: {badge}\n"
+               f"Polling: 60s — DB: /data/seismic.db")
+    else:
+        msg = (f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
+               f"📍 {html.escape(monitor.get('location', '?'))}\n"
+               f"Status: {badge}\n"
+               f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: automatic (5/15/30 min)")
+    await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
@@ -1364,7 +1390,7 @@ async def main():
         register_monitors_changed_callback(reload_monitor_jobs)
         register_run_monitor_callback(run_scheduled_monitor)
         register_live_monitors_changed_callback(reload_live_monitors)
-        register_live_monitor_status_callback(live_monitor_manager.status)
+        register_live_monitor_status_callback(_live_status_dispatcher)
         reload_live_monitors()
         register_ha_monitors_changed_callback(reload_ha_monitors)
         register_ha_monitor_status_callback(ha_monitor_manager.status)

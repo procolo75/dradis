@@ -108,9 +108,9 @@
     .nav-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .nav-dot {
-      width: 8px; height: 8px;
+      width: 12px; height: 12px;
       border-radius: 50%;
-      background: var(--text-muted);
+      background: var(--danger, #e53935);
       flex-shrink: 0;
       transition: background 0.2s;
     }
@@ -306,7 +306,7 @@
           <span class="nav-label">DRADIS Agentic AI</span>
         </li>
         <li class="nav-item" data-panel="ha-mqtt" id="nav-ha-mqtt">
-          <span class="nav-dot" id="ha-mqtt-dot"></span>
+          <span class="nav-icon">📡</span>
           <span class="nav-label">MQTT / Home Assistant</span>
         </li>
       </ul>
@@ -3126,14 +3126,39 @@ function renderMonitorForm(monitor) {
         <select id="m-type">
           <option value="thunderstorm" ${monitor.type === "thunderstorm" ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
           <option value="rain"         ${monitor.type === "rain"         ? "selected" : ""}>🌧️ Rain alert (Open-Meteo)</option>
+          <option value="seismic"      ${monitor.type === "seismic"      ? "selected" : ""}>🌍 Seismic report (INGV GOSSIP)</option>
         </select>
         <small id="m-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)"></small>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="fg-location">
         <label for="m-location">Location</label>
         <input type="text" id="m-location" value="${monitor.location || ""}" placeholder="e.g. Bacoli, Naples, Rome...">
         <div class="model-hint" id="m-location-hint"></div>
+      </div>
+
+      <div class="form-group" id="fg-seismic-area">
+        <label for="m-seismic-area">Area</label>
+        <select id="m-seismic-area">
+          <option value="flegrei"   ${(monitor.seismic_area || "flegrei") === "flegrei"   ? "selected" : ""}>Campi Flegrei</option>
+          <option value="vesuvio"   ${(monitor.seismic_area || "flegrei") === "vesuvio"   ? "selected" : ""}>Vesuvio</option>
+          <option value="ischia"    ${(monitor.seismic_area || "flegrei") === "ischia"    ? "selected" : ""}>Isola di Ischia</option>
+          <option value="regionale" ${(monitor.seismic_area || "flegrei") === "regionale" ? "selected" : ""}>Golfo di Napoli</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="fg-time-range">
+        <label for="m-time-range">Periodo</label>
+        <select id="m-time-range">
+          <option value="since_day_start"  ${(monitor.time_range || "last_24h") === "since_day_start"  ? "selected" : ""}>Da inizio giornata</option>
+          <option value="last_24h"         ${(monitor.time_range || "last_24h") === "last_24h"         ? "selected" : ""}>Ultime 24 ore</option>
+          <option value="since_week_start" ${(monitor.time_range || "last_24h") === "since_week_start" ? "selected" : ""}>Da inizio settimana</option>
+          <option value="last_7d"          ${(monitor.time_range || "last_24h") === "last_7d"          ? "selected" : ""}>Ultimi 7 giorni</option>
+          <option value="since_month_start"${(monitor.time_range || "last_24h") === "since_month_start"? "selected" : ""}>Da inizio mese</option>
+          <option value="last_month"       ${(monitor.time_range || "last_24h") === "last_month"       ? "selected" : ""}>Ultimo mese</option>
+          <option value="since_year_start" ${(monitor.time_range || "last_24h") === "since_year_start" ? "selected" : ""}>Da inizio anno</option>
+          <option value="last_year"        ${(monitor.time_range || "last_24h") === "last_year"        ? "selected" : ""}>Ultimo anno</option>
+        </select>
       </div>
 
       <div class="form-group">
@@ -3181,17 +3206,21 @@ function renderMonitorForm(monitor) {
   const _TYPE_DESCS = {
     thunderstorm: "Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.",
     rain: "Checks 15-minute precipitation forecast for the next N hours. Sends an alert only if rain is expected. No LLM used.",
+    seismic: "Fetches earthquake events from INGV GOSSIP for the selected area and time range. Returns a summary with event count, depth statistics and a list of recent events. No LLM used.",
   };
   function applyTypeVisibility(type) {
-    document.getElementById("fg-days").style.display        = type === "thunderstorm" ? "" : "none";
-    document.getElementById("fg-hours-ahead").style.display = type === "rain"         ? "" : "none";
-    document.getElementById("m-type-desc").textContent      = _TYPE_DESCS[type] || "";
+    document.getElementById("fg-days").style.display          = type === "thunderstorm" ? "" : "none";
+    document.getElementById("fg-hours-ahead").style.display   = type === "rain"         ? "" : "none";
+    document.getElementById("fg-location").style.display      = type === "seismic"      ? "none" : "";
+    document.getElementById("fg-seismic-area").style.display  = type === "seismic"      ? "" : "none";
+    document.getElementById("fg-time-range").style.display    = type === "seismic"      ? "" : "none";
+    document.getElementById("m-type-desc").textContent        = _TYPE_DESCS[type] || "";
   }
   applyTypeVisibility(monitor.type || "thunderstorm");
   document.getElementById("m-type").addEventListener("change", e => applyTypeVisibility(e.target.value));
 
-  // Resolve location on load
-  if (monitor.location) resolveLocation(monitor.location);
+  // Resolve location on load (only for non-seismic types)
+  if (monitor.location && monitor.type !== "seismic") resolveLocation(monitor.location);
 
   // Live location resolve
   let _locTimer = null;
@@ -3228,14 +3257,16 @@ async function saveMonitor() {
   const btn = document.getElementById("btn-save-monitor");
   btn.disabled = true;
   const payload = {
-    name:        document.getElementById("m-name").value.trim(),
-    enabled:     document.getElementById("m-enabled").checked,
-    cron:        document.getElementById("m-cron").value.trim(),
-    type:        document.getElementById("m-type").value,
-    location:    document.getElementById("m-location").value.trim(),
-    language:    document.getElementById("m-language").value,
-    days:        parseInt(document.getElementById("m-days").value, 10) || 2,
-    hours_ahead: parseInt(document.getElementById("m-hours-ahead").value, 10) || 2,
+    name:         document.getElementById("m-name").value.trim(),
+    enabled:      document.getElementById("m-enabled").checked,
+    cron:         document.getElementById("m-cron").value.trim(),
+    type:         document.getElementById("m-type").value,
+    location:     document.getElementById("m-location").value.trim(),
+    language:     document.getElementById("m-language").value,
+    days:         parseInt(document.getElementById("m-days").value, 10) || 2,
+    hours_ahead:  parseInt(document.getElementById("m-hours-ahead").value, 10) || 2,
+    seismic_area: document.getElementById("m-seismic-area")?.value || "flegrei",
+    time_range:   document.getElementById("m-time-range")?.value   || "last_24h",
   };
   try {
     const updated = await api("PUT", `/api/monitors/${selectedMonitorId}`, payload);
@@ -3276,14 +3307,16 @@ async function duplicateMonitor() {
   if (!src) return;
   try {
     const copy = await api("POST", "/api/monitors", {
-      name:        `Copy of ${src.name}`,
-      enabled:     false,
-      cron:        src.cron,
-      type:        src.type,
-      location:    src.location,
-      language:    src.language,
-      days:        src.days,
-      hours_ahead: src.hours_ahead,
+      name:         `Copy of ${src.name}`,
+      enabled:      false,
+      cron:         src.cron,
+      type:         src.type,
+      location:     src.location,
+      language:     src.language,
+      days:         src.days,
+      hours_ahead:  src.hours_ahead,
+      seismic_area: src.seismic_area || "flegrei",
+      time_range:   src.time_range   || "last_24h",
     });
     monitors.push(copy);
     selectedMonitorId = copy.id;
@@ -3341,7 +3374,7 @@ function renderSidebarLiveMonitors() {
     li.dataset.panel         = "live-monitor";
     li.dataset.liveMonitorId = m.id;
     li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
-                    <span class="nav-icon">⚡</span>
+                    <span class="nav-icon">${m.type === "seismic" ? "🌍" : "⚡"}</span>
                     <span class="nav-label">${m.name}</span>`;
     li.addEventListener("click", () => {
       selectedLiveMonitorId = m.id;
@@ -3364,6 +3397,7 @@ function renderLiveMonitorForm(monitor) {
 
   const _TYPE_DESCS_LIVE = {
     lightning: "Persistent MQTT listener on Blitzortung. Monitors strikes in real time and analyses storm trajectory (60-min sliding window, 5-min windows, linear regression). Alerts only when the storm is approaching or moving away — silent when stationary or data is insufficient. Approaching → every 5 min with ETA · moving away → every 30 min. No LLM, no cron.",
+    seismic:   "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
   };
 
   panel.innerHTML = `
@@ -3386,16 +3420,38 @@ function renderLiveMonitorForm(monitor) {
         <label for="lm-type">Type</label>
         <select id="lm-type">
           <option value="lightning" ${monitor.type === "lightning" ? "selected" : ""}>⚡ Lightning alert (Blitzortung MQTT)</option>
+          <option value="seismic"   ${monitor.type === "seismic"   ? "selected" : ""}>🌍 Seismic alert (INGV GOSSIP RSS)</option>
         </select>
         <small id="lm-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)">${_TYPE_DESCS_LIVE[monitor.type] || ""}</small>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="lm-location-block">
         <label for="lm-location">Location</label>
         <input type="text" id="lm-location" value="${monitor.location || ""}" placeholder="e.g. Bacoli, Rome...">
         <div class="model-hint" id="lm-location-hint"></div>
         <input type="hidden" id="lm-latitude"  value="${monitor.latitude  || 0}">
         <input type="hidden" id="lm-longitude" value="${monitor.longitude || 0}">
+      </div>
+
+      <div class="form-group" id="lm-areas-block">
+        <label>Monitored areas</label>
+        <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
+          <label><input type="checkbox" class="lm-area" value="flegrei"   ${(monitor.areas||[]).includes("flegrei")   ? "checked" : ""}> Campi Flegrei</label>
+          <label><input type="checkbox" class="lm-area" value="vesuvio"   ${(monitor.areas||[]).includes("vesuvio")   ? "checked" : ""}> Vesuvio</label>
+          <label><input type="checkbox" class="lm-area" value="ischia"    ${(monitor.areas||[]).includes("ischia")    ? "checked" : ""}> Isola di Ischia</label>
+          <label><input type="checkbox" class="lm-area" value="regionale" ${(monitor.areas||[]).includes("regionale") ? "checked" : ""}> Golfo di Napoli</label>
+        </div>
+      </div>
+
+      <div class="form-group" id="lm-quiet-block">
+        <label>🔕 Silenzio notifiche</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+          <span style="color:var(--text-muted);font-size:0.85rem">Da</span>
+          <input type="time" id="lm-quiet-start" value="${monitor.quiet_start || ""}" style="width:115px">
+          <span style="color:var(--text-muted);font-size:0.85rem">a</span>
+          <input type="time" id="lm-quiet-end"   value="${monitor.quiet_end   || ""}" style="width:115px">
+        </div>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Lascia vuoto per disabilitare. Gli eventi avvenuti durante il silenzio vengono inviati tutti insieme al risveglio.</small>
       </div>
 
       <div class="form-group">
@@ -3406,12 +3462,12 @@ function renderLiveMonitorForm(monitor) {
         </select>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="lm-radius-block">
         <label for="lm-radius">Radius (km)</label>
         <input type="number" id="lm-radius" min="1" max="500" value="${monitor.radius_km || 100}" style="width:80px">
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="lm-lightning-hint">
         <small style="color:var(--text-muted)">Alerts only when the storm is <b>approaching</b> (every 5 min, with ETA) or <b>moving away</b> (every 30 min). Silent when stationary or when data is insufficient.</small>
       </div>
 
@@ -3428,9 +3484,17 @@ function renderLiveMonitorForm(monitor) {
     </div>
   `;
 
-  document.getElementById("lm-type").addEventListener("change", e => {
-    document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[e.target.value] || "";
-  });
+  function _lmApplyType(type) {
+    const isSeismic = type === "seismic";
+    document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[type] || "";
+    document.getElementById("lm-location-block").style.display  = isSeismic ? "none" : "";
+    document.getElementById("lm-radius-block").style.display    = isSeismic ? "none" : "";
+    document.getElementById("lm-lightning-hint").style.display  = isSeismic ? "none" : "";
+    document.getElementById("lm-areas-block").style.display     = isSeismic ? ""     : "none";
+    document.getElementById("lm-quiet-block").style.display     = isSeismic ? ""     : "none";
+  }
+  _lmApplyType(monitor.type || "lightning");
+  document.getElementById("lm-type").addEventListener("change", e => _lmApplyType(e.target.value));
 
   // Live geocoding
   let _lmLocTimer = null;
@@ -3473,7 +3537,10 @@ function renderLiveMonitorForm(monitor) {
       latitude:     parseFloat(document.getElementById("lm-latitude").value)  || 0,
       longitude:    parseFloat(document.getElementById("lm-longitude").value) || 0,
       radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 100,
+      areas:        Array.from(document.querySelectorAll(".lm-area:checked")).map(c => c.value),
       language:     document.getElementById("lm-language").value,
+      quiet_start:  document.getElementById("lm-quiet-start")?.value || "",
+      quiet_end:    document.getElementById("lm-quiet-end")?.value   || "",
     };
     try {
       const updated = await api("PUT", `/api/live-monitors/${selectedLiveMonitorId}`, payload);
@@ -3514,6 +3581,7 @@ function renderLiveMonitorForm(monitor) {
         longitude:    src.longitude,
         radius_km:    src.radius_km,
         language:     src.language,
+        areas:        src.areas || [],
       });
       liveMonitors.push(copy);
       selectedLiveMonitorId = copy.id;
@@ -3595,8 +3663,6 @@ document.getElementById("btn-save-ha-mqtt").addEventListener("click", async () =
   };
   try {
     await api("PUT", "/api/settings", payload);
-    const dot = document.getElementById("ha-mqtt-dot");
-    if (dot) dot.classList.toggle("on", !!(payload.mqtt_host && payload.mqtt_username));
     showToast("MQTT settings saved.");
   } catch (e) {
     showToast(e.message || "Error saving MQTT settings", true);

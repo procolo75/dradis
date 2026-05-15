@@ -330,17 +330,22 @@ class MonitorPayload(BaseModel):
     days:        int  = 2
     language:    str  = "it"
     hours_ahead: int  = 2
+    seismic_area: str = "flegrei"
+    time_range:   str = "last_24h"
 
 
 class LiveMonitorPayload(BaseModel):
     name:         str
-    enabled:      bool  = False
-    type:         str   = "lightning"
-    location:     str   = ""
-    latitude:     float = 0.0
-    longitude:    float = 0.0
-    radius_km:    float = 100.0
-    language:     str   = "it"
+    enabled:      bool      = False
+    type:         str       = "lightning"
+    location:     str       = ""
+    latitude:     float     = 0.0
+    longitude:    float     = 0.0
+    radius_km:    float     = 100.0
+    language:     str       = "it"
+    areas:        list[str] = []
+    quiet_start:  str       = ""
+    quiet_end:    str       = ""
 
 
 class HaMonitorPayload(BaseModel):
@@ -1023,7 +1028,7 @@ async def create_monitor(payload: MonitorPayload):
     valid, error, _ = _validate_cron_expr(payload.cron)
     if not valid:
         raise HTTPException(status_code=400, detail=f"Invalid cron expression: {error}")
-    if not payload.location.strip():
+    if payload.type != "seismic" and not payload.location.strip():
         raise HTTPException(status_code=400, detail="Monitor location is required")
     monitors = load_monitors()
     monitor = {
@@ -1042,7 +1047,7 @@ async def update_monitor(monitor_id: str, payload: MonitorPayload):
     valid, error, _ = _validate_cron_expr(payload.cron)
     if not valid:
         raise HTTPException(status_code=400, detail=f"Invalid cron expression: {error}")
-    if not payload.location.strip():
+    if payload.type != "seismic" and not payload.location.strip():
         raise HTTPException(status_code=400, detail="Monitor location is required")
     monitors = load_monitors()
     for i, m in enumerate(monitors):
@@ -1070,7 +1075,7 @@ async def run_monitor_now(monitor_id: str):
     monitor = next((m for m in load_monitors() if m["id"] == monitor_id), None)
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
-    if not monitor.get("location", "").strip():
+    if monitor.get("type") != "seismic" and not monitor.get("location", "").strip():
         raise HTTPException(status_code=400, detail="Monitor has no location configured")
     asyncio.create_task(_run_monitor_fn(monitor))
     return {"ok": True}

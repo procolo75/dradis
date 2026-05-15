@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## [2.17.10] - 2026-05-15
+- **Refactor — Seismic Live Monitor: eliminato database SQLite**: rimosso `seismic.db` e tutto il codice correlato (`sqlite3`, `json`, `Path`; funzioni `_init_db`, `_db_get`, `_db_upsert`, `_now_iso`). Il tracking degli eventi visti è ora interamente in-memory (`_seen: dict[str, dict]`). Nessuna regressione funzionale: il primo poll silenzia i duplicati esistenti, le promozioni di stato (Automatico → Rivisto) continuano a funzionare.
+- **UI — Sidebar MQTT: icona 📡 al posto del pallino**: il pannello Settings MQTT nella sidebar non usa più un `nav-dot` ma mostra l'icona 📡, coerente con la natura del protocollo.
+- **UI — Nav dots più grandi e rossi quando inattivi**: i `nav-dot` passano da 8 px a 12 px di diametro; quando inattivi (classe assente o `.on` mancante) mostrano il colore `var(--danger, #e53935)` (rosso) invece di grigio.
+
+## [2.17.9] - 2026-05-15
+- **Fix — Telegram /monitors: Live Seismic mostra aree non location**: i Live Monitor di tipo seismic mostravano "(Rome)" nel menu Telegram. Ora mostrano le aree configurate (es. "flegrei, vesuvio"). Scheduled seismic monitor già corretto dalla v2.17.7.
+- **Fix — Web UI: icona Live Seismic Monitor**: nella sidebar i Live Monitor sismici mostravano ⚡ (fulmine). Ora mostrano 🌍.
+- **Feature — Seismic Scheduled Monitor: report statistico**: eliminata la lista dei singoli eventi. Il report mostra ora solo il totale (automatici/rivisti) e due distribuzioni a istogramma: magnitudine (n.d. / <0 / 0–0.99 / 1–1.99 / 2–2.99 / 3–3.99 / 4+) e profondità (0–1 / 1–2 / 2–5 / 5–10 / 10+ km), con conteggio per fascia e icona colore.
+
+## [2.17.8] - 2026-05-15
+- **Fix — Seismic Live Monitor: orario evento**: l'orario nel messaggio Telegram era quello di pubblicazione RSS (`pubDate`), non dell'evento. Ora viene estratto dal `<title>` dell'item RSS (formato `Evento sismico {Area} - YYYY/MM/DD HH:MM:SS`, UTC), con fallback a `pubDate` se il parsing fallisce.
+- **Feature — Seismic Live Monitor: ore silenziose**: nuovi campi `quiet_start` / `quiet_end` (HH:MM). Quando l'orario corrente è nell'intervallo configurato, le notifiche non vengono inviate ma accumulate in memoria. Al primo poll successivo all'uscita dall'intervallo, viene inviato un header 🔕 seguito da tutti gli eventi accumulati in ordine. Supporta intervalli cross-mezzanotte (es. 23:00–07:00). Web UI: selettori orario nel pannello Live Monitor (visibili solo per tipo seismic).
+- **Fix — Seismic Scheduled Monitor**: rimosso `#id` da ogni riga evento; rimossa profondità media dal riepilogo (rimangono min/max).
+
+## [2.17.7] - 2026-05-15
+- **Feature — Seismic Scheduled Monitor**: new monitor type `seismic` in `agents/seismic_monitor.py` backed by the INGV GOSSIP JSON API (`https://terremoti.ov.ingv.it/gossip/{area}/events.json`). Configurable area (Campi Flegrei, Vesuvio, Isola di Ischia, Golfo di Napoli) and time range (da inizio giornata, ultime 24 ore, da inizio settimana, ultimi 7 giorni, da inizio mese, ultimo mese, da inizio anno, ultimo anno). Runs on a user-defined cron schedule and sends a Telegram HTML report with total event count (automatic vs revised), depth statistics (min/max/avg), and a list of up to 20 recent events with Maps links. No LLM used. Integrated into `main.py` (`_MONITOR_RUNNERS`), `server.py` (`MonitorPayload` + location validation bypass), and Web UI (type dropdown + area/period selectors, location field hidden for seismic type).
+
+## [2.17.6] - 2026-05-15
+- **Feature — Seismic Live Monitor**: integrated `seismic_live_monitor.py` into the full DRADIS lifecycle (main.py import, `reload_live_monitors`, status dispatcher, Telegram `/monitors` callback). The monitor polls the INGV GOSSIP RSS feed every 60 s, persists all events to `/data/seismic.db` (SQLite, WAL), and sends Telegram alerts on new events and state promotions (Automatico → Rivisto). `enabled: false` keeps the DB populated silently (no Telegram). Alerts now include a **🗺 Apri in Maps** link (coordinates from RSS if available, area centroid as fallback). Web UI: added **Seismic alert (INGV GOSSIP RSS)** option to the Live Monitor type dropdown with area checkboxes (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli); location and radius fields are hidden when type is seismic.
+
+## [2.17.5] - 2026-05-13
+- **Fix — Lightning Monitor heartbeat extrapolation**: the AVVICINAMENTO heartbeat loop now extrapolates the storm's current distance and ETA based on elapsed time since the last known strike and the computed approach velocity. Previously, when no new MQTT strikes arrived between firings, the buffer was unchanged and every 5-minute alert reported identical values (same distance, speed, ETA). Now each heartbeat shows realistically decreasing distance and ETA even in the absence of new data.
+
 ## [2.17.4] - 2026-05-13
 - **Docs — Web UI sections**: added missing Settings → MQTT / Home Assistant, Tasks, Scheduled Monitors, Live Monitors, and HA Monitors sections (with full field tables) to DOCS.md and the GitHub Wiki Web-UI page.
 - **Fix — index.html**: updated Live Monitor type description and helper text to reflect STAZIONARIO silent behaviour.

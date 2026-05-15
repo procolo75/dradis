@@ -414,8 +414,21 @@ class LightningLiveMonitor:
             analysis = _analyze_trajectory(self._buffer, self.lat, self.lon, self.language)
             if analysis["stato"] != "AVVICINAMENTO":
                 return
-            last     = self._buffer[-1]
-            az       = _azimuth_deg(self.lat, self.lon, last[1], last[2])
+
+            # Extrapolate current distance: storm keeps moving even without new strikes.
+            # Without this, every heartbeat would repeat identical distance/ETA since the
+            # buffer is unchanged when no new MQTT messages arrive.
+            velocity = analysis.get("velocita_kmh")
+            if velocity and velocity > 0:
+                elapsed_min = (time.time() - self._buffer[-1][0]) / 60.0
+                if elapsed_min > 0:
+                    est_dist = analysis["distanza_attuale_km"] - (velocity / 60.0) * elapsed_min
+                    est_dist = max(0.1, round(est_dist, 1))
+                    analysis["distanza_attuale_km"] = est_dist
+                    analysis["eta_minuti"] = int(est_dist / (velocity / 60)) if est_dist > 0.1 else 0
+
+            last      = self._buffer[-1]
+            az        = _azimuth_deg(self.lat, self.lon, last[1], last[2])
             direction = _direction(az, self.language)
             self._last_alert = time.time()
             _LOGGER.info(
