@@ -2862,7 +2862,7 @@ function renderTaskForm(task) {
 │ ┌────── hour        (0–23)
 │ │ ┌──── day of month (1–31)
 │ │ │ ┌── month        (1–12)
-│ │ │ │ ┌ day of week  (0–7, 0 and 7 = Sunday)
+│ │ │ │ ┌ day of week  (0–6: 0=Mon … 6=Sun; or: mon tue wed thu fri sat sun)
 │ │ │ │ │
 * * * * *</pre>
             <p><strong>Special characters:</strong></p>
@@ -3191,6 +3191,35 @@ function renderMonitorForm(monitor) {
         <label for="m-cron">Cron expression</label>
         <input type="text" id="m-cron" value="${monitor.cron || "0 7 * * *"}" placeholder="0 7 * * *">
         <small id="m-cron-desc" style="margin-top:4px;display:block;color:var(--text-muted)">${cronDescription(monitor.cron || "")}</small>
+        <details style="margin-top:10px;font-size:0.82rem;color:var(--text-muted)">
+          <summary style="cursor:pointer;color:var(--accent)">How does the cron expression work?</summary>
+          <div style="margin-top:8px;line-height:1.6">
+            <p>A cron expression has <strong>5 fields</strong> separated by spaces:</p>
+            <pre style="background:var(--card-bg);padding:8px 10px;border-radius:6px;font-size:0.85rem;overflow-x:auto">┌──────── minute      (0–59)
+│ ┌────── hour        (0–23)
+│ │ ┌──── day of month (1–31)
+│ │ │ ┌── month        (1–12)
+│ │ │ │ ┌ day of week  (0–6: 0=Mon … 6=Sun; or: mon tue wed thu fri sat sun)
+│ │ │ │ │
+* * * * *</pre>
+            <p><strong>Special characters:</strong></p>
+            <ul style="padding-left:1.2em;margin:4px 0">
+              <li><code>*</code> — any value (every minute, every hour…)</li>
+              <li><code>5</code> — exact value (e.g. minute 5)</li>
+              <li><code>0,15,30,45</code> — list (every 15 minutes)</li>
+              <li><code>9-17</code> — range (from 9:xx to 17:xx)</li>
+              <li><code>*/2</code> — every N (every 2 hours)</li>
+            </ul>
+            <p style="margin-top:6px"><strong>Examples:</strong></p>
+            <ul style="padding-left:1.2em;margin:4px 0">
+              <li><code>0 7 * * *</code> — every day at 07:00</li>
+              <li><code>30 7 * * 0-4</code> — Mon–Fri at 07:30</li>
+              <li><code>0 */3 * * *</code> — every 3 hours</li>
+              <li><code>0 9 1 * *</code> — 1st of every month at 09:00</li>
+              <li><code>* * * * *</code> — every minute (useful for testing)</li>
+            </ul>
+          </div>
+        </details>
       </div>
 
       <div class="btn-row">

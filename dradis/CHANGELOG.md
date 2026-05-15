@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.17.11] - 2026-05-15
+- **Fix — Web UI cron day-of-week description**: the `<details>` help block incorrectly stated "0–7, 0 and 7 = Sunday" (standard Unix cron). APScheduler uses Python weekday convention: **0 = Monday … 6 = Sunday**; 7 is invalid. Description updated in both the Tasks and Monitors panels to "(0–6: 0=Mon … 6=Sun; or: mon tue wed thu fri sat sun)".
+- **Fix — Web UI Monitors: missing cron help block**: the Scheduled Monitor form was missing the cron `<details>` explanation block present in the Tasks form. Added identical block (with corrected day-of-week info).
+
 ## [2.17.10] - 2026-05-15
 - **Refactor — Seismic Live Monitor: eliminato database SQLite**: rimosso `seismic.db` e tutto il codice correlato (`sqlite3`, `json`, `Path`; funzioni `_init_db`, `_db_get`, `_db_upsert`, `_now_iso`). Il tracking degli eventi visti è ora interamente in-memory (`_seen: dict[str, dict]`). Nessuna regressione funzionale: il primo poll silenzia i duplicati esistenti, le promozioni di stato (Automatico → Rivisto) continuano a funzionare.
 - **UI — Sidebar MQTT: icona 📡 al posto del pallino**: il pannello Settings MQTT nella sidebar non usa più un `nav-dot` ma mostra l'icona 📡, coerente con la natura del protocollo.
