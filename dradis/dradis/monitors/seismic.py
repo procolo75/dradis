@@ -1,16 +1,13 @@
 """
-agents/seismic_monitor.py
-─────────────────────────
+monitors/seismic.py
+───────────────────
 LLM-free scheduled monitor: fetches earthquake events from the INGV GOSSIP
 JSON API and returns a formatted HTML report for the configured area and time
-range.
-
-Source: https://terremoti.ov.ingv.it/gossip/{area}/events.json
-- `magnitudos` array is present only on Rivisto events (Automatico = no magnitude yet).
-- Magnitude type "D" = Md (duration magnitude).
+range. Source: https://terremoti.ov.ingv.it/gossip/{area}/events.json
 """
 
 import html
+import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -51,27 +48,33 @@ _TIME_RANGE_LABELS = {
 _MAG_BINS = [
     ("nd",  None,  None, "⚪", "n.d."),
     ("neg", None,  0.0,  "⚪", "< 0"),
-    ("0",   0.0,   1.0,  "⚪", "0 – 0.99"),
-    ("1",   1.0,   2.0,  "🟡", "1 – 1.99"),
-    ("2",   2.0,   3.0,  "🟠", "2 – 2.99"),
-    ("3",   3.0,   4.0,  "🔴", "3 – 3.99"),
+    ("0",   0.0,   1.0,  "⚪", "0 – 0.9"),
+    ("1",   1.0,   2.0,  "🟡", "1 – 1.9"),
+    ("2",   2.0,   3.0,  "🟠", "2 – 2.9"),
+    ("3",   3.0,   4.0,  "🔴", "3 – 3.9"),
     ("4p",  4.0,   None, "🔴", "4+"),
 ]
 
-_DEPTH_BINS = [
-    (None, 1.0,   "0 – 1 km"),
-    (1.0,  2.0,   "1 – 2 km"),
-    (2.0,  5.0,   "2 – 5 km"),
-    (5.0,  10.0,  "5 – 10 km"),
-    (10.0, None,  "10+ km"),
-]
+_DEPTH_CEIL    = 30
+_EVENT_LIST_MAX = 80
+
+
+def _mag_icon(mag: float | None) -> str:
+    if mag is None:
+        return "⚪"
+    if mag >= 3.0:
+        return "🔴"
+    if mag >= 2.0:
+        return "🟠"
+    if mag >= 1.0:
+        return "🟡"
+    return "⚪"
 
 
 def _extract_magnitude(event: dict) -> float | None:
     mags = event.get("magnitudos")
     if not mags or not isinstance(mags, list):
         return None
-    # Prefer type "D" (Md); fall back to first entry
     preferred = next((m for m in mags if m.get("type") == "D"), mags[0])
     val = preferred.get("value")
     try:
@@ -103,6 +106,48 @@ def _range_start(time_range: str, tz: ZoneInfo) -> datetime:
     return now - timedelta(hours=24)
 
 
+def _depth_section(filtered: list[dict], lbl_nd: str) -> list[str]:
+    pairs: list[tuple[float, float | None]] = []
+    nd_events: list[dict] = []
+    for e in filtered:
+        d = (e.get("location") or {}).get("depth")
+        if d is None:
+            nd_events.append(e)
+        else:
+            pairs.append((float(d), e["_mag"]))
+
+    if not pairs and not nd_events:
+        return []
+
+    lines: list[str] = []
+
+    if pairs:
+        max_d = max(d for d, _ in pairs)
+        n_bins = min(math.ceil(max_d), _DEPTH_CEIL)
+
+        for lo in range(0, n_bins):
+            hi = lo + 1
+            in_bin = [(d, m) for d, m in pairs if lo <= d < hi]
+            if not in_bin:
+                continue
+            max_mag = max((m for _, m in in_bin if m is not None), default=None)
+            count   = len(in_bin)
+            mag_str = f"Md {max_mag:.1f}" if max_mag is not None else lbl_nd
+            lines.append(f"  🔵 {lo}–{hi} km: <b>{count}</b> ev · max {mag_str}")
+
+        deep = [(d, m) for d, m in pairs if d >= _DEPTH_CEIL]
+        if deep:
+            max_mag = max((m for _, m in deep if m is not None), default=None)
+            count   = len(deep)
+            mag_str = f"Md {max_mag:.1f}" if max_mag is not None else lbl_nd
+            lines.append(f"  🔵 {_DEPTH_CEIL}+ km: <b>{count}</b> ev · max {mag_str}")
+
+    if nd_events:
+        lines.append(f"  ⚪ {lbl_nd}: <b>{len(nd_events)}</b>")
+
+    return lines
+
+
 async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     area       = monitor.get("seismic_area", "flegrei")
     time_range = monitor.get("time_range", "last_24h")
@@ -128,7 +173,6 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     filtered = [e for e in events if e.get("epoch", 0) >= cutoff_epoch]
     filtered.sort(key=lambda e: e.get("epoch", 0), reverse=True)
 
-    # Attach parsed magnitude to each event (avoids double-parsing later)
     for e in filtered:
         e["_mag"] = _extract_magnitude(e)
 
@@ -139,25 +183,29 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     it = lang != "en"
 
     if it:
-        title       = f"🌍 <b>Report sismico — {area_label}</b>"
-        subtitle    = f"Periodo: {range_label} | {now_str}"
-        no_event    = "Nessun evento sismico nel periodo selezionato."
-        footer      = "<i>Monitor DRADIS · INGV GOSSIP · nessun LLM utilizzato</i>"
-        s_total     = lambda n: f"📊 <b>{n} event{'i' if n != 1 else 'o'}</b>"
-        s_split     = lambda a, r: f" — Automatici: {a} · Rivisti: {r}"
-        hdr_mag     = "📈 <b>Magnitudo (Md)</b>"
-        hdr_depth   = "📐 <b>Profondità</b>"
-        lbl_nd      = "n.d."
+        title     = f"🌍 <b>Report sismico — {area_label}</b>"
+        subtitle  = f"Periodo: {range_label} | {now_str}"
+        no_event  = "Nessun evento sismico nel periodo selezionato."
+        footer    = "<i>Monitor DRADIS · INGV GOSSIP · nessun LLM utilizzato</i>"
+        s_total   = lambda n: f"📊 <b>{n} event{'i' if n != 1 else 'o'}</b>"
+        s_split   = lambda a, r: f" — Automatici: {a} · Rivisti: {r}"
+        hdr_mag   = "📈 <b>Magnitudo (Md)</b>"
+        hdr_depth = "📐 <b>Profondità</b>"
+        hdr_list  = "📋 <b>Lista eventi</b>"
+        lbl_nd    = "n.d."
+        lbl_more  = lambda n: f"  … e altri {n} eventi"
     else:
-        title       = f"🌍 <b>Seismic report — {area_label}</b>"
-        subtitle    = f"Period: {range_label} | {now_str}"
-        no_event    = "No seismic events in the selected period."
-        footer      = "<i>DRADIS Monitor · INGV GOSSIP · no LLM used</i>"
-        s_total     = lambda n: f"📊 <b>{n} event{'s' if n != 1 else ''}</b>"
-        s_split     = lambda a, r: f" — Automatic: {a} · Revised: {r}"
-        hdr_mag     = "📈 <b>Magnitude (Md)</b>"
-        hdr_depth   = "📐 <b>Depth</b>"
-        lbl_nd      = "n.d."
+        title     = f"🌍 <b>Seismic report — {area_label}</b>"
+        subtitle  = f"Period: {range_label} | {now_str}"
+        no_event  = "No seismic events in the selected period."
+        footer    = "<i>DRADIS Monitor · INGV GOSSIP · no LLM used</i>"
+        s_total   = lambda n: f"📊 <b>{n} event{'s' if n != 1 else ''}</b>"
+        s_split   = lambda a, r: f" — Automatic: {a} · Revised: {r}"
+        hdr_mag   = "📈 <b>Magnitude (Md)</b>"
+        hdr_depth = "📐 <b>Depth</b>"
+        hdr_list  = "📋 <b>Event list</b>"
+        lbl_nd    = "n.d."
+        lbl_more  = lambda n: f"  … and {n} more events"
 
     lines = [title, subtitle, ""]
 
@@ -172,7 +220,6 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     lines.append(s_total(total) + s_split(auto_count, rev_count))
     lines.append("")
 
-    # ── Magnitude distribution ────────────────────────────────────────────────
     lines.append(hdr_mag)
     for key, lo, hi, icon, label in _MAG_BINS:
         if key == "nd":
@@ -188,29 +235,31 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
 
     lines.append("")
 
-    # ── Depth distribution ────────────────────────────────────────────────────
     lines.append(hdr_depth)
-    depth_nd = 0
-    for lo, hi, label in _DEPTH_BINS:
-        count = 0
-        for e in filtered:
-            d = (e.get("location") or {}).get("depth")
-            if d is None:
-                continue
-            if lo is None and d < hi:
-                count += 1
-            elif hi is None and d >= lo:
-                count += 1
-            elif lo is not None and hi is not None and lo <= d < hi:
-                count += 1
-        if count:
-            lines.append(f"  🔵 {label}: <b>{count}</b>")
-    depth_nd = sum(
-        1 for e in filtered
-        if (e.get("location") or {}).get("depth") is None
-    )
-    if depth_nd:
-        lines.append(f"  ⚪ {lbl_nd}: <b>{depth_nd}</b>")
+    depth_lines = _depth_section(filtered, lbl_nd)
+    lines.extend(depth_lines)
+
+    lines.append("")
+
+    lines.append(hdr_list)
+    shown = filtered[:_EVENT_LIST_MAX]
+    for e in shown:
+        mag   = e["_mag"]
+        icon  = _mag_icon(mag)
+        mag_s = f"Md {mag:.1f}" if mag is not None else lbl_nd
+        d     = (e.get("location") or {}).get("depth")
+        dep_s = f"{d:.1f} km" if d is not None else lbl_nd
+        epoch = e.get("epoch")
+        if epoch:
+            dt_s = datetime.fromtimestamp(epoch, tz=tz).strftime("%d/%m %H:%M")
+        else:
+            dt_s = "??/??"
+        cls       = (e.get("class") or "").lower()
+        state_ico = "✅" if "rivisto" in cls else "⚠️"
+        lines.append(f"  {icon} {dt_s}  {mag_s}  {dep_s}  {state_ico}")
+
+    if total > _EVENT_LIST_MAX:
+        lines.append(lbl_more(total - _EVENT_LIST_MAX))
 
     lines += ["", footer]
     return "\n".join(lines)

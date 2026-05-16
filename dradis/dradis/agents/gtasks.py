@@ -1,8 +1,8 @@
 import asyncio
 from pathlib import Path
 
-from agent_core import create_agent, _now_str
-from web.server import SETTINGS_DEFAULTS
+from core import create_agent, _now_str
+from web.store import SETTINGS_DEFAULTS
 
 GTASKS_TOKEN_FILE   = Path("/data/google_tasks_token.json")
 GTASKS_SCOPES       = ["https://www.googleapis.com/auth/tasks"]
@@ -11,8 +11,8 @@ GTASKS_REDIRECT_URI = "http://localhost:8099/gtasksauth/callback"
 
 async def _notify_token_expired():
     try:
-        import main as _main
-        await _main._send_error_telegram(
+        import bot.state as _state
+        await _state._send_error_telegram(
             "🔑 <b>Google Tasks token scaduto o revocato.</b>\n"
             "Invia <code>/gtasksauth</code> per riconnetterti."
         )

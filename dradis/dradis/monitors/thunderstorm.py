@@ -1,9 +1,8 @@
 """
-agents/thunderstorm_monitor.py
-───────────────────────────────
+monitors/thunderstorm.py
+────────────────────────
 LLM-free monitor: fetches atmospheric instability data from Open-Meteo for a
 given location and computes an hourly thunderstorm risk factor in pure Python.
-Result is sent to Telegram as a formatted text message.
 
 Risk formula (each band 0-10):
   score = (
@@ -27,8 +26,6 @@ from datetime import datetime, date
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-
-# ── constants ──────────────────────────────────────────────────────────────────
 
 _CAPE_MAX   = 3000.0
 _LI_MIN     = -8.0

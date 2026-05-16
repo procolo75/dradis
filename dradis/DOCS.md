@@ -43,23 +43,37 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 
 **Additional instructions**: each member applies its own per-agent `*_instructions` setting from the Web UI, appended to the member's system prompt at runtime.
 
-**Extensibility**: adding a new member requires creating a new `create_X_agent(settings)` factory file and registering it in `_build_members()` in `main.py`. No changes to message handling are needed.
+**Extensibility**: adding a new member requires creating a new `create_X_agent(settings)` factory file and registering it in `_build_members()` in `bot/scheduler.py`. No changes to message handling are needed.
 
 **Source layout:**
 
 | File | Responsibility |
 |------|---------------|
-| `main.py` | Telegram bot, message handlers, cron scheduler, OAuth flows, team assembly, live monitor management |
-| `agent_core.py` | `create_agent()`, `create_team()`, provider helpers |
+| `main.py` | Entry point — wires bot, scheduler, web server, and live monitors together |
+| `bot/state.py` | Global state, startup options, settings, history, fallback engine, `_run_with_fallback()` |
+| `bot/scheduler.py` | Task and monitor cron jobs, live-monitor lifecycle, `reload_*()` functions |
+| `bot/commands.py` | Telegram command handlers: `/info`, `/gcalauth`, `/gmailauth`, `/gtasksauth`, `/todo` |
+| `bot/handlers.py` | Telegram message, voice, and callback handlers |
+| `core.py` | `create_agent()`, `create_team()`, provider helpers |
 | `agents/web_search.py` | Web Search member agent — `create_web_search_agent()` |
 | `agents/weather.py` | Weather member agent — `fetch_weather()` + `create_weather_agent()` |
 | `agents/gmail.py` | Gmail member agent — `create_gmail_agent()` + OAuth token management |
 | `agents/gcal.py` | Google Calendar member agent — `create_gcal_agent()` + OAuth token management |
 | `agents/gtasks.py` | Google Tasks member agent — `create_gtasks_agent()` + OAuth token management |
-| `agents/thunderstorm_monitor.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
-| `agents/rain_monitor.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
-| `agents/lightning_live_monitor.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
-| `agents/ha_live_monitor.py` | HA Monitor — persistent MQTT listener for Home Assistant entity state changes; `HaLiveMonitor` + `HaMonitorManager` singleton |
+| `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
+| `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
+| `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
+| `live_monitors/lightning.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
+| `live_monitors/ha.py` | HA Monitor — persistent MQTT listener for Home Assistant entity state changes; `HaLiveMonitor` + `HaMonitorManager` singleton |
+| `live_monitors/seismic.py` | Seismic live monitor — polls INGV GOSSIP JSON API every 60 s, alerts on new events and state promotions |
+| `web/store.py` | Shared data layer: load/save functions, callback registrations, cron validation, provider helpers, OAuth state |
+| `web/models.py` | Pydantic request models for all API endpoints |
+| `web/routes/settings.py` | FastAPI routes: settings CRUD, config, server timezone |
+| `web/routes/agents.py` | FastAPI routes: agents CRUD, model listing, speed test, voice |
+| `web/routes/tasks.py` | FastAPI routes: task CRUD, cron validation, manual run |
+| `web/routes/monitors.py` | FastAPI routes: scheduled monitor, live monitor, HA monitor CRUD; geocode; HA test/discover |
+| `web/routes/tools.py` | FastAPI routes: Google OAuth callbacks, web search test, weather test |
+| `web/server.py` | FastAPI app assembly — includes all routers, re-exports store symbols |
 
 ---
 
@@ -328,7 +342,7 @@ Click **Save** to apply. Changes take effect immediately — no restart required
 
 ### Scheduled Monitors
 
-Create LLM-free scheduled monitors that fetch data from external APIs and compute results entirely in Python. Monitors run on a cron schedule and deliver results to your Telegram chat. No model is invoked — output is deterministic and costs no tokens. Monitors are stored in `/data/monitors.json`.
+Scheduled monitors fetch data from external APIs and compute results entirely in Python, then deliver them to your Telegram chat on a cron schedule. By default no LLM is invoked — output is deterministic and costs no tokens. Monitors are stored in `/data/monitors.json`.
 
 Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. Each monitor has:
 
@@ -336,11 +350,13 @@ Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. 
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
-| Monitor type | Type of data source: **⛈️ Thunderstorm risk** or **🌧️ Rain alert** (both Open-Meteo, no API key required). |
+| Monitor type | Type of data source: **⛈️ Thunderstorm risk** or **🌧️ Rain alert** (both Open-Meteo, no API key required) or **🌍 Seismic report** (INGV GOSSIP). |
 | Response language | Language of the Telegram report: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Location | City name or geographic description (e.g. *Bacoli*, *Naples*, *Rome*). Resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and coordinates as you type. |
 | Forecast days | *(Thunderstorm only)* Number of days to fetch (1–7, default 2). |
 | Hours ahead | *(Rain alert only)* How many hours ahead to check for rain (1–24, default 2). |
+| Alert mode | **Direct Telegram** (default): sends the report immediately without consuming tokens. **LLM**: passes the generated report to the full DRADIS agent together with custom instructions — the agent can send Telegram messages, emails, create tasks, etc. |
+| DRADIS Instructions | *(LLM mode only)* Instructions for the agent: what to do with the report. If empty, the agent sends the report to Telegram. |
 | Schedule preset | Dropdown of common schedules. |
 | Cron expression | Raw 5-part cron with live validation and next-fire preview. |
 
@@ -438,45 +454,61 @@ There is no cron field, no **▶ Test** button, and no "run now" action — the 
 
 #### Lightning alert
 
-Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. Each incoming strike within `radius_km` is added to a 60-minute sliding window buffer. A **trajectory analysis** runs on every event and classifies the storm into one of four states that automatically control alert frequency — no manual cooldown setting required.
+Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. All incoming strikes within `radius_km` are collected in a **15-minute sliding window buffer**. Every 2 minutes a polling task runs **pure-Python DBSCAN** (eps = 8 km, min_samples = 2) on the buffer to identify distinct storm cells, tracks each cell's centroid over a 20-minute rolling history, and classifies each cell as APPROACHING / RETREATING / STATIONARY / UNKNOWN. Multiple simultaneous storms in the same area are tracked independently.
 
-**Trajectory states and alert frequency:**
+**Storm states:**
 
-| State | Condition | Alert interval |
-|-------|-----------|----------------|
-| AVVICINAMENTO | Distance slope ≤ −0.5 km/window over ≥ 3 windows | Every **5 min** (with ETA) |
-| ALLONTANAMENTO | Distance slope ≥ +0.5 km/window over ≥ 3 windows | Every **30 min** |
-| STAZIONARIO | Slope below threshold, or < 3 windows | **Silent** (no alert) |
-| UNKNOWN | Fewer than 2 populated 5-min windows (insufficient data) | **Silent** (no alert) |
+| State | Condition |
+|-------|-----------|
+| APPROACHING | Last 3 centroid distances all decreasing by > 0.5 km/sample |
+| RETREATING | Last 3 centroid distances all increasing by > 0.5 km/sample |
+| STATIONARY | Trend below threshold |
+| UNKNOWN | Fewer than 3 centroid history samples (insufficient data) |
 
-The analysis uses a least-squares linear regression on the mean distance per 5-minute window (pure Python stdlib, no scipy). Velocity is computed from centroid displacement between the oldest and newest populated window. Density trend (CRESCENTE / CALANTE / STABILE) compares the lightning rate in the first vs. second half of the buffer.
+**Alert triggers (zone-based, not time-based):**
+
+| Event | Trigger | Icon |
+|-------|---------|------|
+| Initial detection | New storm cell appears within radius | ⚡ |
+| Zone approaching | Cell crosses a zone boundary inward (<15 / 15–30 / 30–50 km) | 🔴 |
+| Zone retreating | Cell crosses a zone boundary outward (state = RETREATING) | 🟢 |
+| Periodic re-alert | Every 10 min while still APPROACHING | 🔴 |
+| All clear | No strikes for 15 consecutive minutes | ✅ |
+
+Hard cooldown of 5 min between any two alerts for the same cluster.
 
 **Behaviour:**
-1. On app startup (or save), if the monitor is enabled a persistent asyncio task is created.
-2. The task connects to the broker and subscribes to all geohash topics for the area.
-3. For every incoming strike: computes distance and azimuth → if `distance ≤ radius_km`, adds to buffer → runs trajectory analysis → fires alert if the state-specific cooldown has expired.
+1. On app startup (or save), if the monitor is enabled: a persistent MQTT task and a 2-minute polling task are created.
+2. The MQTT task connects to the broker, subscribes to geohash topics, and fills the strike buffer.
+3. Every 2 minutes: DBSCAN clusters the buffer, matches clusters to tracked cells, updates centroid history, and fires any pending alerts.
 4. On disconnect, waits 15 seconds and reconnects automatically.
 
-**Alert format — AVVICINAMENTO:**
+**Alert format — initial detection:**
 
 ```
-⚡ Lightning detected — Bacoli
+⚡ Storm detected — Bacoli
+📍 Distance: 48.2 km to NW (315°)
+🏷 Zone: Distant zone (>50 km)
+🟡 Status: Undetermined
+🕐 14:20
+```
+
+**Alert format — zone approaching:**
+
+```
+🔴 Storm approaching — Bacoli
 📍 Distance: 28.3 km to NW (315°)
-🔴 Approaching at ~42 km/h
-⏱ Estimated arrival: 40 min
-⚡ Increasing intensity
-🔕 Next update in 5 min
+🏷 Zone: Near zone (15–30 km)
+🚀 ~42 km/h — estimated arrival: 40 min
 🕐 14:32
 ```
 
-**Alert format — ALLONTANAMENTO:**
+**Alert format — all clear:**
 
 ```
-⚡ Lightning detected — Bacoli
-📍 Distance: 45.1 km to NW (315°)
-🟢 Moving away at ~38 km/h
-🔕 Next alert in 30 min
-🕐 14:55
+✅ Storm cleared — Bacoli
+🔇 No lightning in the last 15 min
+🕐 15:10
 ```
 
 **Example configuration:**
@@ -576,7 +608,7 @@ DRADIS routes the request to the Web Search sub-agent, which calls `read_url` vi
 
 ### Lightning alert *(live monitor)*
 
-DRADIS opens a persistent MQTT connection and listens for lightning strike data in real time. Each strike within the configured radius feeds a 60-minute sliding window buffer. Trajectory analysis (linear regression over 5-min windows) classifies the storm and adapts alert frequency automatically — no manual cooldown, no polling, no LLM.
+DRADIS opens a persistent MQTT connection and listens for lightning strike data in real time. Strikes within the configured radius are collected in a 15-minute sliding window; a DBSCAN clustering task fires every 2 minutes to identify storm cells and track each one's approach trajectory. Alerts are zone-based (initial detection, zone crossing, periodic re-alert every 10 min if approaching, all-clear after 15 min of silence) — no manual cooldown, no polling, no LLM.
 
 | Field | Value |
 |-------|-------|
@@ -585,15 +617,20 @@ DRADIS opens a persistent MQTT connection and listens for lightning strike data 
 | Radius | 50 km |
 | Language | 🇮🇹 Italiano |
 
-Sample alert (AVVICINAMENTO):
+Sample alert (zone approaching):
 ```
-⚡ Lightning detected — Bacoli
-📍 Distance: 28.3 km to NW (315°)
-🔴 Approaching at ~42 km/h
-⏱ Estimated arrival: 40 min
-⚡ Increasing intensity
-🔕 Next update in 5 min
+🔴 Temporale in avvicinamento — Bacoli
+📍 Distanza: 28.3 km a NO (315°)
+🏷 Zona: Zona vicina (15–30 km)
+🚀 ~42 km/h — arrivo stimato: 40 min
 🕐 14:32
+```
+
+Sample alert (all clear):
+```
+✅ Temporale dissolto — Bacoli
+🔇 Nessun fulmine negli ultimi 15 min
+🕐 15:10
 ```
 
 No API key required. No Google account. Reconnects automatically on disconnect.

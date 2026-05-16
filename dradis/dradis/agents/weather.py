@@ -2,8 +2,8 @@ import httpx
 import statistics
 from datetime import date as _date
 
-from agent_core import create_agent, _now_str
-from web.server import SETTINGS_DEFAULTS
+from core import create_agent, _now_str
+from web.store import SETTINGS_DEFAULTS
 
 
 def _summarise_hourly(hourly: dict, days: int) -> list:

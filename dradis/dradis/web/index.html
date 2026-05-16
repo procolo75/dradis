@@ -3169,6 +3169,23 @@ function renderMonitorForm(monitor) {
         </select>
       </div>
 
+      <div class="form-group">
+        <label for="m-alert-mode">Alert mode</label>
+        <select id="m-alert-mode" style="width:100%;max-width:320px">
+          <option value="direct" ${(monitor.alert_mode || "direct") === "direct" ? "selected" : ""}>Direct Telegram — send report without LLM</option>
+          <option value="llm"    ${monitor.alert_mode === "llm"    ? "selected" : ""}>LLM — pass report to DRADIS with instructions</option>
+        </select>
+        <small style="color:var(--text-muted)">Direct mode sends the raw report immediately — no tokens consumed. LLM mode passes the report to DRADIS which can send messages, emails, create tasks…</small>
+      </div>
+
+      <div id="m-llm-section" style="${monitor.alert_mode === 'llm' ? '' : 'display:none'}">
+        <div class="form-group">
+          <label for="m-instructions">DRADIS Instructions</label>
+          <textarea id="m-instructions" rows="4" style="width:100%;resize:vertical" placeholder="Examples:&#10;• Send this report via Telegram only if there are events with magnitude ≥ 2.&#10;• Create a Google Task with the summary.&#10;• Send an email with the full report.">${monitor.instructions || ""}</textarea>
+          <small style="color:var(--text-muted)">DRADIS receives the generated report and executes these instructions using its full capabilities (Telegram, email, tasks…). If empty, sends the report to Telegram.</small>
+        </div>
+      </div>
+
       <div class="form-group" id="fg-days">
         <label for="m-days">Forecast days (1–7)</label>
         <input type="number" id="m-days" min="1" max="7" value="${monitor.days || 2}" style="width:80px">
@@ -3276,6 +3293,10 @@ function renderMonitorForm(monitor) {
     validateCronMonitorLive(val);
   });
 
+  document.getElementById("m-alert-mode").addEventListener("change", function () {
+    document.getElementById("m-llm-section").style.display = this.value === "llm" ? "" : "none";
+  });
+
   document.getElementById("btn-save-monitor").onclick      = saveMonitor;
   document.getElementById("btn-run-monitor").onclick       = runMonitor;
   document.getElementById("btn-duplicate-monitor").onclick = duplicateMonitor;
@@ -3296,6 +3317,10 @@ async function saveMonitor() {
     hours_ahead:  parseInt(document.getElementById("m-hours-ahead").value, 10) || 2,
     seismic_area: document.getElementById("m-seismic-area")?.value || "flegrei",
     time_range:   document.getElementById("m-time-range")?.value   || "last_24h",
+    alert_mode:   document.getElementById("m-alert-mode").value,
+    instructions: document.getElementById("m-alert-mode").value === "llm"
+                    ? (document.getElementById("m-instructions")?.value.trim() || "")
+                    : "",
   };
   try {
     const updated = await api("PUT", `/api/monitors/${selectedMonitorId}`, payload);
@@ -3346,6 +3371,8 @@ async function duplicateMonitor() {
       hours_ahead:  src.hours_ahead,
       seismic_area: src.seismic_area || "flegrei",
       time_range:   src.time_range   || "last_24h",
+      alert_mode:   src.alert_mode   || "direct",
+      instructions: src.instructions || "",
     });
     monitors.push(copy);
     selectedMonitorId = copy.id;
@@ -3425,7 +3452,7 @@ function renderLiveMonitorForm(monitor) {
   }
 
   const _TYPE_DESCS_LIVE = {
-    lightning: "Persistent MQTT listener on Blitzortung. Monitors strikes in real time and analyses storm trajectory (60-min sliding window, 5-min windows, linear regression). Alerts only when the storm is approaching or moving away — silent when stationary or data is insufficient. Approaching → every 5 min with ETA · moving away → every 30 min. No LLM, no cron.",
+    lightning: "Persistent MQTT listener on Blitzortung. Strikes within radius buffered 15 min; DBSCAN clustering (eps=8 km) every 2 min identifies storm cells and tracks each centroid. Zone-based alerts: initial detection · zone crossing (<15 / 15–30 / 30–50 km) · periodic re-alert every 10 min if approaching · ✅ all-clear after 15 min of silence. Multi-storm support. No LLM, no cron.",
     seismic:   "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
   };
 
@@ -3497,7 +3524,7 @@ function renderLiveMonitorForm(monitor) {
       </div>
 
       <div class="form-group" id="lm-lightning-hint">
-        <small style="color:var(--text-muted)">Alerts only when the storm is <b>approaching</b> (every 5 min, with ETA) or <b>moving away</b> (every 30 min). Silent when stationary or when data is insufficient.</small>
+        <small style="color:var(--text-muted)">Zone-based alerts: <b>initial detection</b> when a storm enters the radius · <b>zone crossing</b> (&lt;15 / 15–30 / 30–50 km) · <b>periodic re-alert every 10 min</b> if approaching · <b>✅ all clear</b> after 15 min of silence.</small>
       </div>
 
       <div class="form-group" id="lm-status-group" style="display:none">

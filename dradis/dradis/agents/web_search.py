@@ -1,5 +1,5 @@
-from agent_core import create_agent, _now_str
-from web.server import SETTINGS_DEFAULTS
+from core import create_agent, _now_str
+from web.store import SETTINGS_DEFAULTS
 
 
 def create_web_search_agent(settings: dict, tavily_api_key: str):

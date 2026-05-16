@@ -1,23 +1,50 @@
 # CHANGELOG
 
+## [2.18.0] - 2026-05-16
+- **Refactor — complete structural reorganisation**: split the monolithic `main.py` (1 465 lines) and `web/server.py` (1 266 lines) into focused modules, each under 350 lines.
+  - `agents/` monitor and live-monitor files moved to dedicated packages: `monitors/` (rain, thunderstorm, seismic) and `live_monitors/` (lightning, ha, seismic).
+  - `main.py` split into `bot/state.py` (global state, startup, settings, history, fallback engine), `bot/scheduler.py` (task and monitor cron jobs, live-monitor lifecycle), `bot/commands.py` (OAuth flows, `/info`, `/todo`), `bot/handlers.py` (Telegram message and callback handlers), and a slim `main.py` orchestration entry point.
+  - `web/server.py` split into `web/store.py` (shared data layer: load/save, callback registrations, cron validation, provider helpers, OAuth state), `web/models.py` (Pydantic request models), five `web/routes/` modules (settings, agents, tasks, monitors, tools), and a slim `web/server.py` that assembles the FastAPI app and re-exports all public symbols for backward compatibility.
+  - `agent_core.py` renamed to `core.py`; all imports updated.
+- **No functional changes**: all features, API endpoints, Telegram commands, scheduled jobs, and data files are identical to v2.17.18.
+- **Documentation**: CHANGELOG fully translated to English; DOCS.md rewritten; GitHub wiki created.
+
+## [2.17.18] - 2026-05-16
+- **Fix — Scheduled Monitor LLM mode: LLM response never sent to Telegram**: `_run_monitor_llm` was running the LLM correctly but never sending the result to Telegram — the message was silently discarded. Added `send_message` call at the end of the function, with error fallback if sending fails. Only the "Direct Telegram" mode worked before; "Call DRADIS" mode now works correctly too.
+
+## [2.17.17] - 2026-05-16
+- **Fix — Scheduled Monitor LLM mode: logging and Telegram error notification**: `_run_monitor_llm` now adds a start log entry (`model=… members=…`) and, on LLM error (primary + fallback), sends an error message to Telegram instead of failing silently.
+
+## [2.17.16] - 2026-05-16
+- **Bump** — version bump for HA add-on update detection (no functional changes).
+
+## [2.17.14] - 2026-05-16
+- **Rewrite — Lightning Live Monitor: DBSCAN clustering + state machine**: replaced the 60-min linear regression algorithm with pure Python DBSCAN (eps=8 km, min_samples=2) on a 15-min sliding window. Each storm cell is tracked independently with a 20-min centroid history; state (APPROACHING/RETREATING/STATIONARY/UNKNOWN) is classified from the last 3 distance sample trend. Zone-based alerts (<15 / 15–30 / 30–50 / >50 km): initial detection, zone change, periodic re-alert every 10 min when approaching, "all clear" (✅) after 15 min with no strikes. Heartbeat task and linear regression removed; asyncio polling every 2 min handles all checks. Hard 5-min cooldown per cluster. Multi-storm support: multiple storms in the same area tracked independently.
+
+## [2.17.13] - 2026-05-16
+- **Feature — Seismic Scheduled Monitor: event list + revised depth bins**: added a "📋 Event list" section to the scheduled report — one event per line with magnitude icon, local datetime, Md, depth and status (⚠️ Automatic / ✅ Revised); maximum 80 events, then "… and N more". Depth: 1-km step bins (removed the 2–5 km bucket); each bin shows event count + **maximum magnitude** (`max Md X.X`). Magnitude: step corrected to 1 (0–0.9, 1–1.9, …); label updated from "0.99" to "0.9" for consistency.
+
+## [2.17.12] - 2026-05-16
+- **Fix + Refactor — Seismic Live Monitor: RSS → JSON API**: rewrote `seismic_live_monitor.py` to use the GOSSIP JSON API (`https://terremoti.ov.ingv.it/gossip/{area}/events.json`) instead of the RSS feed. Fixed two critical bugs: (1) `return` instead of `continue` for Bollettino events was blocking processing of all subsequent events in the feed; (2) `row` was a shared reference to the `_seen` dict, so the `old_state vs state` comparison for detecting Automatic→Revised promotions always compared equal values — no state-change notification was ever sent. The JSON uses the structured `class` field (no text parsing), `magnitudos` and `location` already validated by the scheduled monitor. Parallel fetch per area via `asyncio.gather`; `MAX_AGE_HOURS=48` cutoff to limit in-memory tracking.
+
 ## [2.17.11] - 2026-05-15
 - **Fix — Web UI cron day-of-week description**: the `<details>` help block incorrectly stated "0–7, 0 and 7 = Sunday" (standard Unix cron). APScheduler uses Python weekday convention: **0 = Monday … 6 = Sunday**; 7 is invalid. Description updated in both the Tasks and Monitors panels to "(0–6: 0=Mon … 6=Sun; or: mon tue wed thu fri sat sun)".
 - **Fix — Web UI Monitors: missing cron help block**: the Scheduled Monitor form was missing the cron `<details>` explanation block present in the Tasks form. Added identical block (with corrected day-of-week info).
 
 ## [2.17.10] - 2026-05-15
-- **Refactor — Seismic Live Monitor: eliminato database SQLite**: rimosso `seismic.db` e tutto il codice correlato (`sqlite3`, `json`, `Path`; funzioni `_init_db`, `_db_get`, `_db_upsert`, `_now_iso`). Il tracking degli eventi visti è ora interamente in-memory (`_seen: dict[str, dict]`). Nessuna regressione funzionale: il primo poll silenzia i duplicati esistenti, le promozioni di stato (Automatico → Rivisto) continuano a funzionare.
-- **UI — Sidebar MQTT: icona 📡 al posto del pallino**: il pannello Settings MQTT nella sidebar non usa più un `nav-dot` ma mostra l'icona 📡, coerente con la natura del protocollo.
-- **UI — Nav dots più grandi e rossi quando inattivi**: i `nav-dot` passano da 8 px a 12 px di diametro; quando inattivi (classe assente o `.on` mancante) mostrano il colore `var(--danger, #e53935)` (rosso) invece di grigio.
+- **Refactor — Seismic Live Monitor: removed SQLite database**: removed `seismic.db` and all related code (`sqlite3`, `json`, `Path`; functions `_init_db`, `_db_get`, `_db_upsert`, `_now_iso`). Seen-event tracking is now entirely in-memory (`_seen: dict[str, dict]`). No functional regression: the first poll silently deduplicates existing events; state promotions (Automatic → Revised) continue to work.
+- **UI — Sidebar MQTT: 📡 icon instead of dot**: the MQTT Settings panel in the sidebar no longer uses a `nav-dot`; instead it shows the 📡 icon, consistent with the protocol's nature.
+- **UI — Nav dots larger and red when inactive**: `nav-dot` elements now 12 px in diameter (up from 8 px); when inactive (class absent or `.on` missing) they show `var(--danger, #e53935)` (red) instead of grey.
 
 ## [2.17.9] - 2026-05-15
-- **Fix — Telegram /monitors: Live Seismic mostra aree non location**: i Live Monitor di tipo seismic mostravano "(Rome)" nel menu Telegram. Ora mostrano le aree configurate (es. "flegrei, vesuvio"). Scheduled seismic monitor già corretto dalla v2.17.7.
-- **Fix — Web UI: icona Live Seismic Monitor**: nella sidebar i Live Monitor sismici mostravano ⚡ (fulmine). Ora mostrano 🌍.
-- **Feature — Seismic Scheduled Monitor: report statistico**: eliminata la lista dei singoli eventi. Il report mostra ora solo il totale (automatici/rivisti) e due distribuzioni a istogramma: magnitudine (n.d. / <0 / 0–0.99 / 1–1.99 / 2–2.99 / 3–3.99 / 4+) e profondità (0–1 / 1–2 / 2–5 / 5–10 / 10+ km), con conteggio per fascia e icona colore.
+- **Fix — Telegram /monitors: Live Seismic shows areas not location**: seismic live monitors were showing "(Rome)" in the Telegram menu. Now correctly show configured areas (e.g. "flegrei, vesuvio"). Scheduled seismic monitor was already fixed in v2.17.7.
+- **Fix — Web UI: Live Seismic Monitor icon**: seismic live monitors in the sidebar were showing ⚡ (lightning). Now correctly show 🌍.
+- **Feature — Seismic Scheduled Monitor: statistical report**: removed the individual event list. The report now shows only the total (automatic/revised) and two histogram distributions: magnitude (n/a / <0 / 0–0.99 / 1–1.99 / 2–2.99 / 3–3.99 / 4+) and depth (0–1 / 1–2 / 2–5 / 5–10 / 10+ km), with per-band count and colour icon.
 
 ## [2.17.8] - 2026-05-15
-- **Fix — Seismic Live Monitor: orario evento**: l'orario nel messaggio Telegram era quello di pubblicazione RSS (`pubDate`), non dell'evento. Ora viene estratto dal `<title>` dell'item RSS (formato `Evento sismico {Area} - YYYY/MM/DD HH:MM:SS`, UTC), con fallback a `pubDate` se il parsing fallisce.
-- **Feature — Seismic Live Monitor: ore silenziose**: nuovi campi `quiet_start` / `quiet_end` (HH:MM). Quando l'orario corrente è nell'intervallo configurato, le notifiche non vengono inviate ma accumulate in memoria. Al primo poll successivo all'uscita dall'intervallo, viene inviato un header 🔕 seguito da tutti gli eventi accumulati in ordine. Supporta intervalli cross-mezzanotte (es. 23:00–07:00). Web UI: selettori orario nel pannello Live Monitor (visibili solo per tipo seismic).
-- **Fix — Seismic Scheduled Monitor**: rimosso `#id` da ogni riga evento; rimossa profondità media dal riepilogo (rimangono min/max).
+- **Fix — Seismic Live Monitor: event time**: the time shown in the Telegram message was the RSS publication date (`pubDate`), not the actual event time. Now extracted from the RSS item's `<title>` (format `Evento sismico {Area} - YYYY/MM/DD HH:MM:SS`, UTC), with fallback to `pubDate` if parsing fails.
+- **Feature — Seismic Live Monitor: quiet hours**: new `quiet_start` / `quiet_end` fields (HH:MM). When the current time falls within the configured range, notifications are not sent but accumulated in memory. On the first poll after the quiet period ends, a 🔕 header is sent followed by all accumulated events in order. Supports cross-midnight intervals (e.g. 23:00–07:00). Web UI: time pickers added to the Live Monitor panel (visible only for seismic type).
+- **Fix — Seismic Scheduled Monitor**: removed `#id` from each event line; removed average depth from the summary (min/max remain).
 
 ## [2.17.7] - 2026-05-15
 - **Feature — Seismic Scheduled Monitor**: new monitor type `seismic` in `agents/seismic_monitor.py` backed by the INGV GOSSIP JSON API (`https://terremoti.ov.ingv.it/gossip/{area}/events.json`). Configurable area (Campi Flegrei, Vesuvio, Isola di Ischia, Golfo di Napoli) and time range (da inizio giornata, ultime 24 ore, da inizio settimana, ultimi 7 giorni, da inizio mese, ultimo mese, da inizio anno, ultimo anno). Runs on a user-defined cron schedule and sends a Telegram HTML report with total event count (automatic vs revised), depth statistics (min/max/avg), and a list of up to 20 recent events with Maps links. No LLM used. Integrated into `main.py` (`_MONITOR_RUNNERS`), `server.py` (`MonitorPayload` + location validation bypass), and Web UI (type dropdown + area/period selectors, location field hidden for seismic type).
@@ -85,10 +112,10 @@
 - **UX — HA Monitor sidebar**: removed 🏠 emoji from HA Monitor sidebar items; only status dot + name are shown.
 
 ## [2.15.3] - 2026-05-10
-- **Fix — HA Monitor cooldown bug**: il cooldown per entità veniva aggiornato anche quando il LLM rispondeva SKIP, impedendo alert successivi entro il periodo di cooldown. Ora il cooldown si aggiorna solo quando viene effettivamente inviato un alert.
-- **Fix — prompt LLM istruzioni vincolanti**: il prompt precedente lasciava al LLM l'autonomia di rispondere SKIP anche con istruzioni esplicite. Ora, se le istruzioni sono presenti, il LLM le segue in modo vincolante (override del suo giudizio). Se non ci sono istruzioni, invia sempre un alert senza decidere.
-- **UX — input entità manuale**: il campo accetta ora anche il formato HA nativo (`switch.my_switch`) e lo converte automaticamente in formato MQTT (`switch/my_switch`). Aggiornato il placeholder con entrambi i formati.
-- **UX — istruzioni LLM**: aggiunto placeholder con 3 esempi concreti + hint che chiarisce che le istruzioni sono vincolanti e cosa succede se il campo è vuoto.
+- **Fix — HA Monitor cooldown bug**: per-entity cooldown was being updated even when the LLM responded SKIP, preventing subsequent alerts within the cooldown period. Cooldown is now only updated when an alert is actually sent.
+- **Fix — LLM instructions binding**: the previous prompt allowed the LLM to respond SKIP even with explicit instructions. Now, if instructions are present, the LLM follows them bindingly (overriding its own judgment). If there are no instructions, an alert is always sent without any LLM decision.
+- **UX — entity input**: the field now also accepts the native HA format (`switch.my_switch`) and automatically converts it to MQTT format (`switch/my_switch`). Placeholder updated with both formats.
+- **UX — LLM instructions**: added placeholder with 3 concrete examples + hint clarifying that instructions are binding and what happens when the field is empty.
 
 ## [2.15.2] - 2026-05-10
 - **UX — HA MQTT settings moved to dedicated panel**: MQTT broker settings (host, port, username, password, statestream prefix) removed from the main Settings panel and promoted to a dedicated "⚙ MQTT Settings" nav-item inside the "HA Monitors" sidebar section, consistent with the Web Search / Weather / Google agent pattern.
@@ -207,7 +234,6 @@
 - **Telegram — `/monitors` command**: lists enabled monitors as inline buttons; tapping runs the monitor immediately and delivers the result to Telegram.
 - **Scheduler**: monitor jobs coexist with task jobs in the same APScheduler instance using a `monitor:` ID prefix. `reload_task_jobs()` no longer calls `remove_all_jobs()` — it removes only non-monitor jobs, preventing monitor jobs from being destroyed on task edits.
 - **New file**: `monitors/thunderstorm.py` — self-contained module with `run_thunderstorm_monitor(monitor, tz_name)` entry point; uses only `httpx`, `statistics`, and `zoneinfo` (all already in the container).
-
 - **Fix — fallback model not triggered on rate limit**: introduced the centralised `_run_with_fallback()` helper used by both `handle_message` and `run_scheduled_task`. The previous code only triggered the fallback on an explicit exception from `executor.arun()`, but agno often swallows rate-limit errors internally and returns `response.content = ""` without propagating anything — the fallback never fired. The new helper also detects empty responses and treats them as errors, correctly triggering the fallback model.
 - **Improved Telegram notifications**: when the fallback succeeds the user receives `⚠️ Primary model failed — replied via fallback ✅`. If the fallback also fails, the message is `❌ Both primary and fallback models failed` with both model names. Scheduled tasks follow the same logic.
 

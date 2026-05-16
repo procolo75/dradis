@@ -1,23 +1,16 @@
 """
-agents/ha_live_monitor.py
-─────────────────────────────────
+live_monitors/ha.py
+────────────────────
 MQTT listener for Home Assistant mqtt_statestream.
-Monitors selected HA entities and sends a Telegram alert when their state
-changes, with per-entity cooldown to avoid spam.
+Monitors selected HA entities and sends a Telegram alert on state changes,
+with per-entity cooldown.
 
-Pipeline per state change
-─────────────────────────
-1. First message after (re)connect: record state silently (MQTT retained) — no alert
-2. State unchanged from last known → skip
-3. State filter — if filter_states is non-empty and state not in set, skip
-4. Cooldown check — skip if within cooldown window
-5. Alert mode:
-   - "llm"    → call LLM with instructions, send result (skipped only if LLM returns empty)
-   - "direct" → build message from direct_template (or default), send immediately
-
-One HaLiveMonitor instance per enabled HA monitor entry.
-All instances are owned by HaMonitorManager (singleton ha_monitor_manager).
-Called by main.py on startup and on config changes.
+Pipeline per state change:
+  1. First message after (re)connect: record silently (MQTT retained) — no alert
+  2. State unchanged → skip
+  3. State filter — skip if filter_states non-empty and state not in set
+  4. Cooldown check — skip if within cooldown window
+  5. Alert: LLM mode (call model) or Direct mode (template message)
 """
 
 import asyncio
@@ -45,7 +38,7 @@ class HaLiveMonitor:
         self.cooldown_min    = float(cfg.get("cooldown_min", 60))
         self.language        = cfg.get("language", "it")
         self.tz_name         = tz_name
-        self.alert_mode      = cfg.get("alert_mode", "llm")   # "llm" | "direct"
+        self.alert_mode      = cfg.get("alert_mode", "llm")
         self.filter_states   = {s.strip().lower() for s in cfg.get("filter_states", []) if s.strip()}
         self.direct_template = cfg.get("direct_template", "").strip()
 
@@ -53,7 +46,7 @@ class HaLiveMonitor:
         self._llm     = llm_fn
         self._mqtt    = mqtt_cfg
         self._cooldowns: dict[str, float] = {}
-        self._last_states: dict[str, str] = {}   # entity_id → last known state (used to skip retained msgs on connect)
+        self._last_states: dict[str, str] = {}
         self._task: asyncio.Task | None = None
 
     def start(self):
@@ -108,17 +101,14 @@ class HaLiveMonitor:
 
         state = message.payload.decode("utf-8", errors="replace").strip()
 
-        # First message for this entity after (re)connect is the retained state — record it, don't alert
         if entity_id not in self._last_states:
             self._last_states[entity_id] = state
             return
 
-        # No actual change → nothing to do
         if state == self._last_states[entity_id]:
             return
         self._last_states[entity_id] = state
 
-        # State filter — avoids LLM calls for states that are never actionable
         if self.filter_states and state.lower() not in self.filter_states:
             return
 
@@ -172,7 +162,7 @@ class HaLiveMonitor:
 
 
 class HaMonitorManager:
-    """Owns all HA monitor instances. Called by main.py on startup and config changes."""
+    """Owns all HA monitor instances. Reloaded by the bot on startup and config changes."""
 
     def __init__(self):
         self._monitors: dict[str, HaLiveMonitor] = {}

@@ -2,8 +2,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from agent_core import create_agent, _now_str
-from web.server import SETTINGS_DEFAULTS
+from core import create_agent, _now_str
+from web.store import SETTINGS_DEFAULTS
 
 GCAL_TOKEN_FILE   = Path("/data/google_calendar_token.json")
 GCAL_SCOPES       = ["https://www.googleapis.com/auth/calendar"]
@@ -12,8 +12,8 @@ GCAL_REDIRECT_URI = "http://localhost:8099/gcalauth/callback"
 
 async def _notify_token_expired():
     try:
-        import main as _main
-        await _main._send_error_telegram(
+        import bot.state as _state
+        await _state._send_error_telegram(
             "🔑 <b>Google Calendar token scaduto o revocato.</b>\n"
             "Invia <code>/gcalauth</code> per riconnetterti."
         )

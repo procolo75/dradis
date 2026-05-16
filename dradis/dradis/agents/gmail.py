@@ -3,8 +3,8 @@ import base64
 from email.message import EmailMessage
 from pathlib import Path
 
-from agent_core import create_agent, _now_str
-from web.server import SETTINGS_DEFAULTS
+from core import create_agent, _now_str
+from web.store import SETTINGS_DEFAULTS
 
 GMAIL_TOKEN_FILE   = Path("/data/google_gmail_token.json")
 GMAIL_SCOPES       = [
@@ -17,8 +17,8 @@ GMAIL_REDIRECT_URI = "http://localhost:8099/gmailauth/callback"
 async def _notify_token_expired(service: str, cmd: str):
     """Send a Telegram notification when a Google token has been revoked."""
     try:
-        import main as _main  # imported lazily to avoid circular imports
-        await _main._send_error_telegram(
+        import bot.state as _state
+        await _state._send_error_telegram(
             f"🔑 <b>{service} token scaduto o revocato.</b>\n"
             f"Invia <code>{cmd}</code> per riconnetterti."
         )

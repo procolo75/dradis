@@ -17,7 +17,7 @@ def _api_key_for_provider(provider_id: str) -> str:
 
 
 def _base_url_for_provider(provider_id: str) -> str:
-    from web.server import PROVIDERS
+    from web.store import PROVIDERS
     for p in PROVIDERS:
         if p["id"] == provider_id:
             return p["base_url"]

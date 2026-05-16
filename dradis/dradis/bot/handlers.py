@@ -1,0 +1,299 @@
+"""
+bot/handlers.py
+────────────────
+Telegram message and callback query handlers:
+  handle_message, handle_voice, cmd_menu, cmd_tasks, cmd_monitors,
+  handle_task_callback, handle_monitor_callback, handle_live_monitor_callback.
+"""
+
+import asyncio
+import html
+import os
+import tempfile
+import time
+
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
+from telegram.ext import ContextTypes
+
+import bot.state as _state
+from bot.scheduler import (
+    run_scheduled_task,
+    run_scheduled_monitor,
+    _live_status_dispatcher,
+)
+from web.store import (
+    load_tasks,
+    load_monitors,
+    load_live_monitors,
+)
+
+COMMANDS = [
+    BotCommand("info",       "Status and configuration of all agents"),
+    BotCommand("menu",       "List all available commands"),
+    BotCommand("tasks",      "List and run enabled tasks"),
+    BotCommand("monitors",   "List and run enabled monitors"),
+    BotCommand("gcalauth",   "Connect Google Calendar (OAuth2)"),
+    BotCommand("gmailauth",  "Connect Gmail (OAuth2)"),
+    BotCommand("gtasksauth", "Connect Google Tasks (OAuth2)"),
+    BotCommand("todo",       "List open Google Tasks"),
+]
+
+
+# ── Message handler ───────────────────────────────────────────────────────────
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    settings        = _state.read_settings()
+    history_enabled = settings.get("history_enabled", True)
+    history_depth   = settings.get("history_depth", 2)
+
+    question      = update.message.text
+    system_prompt = _state.build_system_prompt()
+    prompt        = _state.build_context(question) if history_enabled else question
+
+    model    = settings.get("model",    _state.SETTINGS_DEFAULTS["model"])
+    provider = settings.get("provider", _state.SETTINGS_DEFAULTS["provider"])
+    members  = _state._build_members(settings)
+    executor = _state._build_executor(system_prompt, model, provider, members, settings)
+    print(f"[DRADIS] model: {model} | members: {[m.name for m in members]}")
+
+    response, used_fallback, error = await _state._run_with_fallback(
+        executor         = executor,
+        prompt           = prompt,
+        settings         = settings,
+        system_prompt    = system_prompt,
+        primary_model    = model,
+        primary_provider = provider,
+        context_label    = "handle_message",
+    )
+
+    if error is not None:
+        fb_model_id = _state._apply_fallback_settings(settings).get("model", model) if used_fallback else model
+        if used_fallback:
+            err_msg = (
+                f"❌ Both primary (<code>{html.escape(model)}</code>) and "
+                f"fallback (<code>{html.escape(fb_model_id)}</code>) models failed: "
+                f"{html.escape(str(error))}"
+            )
+        else:
+            err_msg = (
+                f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(error))}\n"
+                "<i>No fallback model configured.</i>"
+            )
+        await _state._send_error_telegram(err_msg)
+        await update.message.reply_text(err_msg, parse_mode=ParseMode.HTML)
+        return
+
+    if used_fallback:
+        await _state._send_error_telegram(_state._build_fallback_used_msg(settings, model))
+
+    member_responses = _state._collect_member_responses(response)
+    text = (response.content or "").strip()
+
+    if history_enabled:
+        _state.save_turn("user", question, history_depth)
+        _state.save_turn("assistant", text, history_depth)
+
+    agents_label = _state._agents_label(member_responses)
+
+    if text:
+        await update.message.reply_text(
+            _state.md_to_html(text) + f"\n\n<i>{agents_label}</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await update.message.reply_text(
+            f"⚠️ Model <code>{html.escape(model)}</code> returned no text.\n\n<i>{agents_label}</i>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+# ── Voice handler ─────────────────────────────────────────────────────────────
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    settings = _state.read_settings()
+    if not settings.get("voice_enabled", False):
+        await update.message.reply_text("🎙️ Voice agent is not enabled. You can enable it from the Web UI.")
+        return
+
+    voice_model     = settings.get("voice_model",    _state.SETTINGS_DEFAULTS["voice_model"])
+    voice_language  = settings.get("voice_language", _state.SETTINGS_DEFAULTS["voice_language"])
+    send_transcript = settings.get("voice_send_transcription", True)
+    t0    = time.time()
+    voice = update.message.voice
+
+    try:
+        tg_file = await context.bot.get_file(voice.file_id)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp_path = tmp.name
+        await tg_file.download_to_drive(tmp_path)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Could not download voice message: {html.escape(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    try:
+        transcription = await _state.transcribe_voice(tmp_path, voice_model, voice_language)
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Transcription error: {html.escape(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    print(f"[DRADIS] Voice transcribed in {time.time() - t0:.1f}s: {transcription[:80]!r}")
+
+    if send_transcript:
+        await update.message.reply_text(f"🎙️ {html.escape(transcription)}", parse_mode=ParseMode.HTML)
+
+    class _VoiceMessage:
+        def __init__(self, real_msg, text: str):
+            self._msg = real_msg
+            self.text = text
+        def __getattr__(self, name):
+            return getattr(self._msg, name)
+
+    class _VoiceUpdate:
+        def __init__(self, real_update: Update, text: str):
+            self.effective_user = real_update.effective_user
+            self.message        = _VoiceMessage(real_update.message, text)
+
+    await handle_message(_VoiceUpdate(update, transcription), context)
+
+
+# ── Menu / task / monitor commands ────────────────────────────────────────────
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    lines = "\n".join(f"/{c.command} — {c.description}" for c in COMMANDS)
+    await update.message.reply_text(f"<b>DRADIS Commands:</b>\n\n{lines}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    tasks = [t for t in load_tasks() if t.get("enabled")]
+    if not tasks:
+        await update.message.reply_text("No enabled tasks. Enable tasks from the Web UI.")
+        return
+    keyboard = [[InlineKeyboardButton(t["name"], callback_data=f"task:{t['id']}")] for t in tasks]
+    await update.message.reply_text(
+        "Select a task to run:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    scheduled = [m for m in load_monitors() if m.get("enabled")]
+    live      = [m for m in load_live_monitors() if m.get("enabled")]
+    if not scheduled and not live:
+        await update.message.reply_text("No enabled monitors. Enable monitors from the Web UI.")
+        return
+    keyboard = []
+    for m in scheduled:
+        detail = m.get("seismic_area", "?") if m.get("type") == "seismic" else m.get("location", "?")
+        keyboard.append([InlineKeyboardButton(
+            f"{m['name']} ({detail})",
+            callback_data=f"monitor:{m['id']}",
+        )])
+    for m in live:
+        status = _live_status_dispatcher(m["id"])
+        badge  = "🟢" if status == "running" else "🔴"
+        if m.get("type") == "seismic":
+            areas = ", ".join(m.get("areas", [])) or "—"
+            label = f"{badge} {m['name']} ({areas})"
+        else:
+            label = f"{badge} {m['name']} ({m.get('location', '?')})"
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"live:{m['id']}")])
+    header = "Scheduled monitors — tap to run now:" if scheduled else ""
+    if live:
+        header += ("\n\n" if header else "") + "Live monitors — tap to see status:"
+    await update.message.reply_text(
+        header.strip(),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# ── Callback query handlers ───────────────────────────────────────────────────
+
+async def handle_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _state.ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    task_id = query.data.removeprefix("task:")
+    task    = next((t for t in load_tasks() if t["id"] == task_id), None)
+    await query.answer()
+    if not task:
+        await query.message.reply_text("❌ Task not found.")
+        return
+    await query.message.reply_text(
+        f"▶️ Launching task <b>{html.escape(task['name'])}</b>…",
+        parse_mode=ParseMode.HTML,
+    )
+    asyncio.create_task(run_scheduled_task(task))
+
+
+async def handle_monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _state.ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    monitor_id = query.data.removeprefix("monitor:")
+    monitor    = next((m for m in load_monitors() if m["id"] == monitor_id), None)
+    await query.answer()
+    if not monitor:
+        await query.message.reply_text("❌ Monitor not found.")
+        return
+    detail = (
+        monitor.get("seismic_area", "?")
+        if monitor.get("type") == "seismic"
+        else monitor.get("location", "?")
+    )
+    await query.message.reply_text(
+        f"▶️ Launching monitor <b>{html.escape(monitor['name'])}</b> ({html.escape(detail)})…",
+        parse_mode=ParseMode.HTML,
+    )
+    asyncio.create_task(run_scheduled_monitor(monitor))
+
+
+async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _state.ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    item_id = query.data.removeprefix("live:")
+    monitor = next((m for m in load_live_monitors() if m["id"] == item_id), None)
+    await query.answer()
+    if not monitor:
+        await query.message.reply_text("❌ Live monitor not found.")
+        return
+    mtype  = monitor.get("type", "lightning")
+    status = _live_status_dispatcher(item_id)
+    badge  = "🟢 Running" if status == "running" else "🔴 Stopped"
+    if mtype == "seismic":
+        areas = ", ".join(monitor.get("areas", [])) or "—"
+        msg = (f"🌍 <b>{html.escape(monitor['name'])}</b>\n"
+               f"Areas: {html.escape(areas)}\n"
+               f"Status: {badge}\n"
+               f"Polling: 60s")
+    else:
+        msg = (f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
+               f"📍 {html.escape(monitor.get('location', '?'))}\n"
+               f"Status: {badge}\n"
+               f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: automatic (5/15/30 min)")
+    await query.message.reply_text(msg, parse_mode=ParseMode.HTML)

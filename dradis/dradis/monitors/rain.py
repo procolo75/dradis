@@ -1,10 +1,9 @@
 """
-agents/rain_monitor.py
-───────────────────────────────
+monitors/rain.py
+────────────────
 LLM-free monitor: fetches 15-minute precipitation data from Open-Meteo for a
 given location and sends a Telegram alert only when rain is forecast in the
-next N hours. If no precipitation is expected, returns an empty string (no
-Telegram message sent).
+next N hours. Returns an empty string when no precipitation is expected.
 """
 
 import html
