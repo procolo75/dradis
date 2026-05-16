@@ -1,29 +1,48 @@
 # DRADIS Agentic AI for Home Assistant
 
-DRADIS is a Home Assistant app that exposes a conversational AI agent controllable via Telegram. The agent is fully configurable from the built-in Web UI and the HA Configuration tab — no code changes required.
+DRADIS is a Home Assistant add-on that exposes a conversational AI agent controllable via Telegram. The agent is fully configurable from the built-in Web UI and the HA Configuration tab — no code changes required.
 
 ## Features
 
-- **Branded icon**: custom DRADIS AI icon in the HA app dashboard and sidebar
-- **Multi-provider LLM**: OpenRouter, OpenAI, GitHub Models, Gemini, Groq
-- **Web Search** sub-agent: query search via Tavily (optional, free API key)
-- **URL Fetch** tool: DRADIS fetches URL content via Jina Reader (free, no API key) and analyses it directly — no extra LLM call
-- **Weather** sub-agent powered by Open-Meteo (free, no API key)
-- **Voice** transcription via Groq Whisper (optional)
+- **Multi-provider LLM**: OpenRouter, OpenAI, GitHub Models, Gemini, Groq — switch provider and model at runtime from the Web UI
+- **Fallback model** — each agent has a configurable fallback provider and model; when any call fails DRADIS retries automatically and notifies which models switched; if both fail, a clear `❌` message is sent
+- **Conversation history** with configurable depth
+- **Telegram error notifications** — all API failures are reported via Telegram
+- **Model speed-test** — ranks models by tok/s, keeps top 5
+
+### Sub-agents
+
+- **Web Search** — query search via Tavily (optional free API key) + URL reading via Jina Reader (free, no key required)
+- **Weather** — powered by Open-Meteo (free, no API key); current conditions + up to 16-day forecast
+- **Voice** — transcription via Groq Whisper (optional; requires Groq API key)
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
 - **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
-- **Scheduled Tasks** — cron-based automation delivered to Telegram
-- **Scheduled Monitors** — LLM-free cron-based monitors (Thunderstorm risk, Rain alert) that fetch data from Open-Meteo and compute results in Python — no token cost, deterministic output
-- **Live Monitors** — persistent push-based monitors that stay connected and react to external events in real time, with no polling and no cron schedule. First type: ⚡ **Lightning alert** via MQTT — trajectory analysis (linear regression over 5-min windows) classifies the storm as approaching or moving away and adapts alert frequency automatically; silent when stationary or when data is insufficient
-- **HA Monitors** — monitor any Home Assistant entity via MQTT. Select entities from the broker via 🔍 Discover, define binding LLM instructions (which states trigger an alert), and receive LLM-written Telegram alerts on state changes. Per-entity cooldown avoids spam. Requires: Mosquitto broker add-on + MQTT integration + `mqtt_discoverystream_alt` (HACS). → [How-to on the Wiki](https://github.com/procolo75/dradis/wiki/HA-Monitors)
-- **Collapsible sidebar** — all Web UI sidebar sections (Agents, Tools, Tasks, Scheduled Monitors, Live Monitors, HA Monitors) are collapsed by default for a clean overview; click any header to expand
-- **Duplicate task / monitor** — copy any task or monitor with the ⎘ button; the copy is created disabled and ready to edit
-- **Fallback model** — each agent has a configurable fallback provider and model; when any agent fails (including sub-agents) DRADIS retries with the fallback and notifies which specific models switched; if both fail, a clear `❌` message lists all model names
-- **Telegram error notifications** — all API failures are reported via Telegram
-- **Model speed-test** — ranks models by tok/s, keeps top 5
-- **Conversation history** with configurable depth
-- All settings managed at runtime from the Web UI — no restart required
+
+### Automation
+
+- **Scheduled Tasks** — cron-based LLM tasks delivered to Telegram; use all enabled sub-agents (Web Search, Weather, Calendar, Gmail, Tasks)
+- **Scheduled Monitors** — LLM-free cron-based monitors that fetch data and compute results in Python (zero token cost, deterministic output):
+  - ⛈️ **Thunderstorm risk** — CAPE, Lifted Index, CIN, wind gusts from Open-Meteo; risk score 0–10 per time band
+  - 🌧️ **Rain alert** — 15-min precipitation data from Open-Meteo; silent when clear
+  - 🌍 **Seismic report** — event statistics from INGV GOSSIP JSON API (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli)
+- **Live Monitors** — persistent push-based monitors that react to external events in real time:
+  - ⚡ **Lightning alert** — persistent MQTT listener; pure-Python DBSCAN clustering on a 15-min sliding window classifies each storm cell as APPROACHING/RETREATING/STATIONARY; zone-based alerts (initial detection, zone crossing, periodic re-alert every 10 min, all-clear after 15 min of silence); multi-storm support; no cron, no LLM
+  - 🌍 **Seismic live** — polls INGV GOSSIP JSON API every 60 s; alerts on new events and Automatic→Revised promotions; quiet-hours support
+- **HA Monitors** — monitor any Home Assistant entity via MQTT statestream; two alert modes:
+  - **LLM**: DRADIS processes the state change with your binding instructions (can send Telegram, email, create tasks, etc.)
+  - **Direct Telegram**: fixed-format message, zero LLM cost
+  - Per-entity cooldown, state filter, 🔍 Discover entities from broker
+  - Requires: Mosquitto broker add-on + MQTT integration + `mqtt_discoverystream_alt` (HACS)
+
+### Web UI
+
+- Vertical left sidebar with eight collapsible sections: Settings, Agents, Tools, Tasks, Scheduled Monitors, Live Monitors, HA Monitors
+- All settings managed at runtime — no restart required
+- Live cron validation with next-fire preview
+- Live geocoding for monitors (city name → lat/lon)
+- Duplicate any task or monitor with ⎘ Copy
+- Test any task or monitor with ▶ immediately
 
 ## Installation
 
@@ -47,55 +66,51 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 
 **Read a URL**
 > *"Summarise this article: https://www.example.com/article"*
-> → DRADIS calls `read_url` directly, fetches the page via Jina Reader, and analyses the content with its own model. No API key required, no extra LLM call.
+> → DRADIS fetches the page via Jina Reader and analyses the content. No API key required.
 
 **Lightning alert** *(live monitor — no cron, no LLM, no token cost)*
-> DRADIS opens a persistent MQTT connection and listens for lightning strikes in real time. Each strike feeds a 60-minute sliding window buffer; trajectory analysis classifies the storm and fires an alert only when it is approaching or moving away — silent when stationary.
+> DRADIS opens a persistent MQTT connection and runs DBSCAN clustering every 2 minutes on a 15-min sliding window buffer. Zone-based alerts fire on initial detection, zone crossings, and periodic re-alerts while approaching.
 >
-> ⚡ **Lightning detected — Bacoli**
-> 📍 Distance: **28.3 km** to NW (315°)
-> 🔴 Approaching at ~42 km/h
-> ⏱ Estimated arrival: 40 min
-> 🔕 Next update in 5 min
+> ```
+> 🔴 Storm approaching — Bacoli
+> 📍 Distance: 28.3 km to NW (315°)
+> 🏷 Zone: Near zone (15–30 km)
+> 🚀 ~42 km/h — estimated arrival: 40 min
 > 🕐 14:32
+> ```
 >
-> No cron schedule. Reconnects automatically on disconnect.
 > Configure in Web UI → **Live Monitors** → `+` → Type: ⚡ Lightning alert
 
-**HA sensor alert** *(HA monitor — LLM-driven)*
-> DRADIS subscribes to selected entities via MQTT. When the state changes, the LLM generates a contextual Telegram alert following your instructions.
->
-> Configure in Web UI → **Settings → MQTT / Home Assistant** → save → **HA Monitors** → `+` → 🔍 Discover → select entities → write instructions.
-> Full setup guide (Mosquitto broker, MQTT integration, mqtt_discoverystream_alt from HACS, DRADIS MQTT config): [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
+**Seismic live alert** *(live monitor — INGV GOSSIP)*
+> DRADIS polls the INGV seismic API every 60 s for Campi Flegrei, Vesuvio, Ischia, and Golfo di Napoli. Sends an alert on new events and when Automatic events are promoted to Revised. Quiet-hours support.
+> Configure in Web UI → **Live Monitors** → `+` → Type: 🌍 Seismic live
+
+**HA sensor alert** *(HA monitor)*
+> DRADIS subscribes to selected entities via MQTT. When the state changes, an alert is sent via LLM instructions or a Direct Telegram template.
+> Full setup guide: [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 
 **Daily thunderstorm risk digest** *(scheduled monitor)*
 > Every morning DRADIS fetches atmospheric instability data and sends a risk summary by time band — no LLM, no token cost.
-> Cron: `0 7 * * *` — Monitor type: ⛈️ Thunderstorm risk (Open-Meteo)
+> `Cron: 0 7 * * *` — Monitor type: ⛈️ Thunderstorm risk
+
+**Daily seismic report** *(scheduled monitor)*
+> Every morning at 8:00 DRADIS sends a statistical report of the last 24 hours of seismic activity (magnitude and depth histograms, event list).
+> `Cron: 0 8 * * *` — Monitor type: 🌍 Seismic report
 
 **Hourly rain alert** *(scheduled monitor)*
 > Checks every hour whether rain is expected in the next 2 hours. Silent when clear.
-> Cron: `0 * * * *` — Monitor type: 🌧️ Rain alert (Open-Meteo)
+> `Cron: 0 * * * *` — Monitor type: 🌧️ Rain alert
 
 **Daily appointments digest** *(scheduled task)*
-> Every morning at 8:00, DRADIS automatically sends a Telegram message with your Google Calendar events for the day.
-> Cron: `0 8 * * *` — Instructions: *"Fetch today's calendar events and send a summary to Telegram."*
+> `Cron: 0 8 * * *` — Instructions: *"Fetch today's calendar events and send a summary to Telegram."*
 
 **Morning briefing** *(scheduled task)*
-> Cron: `0 7 * * 1-5` (weekdays at 7:00) — Instructions: *"Search for today's top tech news and send a summary to Telegram."*
-
-**Morning email digest** *(scheduled task)*
-> Every morning DRADIS checks your unread emails and sends a summary to Telegram.
-> Cron: `0 8 * * 1-5` — Instructions: *"Check unread emails and send a brief summary of each to Telegram."*
-
-**Aviation TAF briefing** *(scheduled task, requires Web Search)*
-> Every morning DRADIS fetches the Terminal Aerodrome Forecast for your airport, decodes it, and sends a plain-language summary (wind, visibility, ceiling, significant weather) to Telegram.
-> Cron: `0 6 * * *` — Instructions: *"Fetch the latest TAF for airport LIRN from aviationweather.gov, decode it, and send a plain-language summary to Telegram."*
+> `Cron: 0 7 * * 0-4` — Instructions: *"Search for today's top tech news and send a summary to Telegram."*
 
 **Task management** *(requires Google Tasks)*
-> *"Add buy milk and call the doctor"*
-> → DRADIS creates two tasks in your Google Tasks list and confirms.
-> *"What do I have to do?"* → Lists all open tasks with IDs.
-> *"Mark task 2 as done"* → Marks the task as completed.
+> *"Add buy milk and call the doctor"* → Creates two tasks and confirms.
+> *"What do I have to do?"* → Lists all open tasks.
+> *"Mark task 2 as done"* → Marks it completed.
 
 ## Telegram Commands
 
@@ -104,7 +119,7 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 | `/info` | Status and configuration of all agents |
 | `/menu` | List all available commands |
 | `/tasks` | List enabled tasks as inline buttons — tap one to run it immediately |
-| `/monitors` | List scheduled monitors (tap to run) and live monitors (tap to see 🟢/🔴 status) |
+| `/monitors` | List scheduled monitors (tap to run) and live monitors (tap for 🟢/🔴 status) |
 | `/gcalauth` | Connect Google Calendar (OAuth2) |
 | `/gmailauth` | Connect Gmail (OAuth2) |
 | `/gtasksauth` | Connect Google Tasks (OAuth2) |
@@ -112,4 +127,4 @@ DRADIS is a Home Assistant app that exposes a conversational AI agent controllab
 
 ## Documentation
 
-Full documentation is available in the **Documentation** tab of the app page in Home Assistant and on the [GitHub Wiki](https://github.com/procolo75/dradis/wiki).
+Full documentation is available in the **Documentation** tab of the add-on page in Home Assistant and on the [GitHub Wiki](https://github.com/procolo75/dradis/wiki).
