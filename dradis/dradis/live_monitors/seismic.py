@@ -93,8 +93,8 @@ def _parse_event(raw: dict, area: str) -> dict:
     magnitude = _extract_magnitude(raw)
     loc       = raw.get("location") or {}
     depth     = loc.get("depth")
-    latitude  = loc.get("lat")
-    longitude = loc.get("lon")
+    latitude  = loc.get("latitude")
+    longitude = loc.get("longitude")
     epoch     = raw.get("epoch")
     event_dt  = datetime.fromtimestamp(epoch, tz=timezone.utc) if epoch else None
     link = ""

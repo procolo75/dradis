@@ -58,6 +58,13 @@ _MAG_BINS = [
 _DEPTH_CEIL    = 30
 _EVENT_LIST_MAX = 80
 
+_AREA_CENTROIDS: dict[str, tuple[float, float]] = {
+    "flegrei":   (40.827, 14.139),
+    "vesuvio":   (40.821, 14.426),
+    "ischia":    (40.731, 13.897),
+    "regionale": (40.833, 14.233),
+}
+
 
 def _mag_icon(mag: float | None) -> str:
     if mag is None:
@@ -176,6 +183,11 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     for e in filtered:
         e["_mag"] = _extract_magnitude(e)
 
+    reviewed = [
+        e for e in filtered
+        if (e.get("class") or "").strip().lower() in ("rivisto", "bollettino")
+    ]
+
     area_label  = html.escape(_AREA_LABELS.get(area, area))
     range_label = _TIME_RANGE_LABELS.get(lang, _TIME_RANGE_LABELS["it"]).get(time_range, time_range)
     now_str     = datetime.now(tz).strftime("%d/%m/%Y %H:%M")
@@ -188,7 +200,7 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
         no_event  = "Nessun evento sismico nel periodo selezionato."
         footer    = "<i>Monitor DRADIS · INGV GOSSIP · nessun LLM utilizzato</i>"
         s_total   = lambda n: f"📊 <b>{n} event{'i' if n != 1 else 'o'}</b>"
-        s_split   = lambda a, r: f" — Automatici: {a} · Rivisti: {r}"
+        s_split   = lambda a, r, b: f" — Automatici: {a} · Rivisti: {r} · Bollettino: {b}"
         hdr_mag   = "📈 <b>Magnitudo (Md)</b>"
         hdr_depth = "📐 <b>Profondità</b>"
         hdr_list  = "📋 <b>Lista eventi</b>"
@@ -200,7 +212,7 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
         no_event  = "No seismic events in the selected period."
         footer    = "<i>DRADIS Monitor · INGV GOSSIP · no LLM used</i>"
         s_total   = lambda n: f"📊 <b>{n} event{'s' if n != 1 else ''}</b>"
-        s_split   = lambda a, r: f" — Automatic: {a} · Revised: {r}"
+        s_split   = lambda a, r, b: f" — Automatic: {a} · Revised: {r} · Bulletin: {b}"
         hdr_mag   = "📈 <b>Magnitude (Md)</b>"
         hdr_depth = "📐 <b>Depth</b>"
         hdr_list  = "📋 <b>Event list</b>"
@@ -216,8 +228,9 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     total      = len(filtered)
     auto_count = sum(1 for e in filtered if (e.get("class") or "").lower() == "automatico")
     rev_count  = sum(1 for e in filtered if (e.get("class") or "").lower() == "rivisto")
+    boll_count = sum(1 for e in filtered if (e.get("class") or "").lower() == "bollettino")
 
-    lines.append(s_total(total) + s_split(auto_count, rev_count))
+    lines.append(s_total(total) + s_split(auto_count, rev_count, boll_count))
     lines.append("")
 
     lines.append(hdr_mag)
@@ -236,30 +249,36 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     lines.append("")
 
     lines.append(hdr_depth)
-    depth_lines = _depth_section(filtered, lbl_nd)
+    depth_lines = _depth_section(reviewed, lbl_nd)
     lines.extend(depth_lines)
 
     lines.append("")
 
     lines.append(hdr_list)
-    shown = filtered[:_EVENT_LIST_MAX]
+    shown        = reviewed[:_EVENT_LIST_MAX]
+    n_reviewed   = len(reviewed)
     for e in shown:
         mag   = e["_mag"]
         icon  = _mag_icon(mag)
         mag_s = f"Md {mag:.1f}" if mag is not None else lbl_nd
-        d     = (e.get("location") or {}).get("depth")
+        loc   = e.get("location") or {}
+        d     = loc.get("depth")
         dep_s = f"{d:.1f} km" if d is not None else lbl_nd
         epoch = e.get("epoch")
-        if epoch:
-            dt_s = datetime.fromtimestamp(epoch, tz=tz).strftime("%d/%m %H:%M")
-        else:
-            dt_s = "??/??"
-        cls       = (e.get("class") or "").lower()
-        state_ico = "✅" if "rivisto" in cls else "⚠️"
-        lines.append(f"  {icon} {dt_s}  {mag_s}  {dep_s}  {state_ico}")
+        dt_s  = datetime.fromtimestamp(epoch, tz=tz).strftime("%d/%m %H:%M") if epoch else "??/??"
+        map_link = ""
+        if mag is not None and mag >= 2.0:
+            lat = loc.get("latitude")
+            lon = loc.get("longitude")
+            if lat is None or lon is None:
+                lat, lon = _AREA_CENTROIDS.get(area, (None, None))
+            if lat is not None and lon is not None:
+                map_url  = f"https://www.google.com/maps?q={lat},{lon}"
+                map_link = f" <a href='{html.escape(map_url)}'>📍</a>"
+        lines.append(f"  {icon} {dt_s}  {mag_s}  {dep_s}{map_link}")
 
-    if total > _EVENT_LIST_MAX:
-        lines.append(lbl_more(total - _EVENT_LIST_MAX))
+    if n_reviewed > _EVENT_LIST_MAX:
+        lines.append(lbl_more(n_reviewed - _EVENT_LIST_MAX))
 
     lines += ["", footer]
     return "\n".join(lines)

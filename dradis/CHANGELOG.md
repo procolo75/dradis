@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## [2.18.2] - 2026-05-22
+- **Fix — Scheduled Monitor: Telegram timeout on long reports**: `send_message` was called with the full report text in a single call; weekly seismic reports can exceed Telegram's 4096-character limit and the default 5-second read timeout. Added `_send_chunked` helper in `scheduler.py` that: (1) splits the text on line boundaries into ≤ 4096-character chunks, (2) uses `read_timeout=30` / `write_timeout=30` on each send, (3) adds a 0.5 s pause between chunks to avoid rate-limiting.
+- **Fix — Seismic Scheduled Monitor: Maps links only for Md ≥ 2.0**: showing a 📍 link for every reviewed event (up to 80) added dozens of HTML anchors per message, increasing processing time on Telegram's side. Links are now generated only for events with magnitude ≥ 2.0.
+
+## [2.18.1] - 2026-05-22
+- **Fix/Improve — Seismic Scheduled Monitor: bollettino handling + depth + event list + Maps links**:
+  - Total count now includes all states (automatico + rivisto + bollettino); split line shows all three counts.
+  - Depth section now computed only on rivisto + bollettino events (automatico excluded — preliminary data skews depth stats).
+  - Event list now shows only rivisto + bollettino events; state icon (✅/⚠️) replaced by a 📍 Maps link to the actual earthquake coordinates (falls back to area centroid if location is missing).
+  - `_AREA_CENTROIDS` added to the scheduled monitor module (was only in the live monitor).
+- **Fix — Seismic Live Monitor: Maps link always showing the same location**: `_parse_event` was reading `loc.get("lat")` and `loc.get("lon")` but the INGV GOSSIP API returns `"latitude"` and `"longitude"` inside the `location` object. Both fields always resolved to `None`, causing the fallback to `AREA_CENTROIDS` (fixed area centroid) for every event. Corrected field names to `latitude`/`longitude` so each alert now links to the actual earthquake coordinates.
+
 ## [2.18.0] - 2026-05-16
 - **Refactor — complete structural reorganisation**: split the monolithic `main.py` (1 465 lines) and `web/server.py` (1 266 lines) into focused modules, each under 350 lines.
   - `agents/` monitor and live-monitor files moved to dedicated packages: `monitors/` (rain, thunderstorm, seismic) and `live_monitors/` (lightning, ha, seismic).

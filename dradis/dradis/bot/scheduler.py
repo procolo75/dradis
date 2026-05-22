@@ -26,6 +26,43 @@ from live_monitors.lightning import live_monitor_manager
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
 
+_TG_MAX_LEN = 4096
+
+
+async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML) -> None:
+    """Split text on line boundaries and send as multiple Telegram messages if needed."""
+    lines  = text.split("\n")
+    chunk  = ""
+    first  = True
+    for line in lines:
+        candidate = (chunk + "\n" + line) if chunk else line
+        if len(candidate) > _TG_MAX_LEN:
+            if chunk:
+                if not first:
+                    await asyncio.sleep(0.5)
+                await _state._telegram_bot.send_message(
+                    chat_id=_state.ALLOWED_CHAT_ID,
+                    text=chunk,
+                    parse_mode=parse_mode,
+                    read_timeout=30,
+                    write_timeout=30,
+                )
+                first = False
+            chunk = line
+        else:
+            chunk = candidate
+    if chunk:
+        if not first:
+            await asyncio.sleep(0.5)
+        await _state._telegram_bot.send_message(
+            chat_id=_state.ALLOWED_CHAT_ID,
+            text=chunk,
+            parse_mode=parse_mode,
+            read_timeout=30,
+            write_timeout=30,
+        )
+
+
 _MONITOR_RUNNERS = {
     "thunderstorm": run_thunderstorm_monitor,
     "rain":         run_rain_monitor,
@@ -154,11 +191,7 @@ async def run_scheduled_monitor(monitor: dict):
         await _run_monitor_llm(monitor_name, text, monitor.get("instructions", ""), settings)
     else:
         try:
-            await _state._telegram_bot.send_message(
-                chat_id=_state.ALLOWED_CHAT_ID,
-                text=text,
-                parse_mode=ParseMode.HTML,
-            )
+            await _send_chunked(text)
         except Exception as e:
             print(f"[DRADIS] Monitor '{monitor_name}' send_message error: {e}")
             await _state._send_error_telegram(
