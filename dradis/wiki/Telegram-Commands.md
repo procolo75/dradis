@@ -6,14 +6,16 @@ All commands are available only to the user ID configured in `telegram_allowed_c
 |---------|-------------|
 | `/menu` | Show all available commands with descriptions |
 | `/info` | Show current configuration: provider, model, history, and status of each sub-agent |
-| `/tasks` | List all enabled tasks as inline buttons. Tap a button to run the task immediately |
-| `/monitors` | List all enabled monitors (scheduled and live) as inline buttons. Tap a scheduled monitor to run it; tap a live monitor to see its status (🟢/🔴) |
+| `/tasks` | List all tasks (✅ enabled / ⏸ disabled) as inline buttons. Tap a button to run the task immediately regardless of its enabled state |
+| `/monitors` | List all scheduled and live monitors as inline buttons. Tap a scheduled monitor to run it; tap a live monitor to see its 🟢/🔴 status |
+| `/hamonitors` | List all HA monitors with 🟢/🔴 running status. Tap one to see its name, mode, cooldown, and entity list |
+| `/manage` | Toggle enable/disable for any task, monitor, live monitor, or HA monitor. Shows all components grouped by type with ✅/⏸ badges; tap a row to toggle it |
 | `/gcalauth` | Start the Google Calendar OAuth2 flow. Sends an authorization link; browser redirects back to DRADIS automatically after you grant access |
 | `/gmailauth` | Start the Gmail OAuth2 flow (same flow as Calendar) |
 | `/gtasksauth` | Start the Google Tasks OAuth2 flow (same flow as Calendar) |
-| `/todo` | Shortcut — list all open Google Tasks without going through DRADIS team routing |
+| `/backupauth` | Start the Google Drive Backup OAuth2 flow. Grants `drive.file` scope only. After authorization, create a monitor of type ☁️ Google Drive Backup in the Web UI |
 
-## /gcalauth, /gmailauth, /gtasksauth
+## /gcalauth, /gmailauth, /gtasksauth, /backupauth
 
 These commands start the Google OAuth2 authorization flow:
 
@@ -24,7 +26,7 @@ These commands start the Google OAuth2 authorization flow:
 **If the automatic redirect doesn't work** (HA on a different device than the browser):
 
 - Copy the full URL from the browser address bar after granting access.
-- Send it back to the bot: `/gcalauth <url>`, `/gmailauth <url>`, or `/gtasksauth <url>`.
+- Send it back to the bot: `/gcalauth <url>`, `/gmailauth <url>`, `/gtasksauth <url>`, or `/backupauth <url>`.
 
 The OAuth token is saved to `/data/` and auto-refreshed. Each service requires its own authorization.
 

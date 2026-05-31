@@ -157,3 +157,38 @@ async def get_gtasks_status():
         "credentials_configured": bool(opts.get("google_client_id") and opts.get("google_client_secret")),
         "authenticated": Path("/data/google_tasks_token.json").exists(),
     }
+
+
+# ── Google Drive Backup OAuth ─────────────────────────────────────────────────
+
+@router.get("/backupauth/callback")
+async def gdrive_oauth_callback(code: str = None, error: str = None):
+    if error:
+        return HTMLResponse(
+            f"<h2 style='font-family:sans-serif;color:#c00'>❌ Authorization failed: {error}</h2>"
+            "<p style='font-family:sans-serif'>Return to Telegram and send /backupauth to try again.</p>"
+        )
+    if not code:
+        return HTMLResponse(
+            "<h2 style='font-family:sans-serif;color:#c00'>❌ No authorization code received.</h2>"
+        )
+    _store._gdrive_pending_code = code
+    if _store._gdrive_code_event:
+        _store._gdrive_code_event.set()
+    return HTMLResponse(
+        "<h2 style='font-family:sans-serif;color:#080'>☁️ Google Drive Backup connected!</h2>"
+        "<p style='font-family:sans-serif'>You can close this tab and return to Telegram.</p>"
+    )
+
+
+@router.get("/api/backup-status")
+async def get_backup_status():
+    opts = {}
+    try:
+        opts = json.loads(_store.OPTIONS_FILE.read_text())
+    except Exception:
+        pass
+    return {
+        "credentials_configured": bool(opts.get("google_client_id") and opts.get("google_client_secret")),
+        "authenticated": Path("/data/gdrive_backup_token.json").exists(),
+    }

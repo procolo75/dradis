@@ -1,16 +1,24 @@
 """
 live_monitors/ha.py
 ────────────────────
-MQTT listener for Home Assistant mqtt_statestream.
+MQTT listener for Home Assistant mqtt_statestream / mqtt_discoverystream_alt.
 Monitors selected HA entities and sends a Telegram alert on state changes,
 with per-entity cooldown.
 
+Each entity is monitored via TWO MQTT topics:
+  {prefix}/{entity}/state        — regular state value ("on", "off", …)
+  {prefix}/{entity}/availability — availability from mqtt_discoverystream_alt / z2m
+                                   payload "offline" is mapped to state "unavailable"
+
 Pipeline per state change:
-  1. First message after (re)connect: record silently (MQTT retained) — no alert
+  1. First message after (re)connect:
+       - retained AND state doesn't match filter → record silently, no alert
+       - retained AND state matches filter (already in alert state) → alert
+       - non-retained → always fall through to alert pipeline
   2. State unchanged → skip
   3. State filter — skip if filter_states non-empty and state not in set
   4. Cooldown check — skip if within cooldown window
-  5. Alert: LLM mode (call model) or Direct mode (template message)
+  5. Alert: LLM mode (call model, fallback to direct on empty) or Direct mode
 """
 
 import asyncio
@@ -69,7 +77,9 @@ class HaLiveMonitor:
         password = self._mqtt.get("mqtt_password") or None
         prefix   = self._mqtt.get("mqtt_statestream_prefix", "homeassistant").rstrip("/")
 
-        topics = [f"{prefix}/{e}/state" for e in self.entities]
+        state_topics = [f"{prefix}/{e}/state"        for e in self.entities]
+        avail_topics  = [f"{prefix}/{e}/availability" for e in self.entities]
+        all_topics    = state_topics + avail_topics
 
         while True:
             try:
@@ -79,7 +89,7 @@ class HaLiveMonitor:
                 if password:
                     kwargs["password"] = password
                 async with aiomqtt.Client(host, port, **kwargs) as client:
-                    for topic in topics:
+                    for topic in all_topics:
                         await client.subscribe(topic)
                     async for message in client.messages:
                         await self._on_message(message, prefix)
@@ -92,43 +102,59 @@ class HaLiveMonitor:
     async def _on_message(self, message, prefix: str):
         topic = str(message.topic)
         suffix = topic[len(prefix):].lstrip("/")
-        if not suffix.endswith("/state"):
+
+        # Resolve entity_id and state from either /state or /availability topic.
+        # mqtt_discoverystream_alt (and z2m) publish availability separately:
+        #   {prefix}/{entity}/availability  payload: "online" | "offline"
+        # We map "offline" → "unavailable" so the standard filter pipeline works.
+        if suffix.endswith("/state"):
+            entity_id = suffix[: -len("/state")]
+            state = message.payload.decode("utf-8", errors="replace").strip()
+        elif suffix.endswith("/availability"):
+            entity_id = suffix[: -len("/availability")]
+            payload = message.payload.decode("utf-8", errors="replace").strip().lower()
+            state = "unavailable" if payload in ("offline", "unavailable") else "online"
+        else:
             return
-        entity_id = suffix[: -len("/state")]
 
         if entity_id not in self.entities:
             return
 
-        state = message.payload.decode("utf-8", errors="replace").strip()
-
         if entity_id not in self._last_states:
             self._last_states[entity_id] = state
+            if message.retain:
+                # Retained snapshot on connect: alert only if a specific filter is set
+                # AND the retained state already matches it (sensor already in alert state).
+                if not self.filter_states or state.lower() not in self.filter_states:
+                    return
+                # else: fall through — sensor already in alert state when monitoring started
+        elif state == self._last_states[entity_id]:
             return
-
-        if state == self._last_states[entity_id]:
-            return
-        self._last_states[entity_id] = state
+        else:
+            self._last_states[entity_id] = state
 
         if self.filter_states and state.lower() not in self.filter_states:
             return
 
         now = time.time()
         last = self._cooldowns.get(entity_id, 0.0)
-        elapsed_min = (now - last) / 60.0
-        if elapsed_min < self.cooldown_min:
+        if (now - last) / 60.0 < self.cooldown_min:
             return
 
         try:
             if self.alert_mode == "direct":
-                msg = self._build_direct_message(entity_id, state)
                 self._cooldowns[entity_id] = now
-                await self._send(msg)
+                await self._send(self._build_direct_message(entity_id, state))
             else:
                 prompt = self._build_prompt(entity_id, state)
                 alert_text = await self._llm(prompt)
+                self._cooldowns[entity_id] = now
                 if alert_text and alert_text.strip():
-                    self._cooldowns[entity_id] = now
                     await self._send(alert_text.strip())
+                else:
+                    _LOGGER.warning("[HAMonitor] '%s' LLM empty — fallback alert entity=%s state=%r",
+                                    self.name, entity_id, state)
+                    await self._send(self._build_direct_message(entity_id, state))
         except Exception as e:
             _LOGGER.warning("[HAMonitor] '%s' error: %s", self.name, e)
 

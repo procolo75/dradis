@@ -1,5 +1,38 @@
 # CHANGELOG
 
+## [2.19.0] - 2026-05-31
+- **Feature — Google Drive Backup monitor**: new scheduled monitor type `backup` that uploads all sensitive DRADIS configuration files to a dedicated "DRADIS Backup" folder on Google Drive.
+  - Files backed up: `options.json`, `dradis_settings.json`, all Google OAuth tokens (`google_calendar_token.json`, `google_gmail_token.json`, `google_tasks_token.json`, `gdrive_backup_token.json`), `tasks.json`, `monitors.json`, `live_monitors.json`, `ha_monitors.json`, `agents.json`.
+  - Uses `drive.file` OAuth scope — DRADIS can only access files it created; no full Drive access is granted.
+  - New Telegram command `/backupauth` starts the OAuth2 authorization flow (same pattern as `/gcalauth`). Requires `google_client_id` and `google_client_secret` in the Configuration tab.
+  - New OAuth callback route `/backupauth/callback` and `/api/backup-status` endpoint added to the web server.
+  - Existing files in the "DRADIS Backup" Drive folder are updated in-place (no duplicates created).
+  - Backup result is delivered to Telegram with a summary of uploaded and skipped files.
+  - To restore: download the files from Google Drive and place them in `/data/` inside the container.
+  - New module: `backup/gdrive.py`.
+
+## [2.18.7] - 2026-05-31
+- **Fix — HA Monitor: support for `mqtt_discoverystream_alt` availability topic + pipeline hardening**:
+  - **Root cause identified**: `mqtt_discoverystream_alt` (and Zigbee2MQTT) publish entity availability on a separate topic `{prefix}/{entity}/availability` with payload `offline`/`online`, NOT on `{prefix}/{entity}/state`. DRADIS was only subscribed to `/state`, so "unavailable" events were never received.
+  - **Fix**: each entity now subscribes to BOTH `{prefix}/{entity}/state` (regular states) AND `{prefix}/{entity}/availability` (availability). Payload `offline` / `unavailable` on the availability topic is mapped to state `"unavailable"` so the existing filter/cooldown/alert pipeline works without changes.
+  - **Retained snapshot**: if a sensor is already in the filter-matching state when the monitor connects, the retained message now triggers an alert (previously always silently dropped).
+  - **LLM fallback**: if the LLM returns an empty response, a fallback direct-template message is sent so no alert is ever silently lost.
+  - **Diagnostic logging**: all pipeline steps (entity match, retain skip, filter skip, cooldown skip, LLM empty, ALERT) are now logged via `print()` and always visible in the addon logs.
+
+## [2.18.6] - 2026-05-30
+- **Feat — Telegram `/manage` command**: new command to enable/disable any task, monitor, live monitor, or HA monitor directly from Telegram. Displays all components grouped by type (📋 Tasks, 🌩 Monitors, ⚡ Live, 🏠 HA) with ✅/⏸ badges. Tapping a component toggles its `enabled` state, persists to JSON, triggers the appropriate scheduler/manager reload, and updates the keyboard in-place. Existing `/tasks`, `/monitors`, `/hamonitors` behavior is unchanged.
+
+## [2.18.5] - 2026-05-24
+- **Fix — HA monitors moved to dedicated `/hamonitors` command**: HA monitors were incorrectly merged into `/monitors`; they now have their own command. `/monitors` shows only scheduled and live monitors; `/hamonitors` shows HA monitors (🟢/🔴 status only, no manual launch).
+
+## [2.18.4] - 2026-05-24
+- **Remove — `/todo` command**: the command duplicated what a configured Google Tasks LLM scheduled task already provides. `cmd_todo` and its `create_gtasks_agent` import removed from `commands.py`; handler and registration removed from `main.py`.
+- **Improve — Telegram `/monitors`: HA monitors section**: HA monitors are now listed at the bottom of `/monitors` with 🟢/🔴 running status. Tapping one shows name, status, alert mode, cooldown, and entity list. No manual launch (MQTT-based, lifecycle is automatic).
+- **Fix — Telegram `/monitors`: live monitor badge**: the `⏸` badge added in v2.18.3 is removed from live monitors since they cannot be launched manually; only the 🟢/🔴 running-state indicator is shown.
+
+## [2.18.3] - 2026-05-24
+- **Improve — Telegram `/tasks` and `/monitors`: show all items regardless of enabled state**: previously the menus showed only enabled tasks and monitors; disabled items were invisible and could not be triggered manually. Now all configured tasks and monitors appear in the menu. Enabled items show a ✅ badge; disabled items show a ⏸ badge. For live monitors the existing 🟢/🔴 running-state badge is combined with ⏸ when the monitor is disabled. Running a disabled task or monitor via Telegram executes it once without altering its enabled/disabled state.
+
 ## [2.18.2] - 2026-05-22
 - **Fix — Scheduled Monitor: Telegram timeout on long reports**: `send_message` was called with the full report text in a single call; weekly seismic reports can exceed Telegram's 4096-character limit and the default 5-second read timeout. Added `_send_chunked` helper in `scheduler.py` that: (1) splits the text on line boundaries into ≤ 4096-character chunks, (2) uses `read_timeout=30` / `write_timeout=30` on each send, (3) adds a 0.5 s pause between chunks to avoid rate-limiting.
 - **Fix — Seismic Scheduled Monitor: Maps links only for Md ≥ 2.0**: showing a 📍 link for every reviewed event (up to 80) added dozens of HTML anchors per message, increasing processing time on Telegram's side. Links are now generated only for events with magnitude ≥ 2.0.

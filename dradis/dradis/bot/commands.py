@@ -2,7 +2,7 @@
 bot/commands.py
 ────────────────
 Telegram command handlers that require extra state:
-  /info, /gcalauth, /gmailauth, /gtasksauth, /todo
+  /info, /gcalauth, /gmailauth, /gtasksauth, /backupauth
 """
 
 import asyncio
@@ -18,13 +18,16 @@ from web.store import (
     pop_gcal_pending_code,
     pop_gmail_pending_code,
     pop_gtasks_pending_code,
+    pop_gdrive_pending_code,
     set_gcal_code_event,
     set_gmail_code_event,
     set_gtasks_code_event,
+    set_gdrive_code_event,
 )
 from agents.gcal    import GCAL_TOKEN_FILE, _build_gcal_flow, create_gcal_agent
 from agents.gmail   import GMAIL_TOKEN_FILE, _build_gmail_flow, create_gmail_agent
-from agents.gtasks  import GTASKS_TOKEN_FILE, _build_gtasks_flow, create_gtasks_agent
+from agents.gtasks  import GTASKS_TOKEN_FILE, _build_gtasks_flow
+from backup.gdrive  import GDRIVE_TOKEN_FILE, build_gdrive_flow
 
 _SETTINGS_DEFAULTS = _state.SETTINGS_DEFAULTS
 
@@ -339,29 +342,90 @@ async def cmd_gtasksauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _gtasks_complete_auth(flow, code, update.message)
 
 
-# ── /todo ─────────────────────────────────────────────────────────────────────
+# ── Google Drive Backup OAuth ─────────────────────────────────────────────────
 
-async def cmd_todo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
-        return
-    settings = _state.read_settings()
-    if not settings.get("gtasks_enabled", False):
-        await update.message.reply_text("📝 Google Tasks is not enabled. Enable it from the Web UI.")
-        return
-    if not GTASKS_TOKEN_FILE.exists():
-        await update.message.reply_text("📝 Google Tasks not authenticated. Send /gtasksauth to connect.")
-        return
-    agent = create_gtasks_agent(settings)
+_gdrive_pending_flow = None
+
+
+async def _gdrive_complete_auth(flow, code: str, message) -> bool:
+    global _gdrive_pending_flow
+    import web.store as _store
+    _ev = _store._gdrive_code_event
     try:
-        response = await agent.arun("List all open tasks")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
-        return
-    text = (response.content or "").strip()
-    if text:
-        await update.message.reply_text(
-            _state.md_to_html(text) + "\n\n<i>🤖 DRADIS · Google Tasks</i>",
+        loop  = asyncio.get_event_loop()
+        creds = await loop.run_in_executor(
+            None,
+            lambda: (flow.fetch_token(code=code), flow.credentials)[1],
+        )
+        GDRIVE_TOKEN_FILE.write_text(creds.to_json())
+        _gdrive_pending_flow = None
+        if _ev and not _ev.is_set():
+            _ev.set()
+        await message.reply_text(
+            "✅ <b>Google Drive Backup connected!</b>\n"
+            "You can now create a monitor of type <code>backup</code> to schedule automatic backups.",
             parse_mode=ParseMode.HTML,
         )
-    else:
-        await update.message.reply_text("📭 No open tasks.")
+        return True
+    except Exception as e:
+        await message.reply_text(
+            f"❌ Authorization failed: {html.escape(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+        return False
+
+
+async def _gdrive_auth_background(event: asyncio.Event, flow, message):
+    try:
+        await asyncio.wait_for(event.wait(), timeout=300)
+        code = pop_gdrive_pending_code()
+        if code and not GDRIVE_TOKEN_FILE.exists():
+            await _gdrive_complete_auth(flow, code, message)
+    except asyncio.TimeoutError:
+        if not GDRIVE_TOKEN_FILE.exists():
+            await message.reply_text("⏱ Authorization timed out (5 min). Send /backupauth to try again.")
+
+
+async def cmd_backupauth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global _gdrive_pending_flow
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    if not _state.GOOGLE_CLIENT_ID or not _state.GOOGLE_CLIENT_SECRET:
+        await update.message.reply_text(
+            "❌ <code>google_client_id</code> and <code>google_client_secret</code> are not configured.\n"
+            "Add them in the add-on <b>Configuration</b> tab and restart.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    args = context.args or []
+    if not args:
+        event = asyncio.Event()
+        set_gdrive_code_event(event)
+        flow = build_gdrive_flow(_state.GOOGLE_CLIENT_ID, _state.GOOGLE_CLIENT_SECRET)
+        _gdrive_pending_flow = flow
+        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+        msg = (
+            "☁️ <b>Google Drive Backup — Authorization</b>\n\n"
+            "1. Open this link in your browser:\n"
+            f"<code>{html.escape(auth_url)}</code>\n\n"
+            "2. Sign in with your Google account and grant access.\n"
+            "3. Your browser will redirect back to DRADIS automatically ✅\n\n"
+            "<i>If the redirect fails (HA on a different device), copy the full URL "
+            "from the browser address bar and send it as:\n"
+            "/backupauth &lt;url&gt;</i>"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        asyncio.create_task(_gdrive_auth_background(event, flow, update.message))
+        return
+
+    raw  = " ".join(args)
+    code = parse_qs(urlparse(raw).query).get("code", [raw])[0]
+    if not code:
+        await update.message.reply_text(
+            "❌ Could not parse the authorization code. Make sure you copied the full redirect URL.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    flow = _gdrive_pending_flow or build_gdrive_flow(_state.GOOGLE_CLIENT_ID, _state.GOOGLE_CLIENT_SECRET)
+    await _gdrive_complete_auth(flow, code, update.message)

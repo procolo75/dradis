@@ -35,6 +35,7 @@ from web.store import (  # noqa: F401
     set_gcal_code_event, pop_gcal_pending_code,
     set_gmail_code_event, pop_gmail_pending_code,
     set_gtasks_code_event, pop_gtasks_pending_code,
+    set_gdrive_code_event, pop_gdrive_pending_code,
 )
 
 app = FastAPI(title="DRADIS Web UI")

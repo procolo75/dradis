@@ -26,6 +26,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
   - ⛈️ **Thunderstorm risk** — CAPE, Lifted Index, CIN, wind gusts from Open-Meteo; risk score 0–10 per time band
   - 🌧️ **Rain alert** — 15-min precipitation data from Open-Meteo; silent when clear
   - 🌍 **Seismic report** — event statistics from INGV GOSSIP JSON API (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli)
+  - ☁️ **Google Drive Backup** — uploads all sensitive DRADIS config files to a dedicated "DRADIS Backup" Drive folder; `drive.file` scope only (no full Drive access)
 - **Live Monitors** — persistent push-based monitors that react to external events in real time:
   - ⚡ **Lightning alert** — persistent MQTT listener; pure-Python DBSCAN clustering on a 15-min sliding window classifies each storm cell as APPROACHING/RETREATING/STATIONARY; zone-based alerts (initial detection, zone crossing, periodic re-alert every 10 min, all-clear after 15 min of silence); multi-storm support; no cron, no LLM
   - 🌍 **Seismic live** — polls INGV GOSSIP JSON API every 60 s; alerts on new events and Automatic→Revised promotions; quiet-hours support
@@ -89,6 +90,10 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 > DRADIS subscribes to selected entities via MQTT. When the state changes, an alert is sent via LLM instructions or a Direct Telegram template.
 > Full setup guide: [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)
 
+**Google Drive Backup** *(scheduled monitor)*
+> Send `/backupauth`, complete the OAuth2 flow, then create a monitor of type ☁️ Google Drive Backup. DRADIS uploads all config and token files to a "DRADIS Backup" folder in your Drive every week — only files it created are accessible (`drive.file` scope).
+> `Cron: 0 6 * * 1` — Monitor type: ☁️ Google Drive Backup
+
 **Daily thunderstorm risk digest** *(scheduled monitor)*
 > Every morning DRADIS fetches atmospheric instability data and sends a risk summary by time band — no LLM, no token cost.
 > `Cron: 0 7 * * *` — Monitor type: ⛈️ Thunderstorm risk
@@ -118,12 +123,14 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 |---------|-------------|
 | `/info` | Status and configuration of all agents |
 | `/menu` | List all available commands |
-| `/tasks` | List enabled tasks as inline buttons — tap one to run it immediately |
-| `/monitors` | List scheduled monitors (tap to run) and live monitors (tap for 🟢/🔴 status) |
+| `/tasks` | List all tasks (✅ enabled / ⏸ disabled) as inline buttons — tap one to run it immediately |
+| `/monitors` | List all scheduled and live monitors — tap a scheduled one to run it; tap a live one for 🟢/🔴 status |
+| `/hamonitors` | List all HA monitors with 🟢/🔴 running status — tap one for details |
+| `/manage` | Toggle enable/disable for any task, monitor, live monitor, or HA monitor from Telegram |
 | `/gcalauth` | Connect Google Calendar (OAuth2) |
 | `/gmailauth` | Connect Gmail (OAuth2) |
 | `/gtasksauth` | Connect Google Tasks (OAuth2) |
-| `/todo` | List open Google Tasks |
+| `/backupauth` | Connect Google Drive for automatic backups (`drive.file` scope only) |
 
 ## Documentation
 

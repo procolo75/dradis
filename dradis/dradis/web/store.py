@@ -229,6 +229,50 @@ def save_ha_monitors(items: list[dict]) -> None:
     HA_MONITORS_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2))
 
 
+def toggle_task(task_id: str) -> bool | None:
+    items = load_tasks()
+    for item in items:
+        if item["id"] == task_id:
+            item["enabled"] = not item.get("enabled", True)
+            save_tasks(items)
+            _notify_tasks_changed()
+            return item["enabled"]
+    return None
+
+
+def toggle_monitor(monitor_id: str) -> bool | None:
+    items = load_monitors()
+    for item in items:
+        if item["id"] == monitor_id:
+            item["enabled"] = not item.get("enabled", True)
+            save_monitors(items)
+            _notify_monitors_changed()
+            return item["enabled"]
+    return None
+
+
+def toggle_live_monitor(monitor_id: str) -> bool | None:
+    items = load_live_monitors()
+    for item in items:
+        if item["id"] == monitor_id:
+            item["enabled"] = not item.get("enabled", True)
+            save_live_monitors(items)
+            _notify_live_monitors_changed()
+            return item["enabled"]
+    return None
+
+
+def toggle_ha_monitor(monitor_id: str) -> bool | None:
+    items = load_ha_monitors()
+    for item in items:
+        if item["id"] == monitor_id:
+            item["enabled"] = not item.get("enabled", True)
+            save_ha_monitors(items)
+            _notify_ha_monitors_changed()
+            return item["enabled"]
+    return None
+
+
 def load_settings() -> dict:
     result = dict(SETTINGS_DEFAULTS)
     try:
@@ -394,6 +438,9 @@ _gmail_code_event: asyncio.Event | None = None
 _gtasks_pending_code: str | None = None
 _gtasks_code_event: asyncio.Event | None = None
 
+_gdrive_pending_code: str | None = None
+_gdrive_code_event: asyncio.Event | None = None
+
 
 def set_gcal_code_event(event: asyncio.Event) -> None:
     global _gcal_code_event
@@ -428,4 +475,16 @@ def pop_gtasks_pending_code() -> str | None:
     global _gtasks_pending_code
     code = _gtasks_pending_code
     _gtasks_pending_code = None
+    return code
+
+
+def set_gdrive_code_event(event: asyncio.Event) -> None:
+    global _gdrive_code_event
+    _gdrive_code_event = event
+
+
+def pop_gdrive_pending_code() -> str | None:
+    global _gdrive_pending_code
+    code = _gdrive_pending_code
+    _gdrive_pending_code = None
     return code

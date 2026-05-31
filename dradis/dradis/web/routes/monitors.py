@@ -38,12 +38,15 @@ async def list_monitors():
     return load_monitors()
 
 
+_TYPES_WITHOUT_LOCATION = {"seismic", "backup"}
+
+
 @router.post("/api/monitors")
 async def create_monitor(payload: MonitorPayload):
     valid, error, _ = _validate_cron_expr(payload.cron)
     if not valid:
         raise HTTPException(status_code=400, detail=f"Invalid cron expression: {error}")
-    if payload.type != "seismic" and not payload.location.strip():
+    if payload.type not in _TYPES_WITHOUT_LOCATION and not payload.location.strip():
         raise HTTPException(status_code=400, detail="Monitor location is required")
     monitors = load_monitors()
     monitor = {
@@ -62,7 +65,7 @@ async def update_monitor(monitor_id: str, payload: MonitorPayload):
     valid, error, _ = _validate_cron_expr(payload.cron)
     if not valid:
         raise HTTPException(status_code=400, detail=f"Invalid cron expression: {error}")
-    if payload.type != "seismic" and not payload.location.strip():
+    if payload.type not in _TYPES_WITHOUT_LOCATION and not payload.location.strip():
         raise HTTPException(status_code=400, detail="Monitor location is required")
     monitors = load_monitors()
     for i, m in enumerate(monitors):

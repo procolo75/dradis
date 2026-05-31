@@ -19,7 +19,7 @@ Click `+` in the **Scheduled Monitors** sidebar header.
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Green dot in sidebar when active. |
-| Monitor type | **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, or **🌍 Seismic report**. |
+| Monitor type | **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **🌍 Seismic report**, or **☁️ Google Drive Backup**. |
 | Response language | 🇮🇹 Italiano (default) or 🇬🇧 English. |
 | Location | City name — resolved to coordinates via Open-Meteo geocoding. Live hint shows coordinates as you type. Not used for seismic type (uses area checkboxes instead). |
 | Cron expression | 5-part cron with live validation and next-fire preview. |
@@ -124,6 +124,48 @@ Areas:      Campi Flegrei
 Time range: Last 24 hours
 Cron:       0 8 * * *
 ```
+
+---
+
+---
+
+## ☁️ Google Drive Backup Monitor
+
+Uploads all sensitive DRADIS configuration files to a "DRADIS Backup" folder on Google Drive on a cron schedule. Uses `drive.file` OAuth scope — DRADIS can only access files it created; no full Drive access is required.
+
+**Files backed up:**
+
+| File | Content |
+|------|---------|
+| `options.json` | Add-on configuration (all API keys and tokens) |
+| `dradis_settings.json` | Runtime settings from the Web UI |
+| `google_calendar_token.json` | Google Calendar OAuth2 token |
+| `google_gmail_token.json` | Gmail OAuth2 token |
+| `google_tasks_token.json` | Google Tasks OAuth2 token |
+| `gdrive_backup_token.json` | Google Drive Backup OAuth2 token |
+| `tasks.json` | Scheduled tasks |
+| `monitors.json` | Scheduled monitors |
+| `live_monitors.json` | Live monitors |
+| `ha_monitors.json` | HA monitors |
+| `agents.json` | Custom agents |
+
+**Setup:**
+
+1. Send `/backupauth` to the Telegram bot and complete the OAuth2 flow.
+2. Create a monitor of type ☁️ Google Drive Backup with your preferred cron schedule.
+3. No location field is required.
+
+**Restore procedure:** download the files from the "DRADIS Backup" folder on Google Drive and place them in `/data/` inside the HA add-on container.
+
+**Example configuration:**
+
+```
+Name:     Weekly Drive backup
+Type:     ☁️ Google Drive Backup
+Cron:     0 6 * * 1
+```
+
+The Telegram message confirms how many files were uploaded or updated and lists any files that were skipped (not found on disk).
 
 ---
 

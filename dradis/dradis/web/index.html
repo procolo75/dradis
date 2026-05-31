@@ -3127,6 +3127,7 @@ function renderMonitorForm(monitor) {
           <option value="thunderstorm" ${monitor.type === "thunderstorm" ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
           <option value="rain"         ${monitor.type === "rain"         ? "selected" : ""}>🌧️ Rain alert (Open-Meteo)</option>
           <option value="seismic"      ${monitor.type === "seismic"      ? "selected" : ""}>🌍 Seismic report (INGV GOSSIP)</option>
+          <option value="backup"       ${monitor.type === "backup"       ? "selected" : ""}>☁️ Google Drive Backup</option>
         </select>
         <small id="m-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)"></small>
       </div>
@@ -3253,20 +3254,22 @@ function renderMonitorForm(monitor) {
     thunderstorm: "Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.",
     rain: "Checks 15-minute precipitation forecast for the next N hours. Sends an alert only if rain is expected. No LLM used.",
     seismic: "Fetches earthquake events from INGV GOSSIP for the selected area and time range. Returns a summary with event count, depth statistics and a list of recent events. No LLM used.",
+    backup: "Uploads DRADIS config files (options.json, tokens, settings) to a 'DRADIS Backup' folder on Google Drive. Requires /backupauth. No LLM used.",
   };
+  const _TYPES_WITHOUT_LOCATION = new Set(["seismic", "backup"]);
   function applyTypeVisibility(type) {
-    document.getElementById("fg-days").style.display          = type === "thunderstorm" ? "" : "none";
-    document.getElementById("fg-hours-ahead").style.display   = type === "rain"         ? "" : "none";
-    document.getElementById("fg-location").style.display      = type === "seismic"      ? "none" : "";
-    document.getElementById("fg-seismic-area").style.display  = type === "seismic"      ? "" : "none";
-    document.getElementById("fg-time-range").style.display    = type === "seismic"      ? "" : "none";
+    document.getElementById("fg-days").style.display          = type === "thunderstorm"              ? "" : "none";
+    document.getElementById("fg-hours-ahead").style.display   = type === "rain"                     ? "" : "none";
+    document.getElementById("fg-location").style.display      = _TYPES_WITHOUT_LOCATION.has(type)   ? "none" : "";
+    document.getElementById("fg-seismic-area").style.display  = type === "seismic"                  ? "" : "none";
+    document.getElementById("fg-time-range").style.display    = type === "seismic"                  ? "" : "none";
     document.getElementById("m-type-desc").textContent        = _TYPE_DESCS[type] || "";
   }
   applyTypeVisibility(monitor.type || "thunderstorm");
   document.getElementById("m-type").addEventListener("change", e => applyTypeVisibility(e.target.value));
 
-  // Resolve location on load (only for non-seismic types)
-  if (monitor.location && monitor.type !== "seismic") resolveLocation(monitor.location);
+  // Resolve location on load (only for types that use location)
+  if (monitor.location && !_TYPES_WITHOUT_LOCATION.has(monitor.type)) resolveLocation(monitor.location);
 
   // Live location resolve
   let _locTimer = null;

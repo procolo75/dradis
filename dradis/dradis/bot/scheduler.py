@@ -22,6 +22,7 @@ from web.store import (
 from monitors.thunderstorm import run_thunderstorm_monitor
 from monitors.rain         import run_rain_monitor
 from monitors.seismic      import run_seismic_monitor
+from backup.gdrive         import run_backup_monitor
 from live_monitors.lightning import live_monitor_manager
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
@@ -67,6 +68,7 @@ _MONITOR_RUNNERS = {
     "thunderstorm": run_thunderstorm_monitor,
     "rain":         run_rain_monitor,
     "seismic":      run_seismic_monitor,
+    "backup":       run_backup_monitor,
 }
 
 

@@ -37,16 +37,20 @@ from bot.handlers import (
     cmd_menu,
     cmd_tasks,
     cmd_monitors,
+    cmd_ha_monitors,
+    cmd_manage,
     handle_task_callback,
     handle_monitor_callback,
+    handle_ha_monitor_callback,
     handle_live_monitor_callback,
+    handle_mgmt_callback,
 )
 from bot.commands import (
     cmd_info,
     cmd_gcalauth,
     cmd_gmailauth,
     cmd_gtasksauth,
-    cmd_todo,
+    cmd_backupauth,
 )
 from web.server import app as web_app
 from web.store import (
@@ -68,13 +72,17 @@ def build_telegram_app():
     app.add_handler(CommandHandler("menu",       cmd_menu))
     app.add_handler(CommandHandler("tasks",      cmd_tasks))
     app.add_handler(CommandHandler("monitors",   cmd_monitors))
+    app.add_handler(CommandHandler("hamonitors", cmd_ha_monitors))
+    app.add_handler(CommandHandler("manage",     cmd_manage))
     app.add_handler(CommandHandler("gcalauth",   cmd_gcalauth))
     app.add_handler(CommandHandler("gmailauth",  cmd_gmailauth))
-    app.add_handler(CommandHandler("gtasksauth", cmd_gtasksauth))
-    app.add_handler(CommandHandler("todo",       cmd_todo))
+    app.add_handler(CommandHandler("gtasksauth",  cmd_gtasksauth))
+    app.add_handler(CommandHandler("backupauth",  cmd_backupauth))
     app.add_handler(CallbackQueryHandler(handle_task_callback,         pattern=r"^task:"))
     app.add_handler(CallbackQueryHandler(handle_monitor_callback,      pattern=r"^monitor:"))
+    app.add_handler(CallbackQueryHandler(handle_ha_monitor_callback,   pattern=r"^ha:"))
     app.add_handler(CallbackQueryHandler(handle_live_monitor_callback, pattern=r"^live:"))
+    app.add_handler(CallbackQueryHandler(handle_mgmt_callback,         pattern=r"^mgmt:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     return app

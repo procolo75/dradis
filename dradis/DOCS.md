@@ -52,7 +52,8 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `main.py` | Entry point — wires bot, scheduler, web server, and live monitors together |
 | `bot/state.py` | Global state, startup options, settings, history, fallback engine, `_run_with_fallback()` |
 | `bot/scheduler.py` | Task and monitor cron jobs, live-monitor lifecycle, `reload_*()` functions |
-| `bot/commands.py` | Telegram command handlers: `/info`, `/gcalauth`, `/gmailauth`, `/gtasksauth`, `/todo` |
+| `bot/commands.py` | Telegram command handlers: `/info`, `/gcalauth`, `/gmailauth`, `/gtasksauth`, `/backupauth` |
+| `backup/gdrive.py` | Google Drive backup module — OAuth2 flow, file upload, `run_backup_monitor()` |
 | `bot/handlers.py` | Telegram message, voice, and callback handlers |
 | `core.py` | `create_agent()`, `create_team()`, provider helpers |
 | `agents/web_search.py` | Web Search member agent — `create_web_search_agent()` |
@@ -145,6 +146,7 @@ Fill in at least one LLM provider key. The active provider is selected from the 
   - **Calendar**: send `/gcalauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Google Calendar in the Web UI and save.
   - **Gmail**: send `/gmailauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Gmail in the Web UI and save.
   - **Tasks**: send `/gtasksauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Enable Google Tasks in the Web UI and save.
+  - **Drive Backup**: send `/backupauth` to the Telegram bot → click the link → sign in → grant access → **browser redirects back to DRADIS automatically** ✅. Then create a monitor of type ☁️ Google Drive Backup in the Web UI.
 
   *Each service uses a separate token file — even if Calendar is already connected, run `/gmailauth` and `/gtasksauth` separately for the other services.*
 
@@ -350,7 +352,7 @@ Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. 
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
-| Monitor type | Type of data source: **⛈️ Thunderstorm risk** or **🌧️ Rain alert** (both Open-Meteo, no API key required) or **🌍 Seismic report** (INGV GOSSIP). |
+| Monitor type | Type of data source: **⛈️ Thunderstorm risk** or **🌧️ Rain alert** (both Open-Meteo, no API key required), **🌍 Seismic report** (INGV GOSSIP), or **☁️ Google Drive Backup**. |
 | Response language | Language of the Telegram report: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Location | City name or geographic description (e.g. *Bacoli*, *Naples*, *Rome*). Resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and coordinates as you type. |
 | Forecast days | *(Thunderstorm only)* Number of days to fetch (1–7, default 2). |
@@ -772,6 +774,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
 | `/gmailauth` | Start Gmail OAuth2 authorization. Same flow as `/gcalauth` but authorizes Gmail read and send scopes. Send `/gmailauth <url>` as fallback if the automatic redirect fails. |
 | `/gtasksauth` | Start Google Tasks OAuth2 authorization. Same flow as `/gcalauth`. Send `/gtasksauth <url>` as fallback if the automatic redirect fails. |
+| `/backupauth` | Start Google Drive Backup OAuth2 authorization. Grants `drive.file` scope — DRADIS can only access files it created. After authorization, create a monitor of type ☁️ Google Drive Backup in the Web UI. Send `/backupauth <url>` as fallback if the automatic redirect fails. |
 | `/todo` | List all open Google Tasks. Shortcut that calls the Tasks sub-agent directly without going through the DRADIS team routing. |
 
 ---
@@ -815,3 +818,4 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |
 | `/data/google_tasks_token.json` | Google Tasks OAuth2 token (auto-refreshed) |
+| `/data/gdrive_backup_token.json` | Google Drive Backup OAuth2 token — used by the ☁️ Google Drive Backup monitor (auto-refreshed) |

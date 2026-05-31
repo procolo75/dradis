@@ -22,21 +22,29 @@ from bot.scheduler import (
     run_scheduled_monitor,
     _live_status_dispatcher,
 )
+from live_monitors.ha import ha_monitor_manager
 from web.store import (
     load_tasks,
     load_monitors,
     load_live_monitors,
+    load_ha_monitors,
+    toggle_task,
+    toggle_monitor,
+    toggle_live_monitor,
+    toggle_ha_monitor,
 )
 
 COMMANDS = [
     BotCommand("info",       "Status and configuration of all agents"),
     BotCommand("menu",       "List all available commands"),
-    BotCommand("tasks",      "List and run enabled tasks"),
-    BotCommand("monitors",   "List and run enabled monitors"),
+    BotCommand("tasks",      "List and run tasks (all, including disabled)"),
+    BotCommand("monitors",   "List and run monitors (all, including disabled)"),
+    BotCommand("hamonitors", "List HA monitors and their status"),
+    BotCommand("manage",     "Enable / disable tasks and monitors"),
     BotCommand("gcalauth",   "Connect Google Calendar (OAuth2)"),
     BotCommand("gmailauth",  "Connect Gmail (OAuth2)"),
-    BotCommand("gtasksauth", "Connect Google Tasks (OAuth2)"),
-    BotCommand("todo",       "List open Google Tasks"),
+    BotCommand("gtasksauth",  "Connect Google Tasks (OAuth2)"),
+    BotCommand("backupauth",  "Connect Google Drive for automatic backups (OAuth2)"),
 ]
 
 
@@ -184,11 +192,14 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != _state.ALLOWED_CHAT_ID:
         return
-    tasks = [t for t in load_tasks() if t.get("enabled")]
+    tasks = load_tasks()
     if not tasks:
-        await update.message.reply_text("No enabled tasks. Enable tasks from the Web UI.")
+        await update.message.reply_text("No tasks configured. Add tasks from the Web UI.")
         return
-    keyboard = [[InlineKeyboardButton(t["name"], callback_data=f"task:{t['id']}")] for t in tasks]
+    keyboard = []
+    for t in tasks:
+        badge = "✅" if t.get("enabled") else "⏸"
+        keyboard.append([InlineKeyboardButton(f"{badge} {t['name']}", callback_data=f"task:{t['id']}")])
     await update.message.reply_text(
         "Select a task to run:",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -198,16 +209,17 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != _state.ALLOWED_CHAT_ID:
         return
-    scheduled = [m for m in load_monitors() if m.get("enabled")]
-    live      = [m for m in load_live_monitors() if m.get("enabled")]
+    scheduled = load_monitors()
+    live      = load_live_monitors()
     if not scheduled and not live:
-        await update.message.reply_text("No enabled monitors. Enable monitors from the Web UI.")
+        await update.message.reply_text("No monitors configured. Add monitors from the Web UI.")
         return
     keyboard = []
     for m in scheduled:
+        badge  = "✅" if m.get("enabled") else "⏸"
         detail = m.get("seismic_area", "?") if m.get("type") == "seismic" else m.get("location", "?")
         keyboard.append([InlineKeyboardButton(
-            f"{m['name']} ({detail})",
+            f"{badge} {m['name']} ({detail})",
             callback_data=f"monitor:{m['id']}",
         )])
     for m in live:
@@ -219,11 +231,31 @@ async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             label = f"{badge} {m['name']} ({m.get('location', '?')})"
         keyboard.append([InlineKeyboardButton(label, callback_data=f"live:{m['id']}")])
-    header = "Scheduled monitors — tap to run now:" if scheduled else ""
+    sections = []
+    if scheduled:
+        sections.append("Scheduled monitors — tap to run now:")
     if live:
-        header += ("\n\n" if header else "") + "Live monitors — tap to see status:"
+        sections.append("Live monitors — tap to see status:")
     await update.message.reply_text(
-        header.strip(),
+        "\n\n".join(sections),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def cmd_ha_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    ha_monitors = load_ha_monitors()
+    if not ha_monitors:
+        await update.message.reply_text("No HA monitors configured. Add them from the Web UI.")
+        return
+    keyboard = []
+    for m in ha_monitors:
+        status = ha_monitor_manager.status(m["id"])
+        badge  = "🟢" if status == "running" else "🔴"
+        keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"ha:{m['id']}")])
+    await update.message.reply_text(
+        "HA monitors — tap to see status:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -271,6 +303,32 @@ async def handle_monitor_callback(update: Update, context: ContextTypes.DEFAULT_
     asyncio.create_task(run_scheduled_monitor(monitor))
 
 
+async def handle_ha_monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _state.ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    monitor_id = query.data.removeprefix("ha:")
+    monitor    = next((m for m in load_ha_monitors() if m["id"] == monitor_id), None)
+    await query.answer()
+    if not monitor:
+        await query.message.reply_text("❌ HA monitor not found.")
+        return
+    status    = ha_monitor_manager.status(monitor_id)
+    badge     = "🟢 Running" if status == "running" else "🔴 Stopped"
+    entities  = monitor.get("entities", [])
+    mode      = monitor.get("alert_mode", "llm").upper()
+    cooldown  = monitor.get("cooldown_min", 60)
+    ent_label = ", ".join(entities) if entities else "—"
+    msg = (
+        f"🏠 <b>{html.escape(monitor['name'])}</b>\n"
+        f"Status: {badge}\n"
+        f"Mode: {mode} — Cooldown: {cooldown} min\n"
+        f"Entities ({len(entities)}): {html.escape(ent_label)}"
+    )
+    await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
 async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id != _state.ALLOWED_CHAT_ID:
@@ -297,3 +355,77 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Status: {badge}\n"
                f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: automatic (5/15/30 min)")
     await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+# ── /manage ───────────────────────────────────────────────────────────────────
+
+def _build_manage_keyboard() -> tuple[str, InlineKeyboardMarkup]:
+    tasks    = load_tasks()
+    monitors = load_monitors()
+    live     = load_live_monitors()
+    ha       = load_ha_monitors()
+    keyboard = []
+    if tasks:
+        keyboard.append([InlineKeyboardButton("── 📋 Tasks ──", callback_data="mgmt:noop")])
+        for t in tasks:
+            badge = "✅" if t.get("enabled") else "⏸"
+            keyboard.append([InlineKeyboardButton(f"{badge} {t['name']}", callback_data=f"mgmt:task:{t['id']}")])
+    if monitors:
+        keyboard.append([InlineKeyboardButton("── 🌩 Monitors ──", callback_data="mgmt:noop")])
+        for m in monitors:
+            badge = "✅" if m.get("enabled") else "⏸"
+            keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"mgmt:monitor:{m['id']}")])
+    if live:
+        keyboard.append([InlineKeyboardButton("── ⚡ Live ──", callback_data="mgmt:noop")])
+        for m in live:
+            badge = "✅" if m.get("enabled") else "⏸"
+            keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"mgmt:live:{m['id']}")])
+    if ha:
+        keyboard.append([InlineKeyboardButton("── 🏠 HA ──", callback_data="mgmt:noop")])
+        for m in ha:
+            badge = "✅" if m.get("enabled") else "⏸"
+            keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"mgmt:ha:{m['id']}")])
+    total = len(tasks) + len(monitors) + len(live) + len(ha)
+    text  = f"🔧 <b>Manage</b> — {total} component{'s' if total != 1 else ''}\nTap to toggle enable/disable:"
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+async def cmd_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    if not any([load_tasks(), load_monitors(), load_live_monitors(), load_ha_monitors()]):
+        await update.message.reply_text("No components configured. Add them from the Web UI.")
+        return
+    text, markup = _build_manage_keyboard()
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def handle_mgmt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _state.ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    parts = query.data.split(":", 2)
+    if len(parts) < 3 or parts[1] == "noop":
+        await query.answer()
+        return
+    _, kind, item_id = parts
+    toggle_fn = {
+        "task":    toggle_task,
+        "monitor": toggle_monitor,
+        "live":    toggle_live_monitor,
+        "ha":      toggle_ha_monitor,
+    }.get(kind)
+    if not toggle_fn:
+        await query.answer()
+        return
+    new_state = toggle_fn(item_id)
+    if new_state is None:
+        await query.answer("❌ Not found.")
+        return
+    await query.answer("✅ Enabled" if new_state else "⏸ Disabled")
+    text, markup = _build_manage_keyboard()
+    try:
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+    except Exception:
+        pass
