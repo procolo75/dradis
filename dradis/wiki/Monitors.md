@@ -28,7 +28,7 @@ Click `+` in the **Scheduled Monitors** sidebar header.
 
 ## ⛈️ Thunderstorm Risk Monitor
 
-Fetches atmospheric instability data from [Open-Meteo](https://open-meteo.com) (free, no API key required) and computes a risk score for each time band of each forecast day. All computation is in Python.
+Fetches atmospheric instability data from [Open-Meteo](https://open-meteo.com) (free, no API key required) and computes a **Thunderstorm Risk Score (TRS)** for each time band of each forecast day. All computation is in Python — no LLM, zero token cost.
 
 **Additional fields:**
 
@@ -36,26 +36,41 @@ Fetches atmospheric instability data from [Open-Meteo](https://open-meteo.com) (
 |-------|---------|-------------|
 | Forecast days | 2 | Number of days to fetch (1–7). |
 
-**Variables fetched (hourly):** CAPE, Lifted Index, Convective Inhibition (CIN), Wind Gusts, Precipitation Probability.
+**Variables fetched (hourly):** CAPE, Lifted Index (LI), Convective Inhibition (CIN) — all provided directly by Open-Meteo, no pressure-level variables required.
 
-**Risk score formula (0–10):**
+**Risk formula — multiplicative composite (TRS ∈ 0.0–1.0):**
 
-| Component | Weight |
-|---|---|
-| CAPE (normalised to 3000 J/kg) | 35% |
-| Lifted Index (mapped from +4 to −8 K) | 30% |
-| Precipitation probability | 15% |
-| Wind gusts (normalised to 100 km/h) | 10% |
-| CIN inverted (normalised to 200 J/kg) | 10% |
+```
+TRS = CAPE_norm × LI_norm × CIN_norm
+```
+
+The multiplicative structure means that if any single ingredient is absent the score collapses to zero.
+
+| Component | Normalisation | Notes |
+|---|---|---|
+| CAPE_norm | `min(CAPE / cape_sat, 1.0)` | Mediterranean default: 1200 J/kg |
+| LI_norm | `min(max(−LI / li_sat, 0), 1.0)` | LI −3°C = 60%; Mediterranean default sat. 5°C |
+| CIN_norm | `max(1 − \|CIN\| / cin_supp, 0.0)` | Mediterranean default ceiling: 100 J/kg |
+
+**Climate calibration** — the three saturation constants are saved per monitor and auto-populated from the location's country when a location is resolved in the UI:
+
+| Preset | Countries | CAPE sat. | LI sat. | CIN ceiling |
+|--------|-----------|-----------|---------|-------------|
+| Mediterranean | IT ES GR HR PT TR … | 1200 J/kg | 5.0°C | 100 J/kg |
+| Continental | DE AT CH FR PL … | 1500–1800 J/kg | 5.0°C | 110–120 J/kg |
+| Northern Europe | GB IE NO SE FI … | 400–700 J/kg | 3.5–4.0°C | 60–80 J/kg |
 
 **Risk levels:**
 
-| Score | Level |
+| TRS | Level |
 |---|---|
-| 0.0 – 2.5 | 🟢 LOW |
-| 2.5 – 5.0 | 🟡 MODERATE |
-| 5.0 – 7.5 | 🟠 HIGH |
-| 7.5 – 10.0 | 🔴 SEVERE |
+| 0.0 – 0.2 | 🟢 NEGLIGIBLE |
+| 0.2 – 0.4 | 🟡 LOW |
+| 0.4 – 0.6 | 🟡 MODERATE |
+| 0.6 – 0.8 | 🟠 HIGH |
+| 0.8 – 1.0 | 🔴 VERY HIGH |
+
+The Telegram message shows one line per time band (00–06 / 06–12 / 12–18 / 18–24) with TRS score and risk label. Each day ends with the daily peak risk.
 
 **Example configuration:**
 
@@ -65,6 +80,20 @@ Type:           ⛈️ Thunderstorm risk
 Location:       Bacoli
 Forecast days:  2
 Cron:           0 7 * * *
+```
+
+**Example output:**
+```
+⛈️ Thunderstorm Monitor — Bacoli
+📍 40.7967, 14.0735 | Forecast 2 days
+🕐 01/06/2026 07:00 (Europe/Rome)
+
+📅 1 June 2026
+  00–06  🟢 NEGLIGIBLE  0.04
+  06–12  🟢 NEGLIGIBLE  0.08
+  12–18  🟡 LOW  0.24
+  18–24  🟡 MODERATE  0.41
+➤ Peak risk: 🟡 MODERATE  (0.41)
 ```
 
 ---

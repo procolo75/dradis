@@ -61,7 +61,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `agents/gmail.py` | Gmail member agent — `create_gmail_agent()` + OAuth token management |
 | `agents/gcal.py` | Google Calendar member agent — `create_gcal_agent()` + OAuth token management |
 | `agents/gtasks.py` | Google Tasks member agent — `create_gtasks_agent()` + OAuth token management |
-| `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability data, computes risk score in Python |
+| `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability + pressure-level data, computes multiplicative TRS (0.0–1.0) in Python |
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
 | `live_monitors/lightning.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
@@ -364,30 +364,35 @@ Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. 
 
 #### Thunderstorm risk monitor
 
-Fetches atmospheric instability data from [Open-Meteo](https://open-meteo.com) (free, no API key required) and computes a risk score for each time band of each forecast day. No LLM is used — all computation happens in Python.
+Fetches atmospheric instability data from [Open-Meteo](https://open-meteo.com) (free, no API key required) and computes a **Thunderstorm Risk Score (TRS)** for each time band of each forecast day. No LLM is used — all computation happens in Python.
 
-**Variables fetched (hourly):** CAPE, Lifted Index, Convective Inhibition (CIN), Wind Gusts, Precipitation Probability.
+**Variables fetched (hourly):** CAPE, Lifted Index (LI), Convective Inhibition (CIN) — all provided directly by Open-Meteo, no pressure-level variables required.
 
-**Risk score formula (0–10):**
+**Risk formula — multiplicative composite (TRS ∈ 0.0–1.0):**
 
-| Component | Weight | Rationale |
+```
+TRS = CAPE_norm × LI_norm × CIN_norm
+```
+
+The multiplicative structure means that if any single ingredient is absent the score collapses to zero — mirroring how convection requires all ingredients simultaneously. K-Index was evaluated but dropped: it proved unreliable for the Mediterranean because dry air at 700 hPa suppresses it even under genuine convective risk.
+
+| Component | Normalisation | Notes |
 |---|---|---|
-| CAPE (normalised to 3000 J/kg) | 35% | Primary energy driver |
-| Lifted Index (mapped from +4 to -8 K) | 30% | Atmospheric instability indicator |
-| Precipitation probability | 15% | Proxy for moisture and trigger |
-| Wind gusts (normalised to 100 km/h) | 10% | Convective intensity indicator |
-| CIN inverted (normalised to 200 J/kg) | 10% | High CIN suppresses storms |
+| CAPE_norm | `min(CAPE / 1200, 1.0)` | Mediterranean: 800 J/kg = 67%, saturates at 1200 J/kg |
+| LI_norm | `min(max(−LI / 5, 0), 1.0)` | LI −3°C = 60%; saturates at −5°C |
+| CIN_norm | `max(1 − \|CIN\| / 100, 0.0)` | CIN = 0 → 1.0 (no cap); CIN ≥ 100 J/kg → 0.0 (fully suppressed) |
 
 **Risk levels:**
 
-| Score | Level |
+| TRS | Level |
 |---|---|
-| 0.0 – 2.5 | 🟢 LOW |
-| 2.5 – 5.0 | 🟡 MODERATE |
-| 5.0 – 7.5 | 🟠 HIGH |
-| 7.5 – 10.0 | 🔴 SEVERE |
+| 0.0 – 0.2 | 🟢 TRASCURABILE / NEGLIGIBLE |
+| 0.2 – 0.4 | 🟡 BASSO / LOW |
+| 0.4 – 0.6 | 🟡 MODERATO / MODERATE |
+| 0.6 – 0.8 | 🟠 ELEVATO / HIGH |
+| 0.8 – 1.0 | 🔴 MOLTO ELEVATO / VERY HIGH |
 
-The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–12, AFTERNOON 12–18, EVENING 18–24) with the raw parameter values and the computed risk label, plus a daily maximum at the end of each day.
+The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–12, AFTERNOON 12–18, EVENING 18–24) with the TRS score (0.00–1.00) and risk label only. Raw parameter values (CAPE, LI, CIN) are not shown in the message. Each day ends with the daily peak risk level.
 
 **Testing a monitor manually:** each monitor form includes a **▶ Test Monitor** button that triggers an immediate execution. The result is delivered to Telegram within seconds.
 
@@ -650,7 +655,7 @@ Every morning DRADIS fetches atmospheric instability data for the next 2 days an
 | Forecast days | 2 |
 | Cron | `0 7 * * *` |
 
-The Telegram message shows one line per time band (NIGHT / MORNING / AFTERNOON / EVENING) with CAPE, Lifted Index, CIN, wind gusts, precipitation probability, and a risk level (🟢 LOW · 🟡 MODERATE · 🟠 HIGH · 🔴 SEVERE).
+The Telegram message shows one line per time band (NIGHT / MORNING / AFTERNOON / EVENING) with TRS score (0.00–1.00) and risk level only (🟢 TRASCURABILE · 🟡 BASSO · 🟡 MODERATO · 🟠 ELEVATO · 🔴 MOLTO ELEVATO), plus the daily peak at the end of each day.
 
 ---
 

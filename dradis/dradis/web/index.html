@@ -3073,14 +3073,73 @@ async function validateCronMonitorLive(expr) {
   }, 400);
 }
 
+const CLIMATE_PRESETS = {
+  // Mediterranean
+  IT:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  ES:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  GR:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  HR:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  BA:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  ME:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  AL:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  MK:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  TR:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  PT:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  MT:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  CY:{cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"},
+  // Continental
+  DE:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  AT:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  CH:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  PL:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  CZ:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  SK:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  HU:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  RO:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  BG:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  RS:{cape_sat:1800,li_sat:5.0,cin_supp:120,label:"Continental"},
+  FR:{cape_sat:1500,li_sat:5.0,cin_supp:110,label:"Continental"},
+  SI:{cape_sat:1500,li_sat:5.0,cin_supp:110,label:"Continental"},
+  BE:{cape_sat:1500,li_sat:5.0,cin_supp:110,label:"Continental"},
+  NL:{cape_sat:1500,li_sat:4.5,cin_supp:100,label:"Continental"},
+  LU:{cape_sat:1500,li_sat:5.0,cin_supp:110,label:"Continental"},
+  // Northern Europe
+  GB:{cape_sat:600, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  IE:{cape_sat:600, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  NO:{cape_sat:600, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  SE:{cape_sat:700, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  FI:{cape_sat:600, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  DK:{cape_sat:700, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  IS:{cape_sat:400, li_sat:3.5,cin_supp:60, label:"Northern Europe"},
+  EE:{cape_sat:700, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  LV:{cape_sat:700, li_sat:4.0,cin_supp:80, label:"Northern Europe"},
+  LT:{cape_sat:800, li_sat:4.0,cin_supp:90, label:"Northern Europe"},
+};
+const _DEFAULT_CLIMATE = {cape_sat:1200,li_sat:5.0,cin_supp:100,label:"Mediterranean"};
+
+function applyClimatePreset(countryCode) {
+  const preset = CLIMATE_PRESETS[(countryCode || "").toUpperCase()] || _DEFAULT_CLIMATE;
+  const elCape = document.getElementById("m-cape-sat");
+  const elLi   = document.getElementById("m-li-sat");
+  const elCin  = document.getElementById("m-cin-supp");
+  const elLbl  = document.getElementById("m-calibration-label");
+  if (elCape) elCape.value = preset.cape_sat;
+  if (elLi)   elLi.value   = preset.li_sat;
+  if (elCin)  elCin.value  = preset.cin_supp;
+  if (elLbl)  elLbl.textContent = `Calibration: ${preset.label}`;
+}
+
 async function resolveLocation(q) {
   const hint = document.getElementById("m-location-hint");
   if (!q.trim()) { if (hint) { hint.textContent = ""; } return; }
   try {
     const data = await api("GET", `/api/monitors/geocode?q=${encodeURIComponent(q.trim())}`);
     if (hint) {
-      hint.textContent = `✅ ${data.name}, ${data.country} (§ ${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)})`;
+      hint.textContent = `✅ ${data.name}, ${data.country} (${data.latitude.toFixed(4)}, ${data.longitude.toFixed(4)})`;
       hint.style.color = "var(--success)";
+    }
+    if (document.getElementById("m-type")?.value === "thunderstorm") {
+      applyClimatePreset(data.country_code);
     }
   } catch {
     if (hint) { hint.textContent = "❌ Location not found"; hint.style.color = "var(--danger)"; }
@@ -3192,6 +3251,37 @@ function renderMonitorForm(monitor) {
         <input type="number" id="m-days" min="1" max="7" value="${monitor.days || 2}" style="width:80px">
       </div>
 
+      <div class="form-group" id="fg-calibration">
+        <label>Climate calibration</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:6px">
+          <div>
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:3px">CAPE sat. (J/kg)</div>
+            <input type="number" id="m-cape-sat" readonly value="${monitor.cape_sat || 1200}"
+              style="width:100%;background:var(--card-bg);color:var(--text-muted);cursor:default;border-color:var(--border)">
+          </div>
+          <div>
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:3px">LI sat. (°C neg.)</div>
+            <input type="number" id="m-li-sat" readonly step="0.5" value="${monitor.li_sat || 5.0}"
+              style="width:100%;background:var(--card-bg);color:var(--text-muted);cursor:default;border-color:var(--border)">
+          </div>
+          <div>
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:3px">CIN ceiling (J/kg)</div>
+            <input type="number" id="m-cin-supp" readonly value="${monitor.cin_supp || 100}"
+              style="width:100%;background:var(--card-bg);color:var(--text-muted);cursor:default;border-color:var(--border)">
+          </div>
+        </div>
+        <small id="m-calibration-label" style="color:var(--text-muted)">Calibration: Mediterranean</small>
+        <details style="margin-top:8px;font-size:0.82rem;color:var(--text-muted)">
+          <summary style="cursor:pointer;color:var(--accent)">What are these values?</summary>
+          <div style="margin-top:6px;line-height:1.6">
+            <p><strong>CAPE sat.</strong> — CAPE saturation threshold (J/kg). Above this value the contribution to TRS is capped at 1.0. In the Mediterranean, 1200 J/kg already represents a serious storm; in Northern Europe convection rarely exceeds 600 J/kg, so the threshold must be lower to avoid underestimating risk.</p>
+            <p><strong>LI sat.</strong> — absolute Lifted Index value (°C) at which the contribution is maximum. LI −5°C is extreme instability in the Mediterranean; −4°C is enough in Northern Europe.</p>
+            <p><strong>CIN ceiling</strong> — convective inhibition (J/kg) above which storms are fully suppressed. High CIN means a strong thermal inversion capping convection.</p>
+            <p style="margin-top:4px">Values are auto-updated when a location is resolved.</p>
+          </div>
+        </details>
+      </div>
+
       <div class="form-group" id="fg-hours-ahead">
         <label for="m-hours-ahead">Hours ahead (1–24)</label>
         <input type="number" id="m-hours-ahead" min="1" max="24" value="${monitor.hours_ahead || 2}" style="width:80px">
@@ -3259,6 +3349,7 @@ function renderMonitorForm(monitor) {
   const _TYPES_WITHOUT_LOCATION = new Set(["seismic", "backup"]);
   function applyTypeVisibility(type) {
     document.getElementById("fg-days").style.display          = type === "thunderstorm"              ? "" : "none";
+    document.getElementById("fg-calibration").style.display   = type === "thunderstorm"              ? "" : "none";
     document.getElementById("fg-hours-ahead").style.display   = type === "rain"                     ? "" : "none";
     document.getElementById("fg-location").style.display      = _TYPES_WITHOUT_LOCATION.has(type)   ? "none" : "";
     document.getElementById("fg-seismic-area").style.display  = type === "seismic"                  ? "" : "none";
@@ -3324,6 +3415,9 @@ async function saveMonitor() {
     instructions: document.getElementById("m-alert-mode").value === "llm"
                     ? (document.getElementById("m-instructions")?.value.trim() || "")
                     : "",
+    cape_sat:     parseFloat(document.getElementById("m-cape-sat")?.value)  || 1200,
+    li_sat:       parseFloat(document.getElementById("m-li-sat")?.value)    || 5.0,
+    cin_supp:     parseFloat(document.getElementById("m-cin-supp")?.value)  || 100,
   };
   try {
     const updated = await api("PUT", `/api/monitors/${selectedMonitorId}`, payload);

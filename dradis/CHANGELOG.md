@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [2.20.0] - 2026-06-01
+- **Feat — Thunderstorm monitor: auto climate calibration per location**: the three TRS normalisation constants (CAPE sat., LI sat., CIN ceiling) are now saved per-monitor and auto-populated from the location's country code when a location is resolved in the UI. A `CLIMATE_PRESETS` map covers Mediterranean (IT/ES/GR/…), Continental (DE/FR/AT/…) and Northern Europe (GB/NO/SE/…). The three read-only fields are shown in the Thunderstorm monitor form with an expandable explanation. The geocode endpoint now returns `country_code`.
+- **Refactor — Thunderstorm monitor: TRS multiplicative formula, Mediterranean calibration, simplified output**: replaced the previous additive weighted score (0–10, 4 levels) with a **Thunderstorm Risk Score (TRS)** composite index (0.0–1.0, 5 levels).
+  - **Formula:** `TRS = CAPE_norm × LI_norm × CIN_norm`. K-Index dropped — it proved unreliable for the Mediterranean due to dry mid-troposphere suppressing the score even under real convective risk (per NWS operational notes).
+  - **Mediterranean calibration:** `CAPE_norm = min(CAPE/1200, 1)` · `LI_norm = min(max(−LI/5, 0), 1)` (LI −3°C = 60%) · `CIN_norm = max(1 − |CIN|/100, 0)` (100 J/kg ceiling).
+  - **5 risk levels:** 🟢 TRASCURABILE (< 0.2) · 🟡 BASSO (0.2–0.4) · 🟡 MODERATO (0.4–0.6) · 🟠 ELEVATO (0.6–0.8) · 🔴 MOLTO ELEVATO (≥ 0.8).
+  - **Simplified Telegram output:** each time band shows only the risk label and TRS score (no raw CAPE/LI/CIN values). Fewer tokens, cleaner message.
+  - **Simplified API fetch:** only `cape`, `convective_inhibition`, `lifted_index` requested — pressure-level variables no longer fetched.
+
 ## [2.19.0] - 2026-05-31
 - **Feature — Google Drive Backup monitor**: new scheduled monitor type `backup` that uploads all sensitive DRADIS configuration files to a dedicated "DRADIS Backup" folder on Google Drive.
   - Files backed up: `options.json`, `dradis_settings.json`, all Google OAuth tokens (`google_calendar_token.json`, `google_gmail_token.json`, `google_tasks_token.json`, `gdrive_backup_token.json`), `tasks.json`, `monitors.json`, `live_monitors.json`, `ha_monitors.json`, `agents.json`.

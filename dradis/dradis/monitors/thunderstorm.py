@@ -1,23 +1,22 @@
 """
 monitors/thunderstorm.py
 ────────────────────────
-LLM-free monitor: fetches atmospheric instability data from Open-Meteo for a
-given location and computes an hourly thunderstorm risk factor in pure Python.
+LLM-free monitor: fetches CAPE, LI and CIN from Open-Meteo for a given location
+and computes a Thunderstorm Risk Score (TRS) in pure Python.
 
-Risk formula (each band 0-10):
-  score = (
-      0.35 * norm_cape      # CAPE normalised to [0,10]  (max ref: 3000 J/kg)
-    + 0.30 * norm_li        # Lifted Index: maps [-8,+4] -> [10,0]
-    + 0.15 * norm_precip    # Precipitation probability [0,100] -> [0,10]
-    + 0.10 * norm_gusts     # Wind gusts [0,100 km/h] -> [0,10]
-    + 0.10 * norm_cin       # CIN inverted [0,200] -> [10,0]  (high CIN suppresses)
-  )
+Risk formula — multiplicative composite (TRS ∈ [0.0, 1.0]):
+  TRS = CAPE_norm × LI_norm × CIN_norm
+
+  CAPE_norm = min(CAPE / 1200, 1.0)            # Mediterranean: 800 J/kg ≈ 67%
+  LI_norm   = min(max(-LI / 5.0, 0.0), 1.0)   # LI -3°C = 60%; saturates at -5°C
+  CIN_norm  = max(1.0 - |CIN| / 100.0, 0.0)   # CIN 0 → 1.0, CIN 100 → 0.0
 
 Risk levels:
-  0.0 - 2.5 : GREEN  LOW
-  2.5 - 5.0 : YELLOW MODERATE
-  5.0 - 7.5 : ORANGE HIGH
-  7.5 - 10  : RED    SEVERE
+  0.0 – 0.2  : 🟢 TRASCURABILE / NEGLIGIBLE
+  0.2 – 0.4  : 🟡 BASSO / LOW
+  0.4 – 0.6  : 🟡 MODERATO / MODERATE
+  0.6 – 0.8  : 🟠 ELEVATO / HIGH
+  0.8 – 1.0  : 🔴 MOLTO ELEVATO / VERY HIGH
 """
 
 import html
@@ -27,75 +26,79 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-_CAPE_MAX   = 3000.0
-_LI_MIN     = -8.0
-_LI_MAX     =  4.0
-_CIN_MAX    = 200.0
-_GUSTS_MAX  = 100.0
+# Default calibration constants (Mediterranean). Per-monitor overrides come from the saved config.
+_CAPE_SAT_DEFAULT = 1200.0
+_LI_SAT_DEFAULT   =    5.0
+_CIN_SUPP_DEFAULT =  100.0
 
-_BANDS = {
-    "it": [
-        ("NOTTE      00-06", range(0, 6)),
-        ("MATTINA    06-12", range(6, 12)),
-        ("POMERIGGIO 12-18", range(12, 18)),
-        ("SERA       18-24", range(18, 24)),
-    ],
-    "en": [
-        ("NIGHT      00-06", range(0, 6)),
-        ("MORNING    06-12", range(6, 12)),
-        ("AFTERNOON  12-18", range(12, 18)),
-        ("EVENING    18-24", range(18, 24)),
-    ],
-}
+_BANDS = [
+    ("00–06", range(0, 6)),
+    ("06–12", range(6, 12)),
+    ("12–18", range(12, 18)),
+    ("18–24", range(18, 24)),
+]
 
 _RISK_EMOJI = {
     "it": [
-        (7.5, "🔴 SEVERO"),
-        (5.0, "🟠 ALTO"),
-        (2.5, "🟡 MODERATO"),
-        (0.0, "🟢 BASSO"),
+        (0.8, "🔴 MOLTO ELEVATO"),
+        (0.6, "🟠 ELEVATO"),
+        (0.4, "🟡 MODERATO"),
+        (0.2, "🟡 BASSO"),
+        (0.0, "🟢 TRASCURABILE"),
     ],
     "en": [
-        (7.5, "🔴 SEVERE"),
-        (5.0, "🟠 HIGH"),
-        (2.5, "🟡 MODERATE"),
-        (0.0, "🟢 LOW"),
+        (0.8, "🔴 VERY HIGH"),
+        (0.6, "🟠 HIGH"),
+        (0.4, "🟡 MODERATE"),
+        (0.2, "🟡 LOW"),
+        (0.0, "🟢 NEGLIGIBLE"),
     ],
 }
 
 _STRINGS = {
     "it": {
-        "title":       "⛈️ <b>Monitor Temporali — {name}</b>",
-        "forecast":    "Previsione {days} giorn{suffix}",
-        "day_suffix":  lambda d: "o" if d == 1 else "i",
-        "gusts":       "Raffiche {v} km/h",
-        "precip":      "Precip {v}%",
-        "daily_max":   "➤ Rischio massimo giornaliero: {label} ({score}/10)",
-        "footer":      "<i>Monitor DRADIS · Open-Meteo · nessun LLM utilizzato</i>",
+        "title":      "⛈️ <b>Monitor Temporali — {name}</b>",
+        "forecast":   "Previsione {days} giorn{suffix}",
+        "day_suffix": lambda d: "o" if d == 1 else "i",
+        "daily_max":  "➤ Rischio max: {label}  ({trs:.2f})",
+        "footer":     "<i>Monitor DRADIS · Open-Meteo · nessun LLM utilizzato</i>",
     },
     "en": {
-        "title":       "⛈️ <b>Thunderstorm Monitor — {name}</b>",
-        "forecast":    "Forecast {days} day{suffix}",
-        "day_suffix":  lambda d: "" if d == 1 else "s",
-        "gusts":       "Gusts {v} km/h",
-        "precip":      "Precip {v}%",
-        "daily_max":   "➤ Peak daily risk: {label} ({score}/10)",
-        "footer":      "<i>DRADIS Monitor · Open-Meteo · no LLM used</i>",
+        "title":      "⛈️ <b>Thunderstorm Monitor — {name}</b>",
+        "forecast":   "Forecast {days} day{suffix}",
+        "day_suffix": lambda d: "" if d == 1 else "s",
+        "daily_max":  "➤ Peak risk: {label}  ({trs:.2f})",
+        "footer":     "<i>DRADIS Monitor · Open-Meteo · no LLM used</i>",
     },
 }
 
 
-def _risk_label(score: float, lang: str = "it") -> str:
+def _risk_label(trs: float, lang: str = "it") -> str:
     for threshold, label in _RISK_EMOJI.get(lang, _RISK_EMOJI["it"]):
-        if score >= threshold:
+        if trs >= threshold:
             return label
     return _RISK_EMOJI.get(lang, _RISK_EMOJI["it"])[-1][1]
 
 
-def _norm(val, lo, hi) -> float:
-    if hi == lo:
+def _norm_cape(cape: float, sat: float) -> float:
+    return min(max(cape, 0.0) / sat, 1.0)
+
+
+def _norm_li(li: float, sat: float) -> float:
+    return min(max(-li / sat, 0.0), 1.0)
+
+
+def _norm_cin(cin: float, supp: float) -> float:
+    return max(1.0 - abs(cin) / supp, 0.0)
+
+
+def _compute_trs(cape, cin, li, cape_sat: float, li_sat: float, cin_supp: float) -> float:
+    if cape is None or li is None:
         return 0.0
-    return max(0.0, min(10.0, (val - lo) / (hi - lo) * 10.0))
+    return round(
+        _norm_cape(cape, cape_sat) * _norm_li(li, li_sat) * _norm_cin(cin or 0.0, cin_supp),
+        3,
+    )
 
 
 def _band_mean(hourly: dict, field: str, hour_range: range, base: int) -> float | None:
@@ -106,33 +109,6 @@ def _band_mean(hourly: dict, field: str, hour_range: range, base: int) -> float 
         if base + h < len(vals) and vals[base + h] is not None
     ]
     return round(statistics.mean(bucket), 2) if bucket else None
-
-
-def _band_max(hourly: dict, field: str, hour_range: range, base: int) -> float | None:
-    vals = hourly.get(field, [])
-    bucket = [
-        vals[base + h]
-        for h in hour_range
-        if base + h < len(vals) and vals[base + h] is not None
-    ]
-    return round(max(bucket), 2) if bucket else None
-
-
-def _compute_risk(cape, li, cin, gusts, precip) -> float:
-    n_cape   = _norm(cape   or 0, 0,       _CAPE_MAX)
-    n_li     = _norm(li     or _LI_MAX, _LI_MAX, _LI_MIN)
-    n_cin    = _norm(cin    or 0, 0,       _CIN_MAX)
-    n_gusts  = _norm(gusts  or 0, 0,       _GUSTS_MAX)
-    n_precip = _norm(precip or 0, 0,       100.0)
-    n_cin_inv = 10.0 - n_cin
-    score = (
-        0.35 * n_cape
-        + 0.30 * n_li
-        + 0.15 * n_precip
-        + 0.10 * n_gusts
-        + 0.10 * n_cin_inv
-    )
-    return round(score, 1)
 
 
 async def _geocode(location: str) -> tuple[float, float, str]:
@@ -152,10 +128,7 @@ async def _fetch_instability(lat: float, lon: float, days: int) -> dict:
     params = {
         "latitude":      lat,
         "longitude":     lon,
-        "hourly":        (
-            "cape,lifted_index,convective_inhibition,"
-            "wind_gusts_10m,precipitation_probability,weather_code"
-        ),
+        "hourly":        "cape,convective_inhibition,lifted_index",
         "timezone":      "auto",
         "forecast_days": days,
     }
@@ -173,9 +146,12 @@ def _format_report(
     hourly: dict,
     tz_name: str,
     lang: str = "it",
+    cape_sat: float = _CAPE_SAT_DEFAULT,
+    li_sat: float = _LI_SAT_DEFAULT,
+    cin_supp: float = _CIN_SUPP_DEFAULT,
 ) -> str:
     s = _STRINGS.get(lang, _STRINGS["it"])
-    bands = _BANDS.get(lang, _BANDS["it"])
+    bands = _BANDS
 
     try:
         tz = ZoneInfo(tz_name)
@@ -202,35 +178,24 @@ def _format_report(
             day_label = day_str
 
         lines.append(f"📅 <b>{day_label}</b>")
-        day_scores: list[float] = []
+        day_trs: list[float] = []
 
         for band_label, hour_range in bands:
-            cape   = _band_mean(hourly, "cape",                      hour_range, base)
-            li     = _band_mean(hourly, "lifted_index",              hour_range, base)
-            cin    = _band_mean(hourly, "convective_inhibition",     hour_range, base)
-            gusts  = _band_max( hourly, "wind_gusts_10m",            hour_range, base)
-            precip = _band_mean(hourly, "precipitation_probability", hour_range, base)
+            cape = _band_mean(hourly, "cape",                  hour_range, base)
+            li   = _band_mean(hourly, "lifted_index",          hour_range, base)
+            cin  = _band_mean(hourly, "convective_inhibition", hour_range, base)
 
-            if all(v is None for v in [cape, li, cin, gusts, precip]):
+            if cape is None and li is None:
                 continue
 
-            score = _compute_risk(cape, li, cin, gusts, precip)
-            day_scores.append(score)
-            label = _risk_label(score, lang)
+            trs = _compute_trs(cape, cin, li, cape_sat, li_sat, cin_supp)
+            day_trs.append(trs)
+            label = _risk_label(trs, lang)
+            lines.append(f"  <code>{band_label}</code>  {label}  <b>{trs:.2f}</b>")
 
-            parts: list[str] = []
-            if cape   is not None: parts.append(f"CAPE {int(cape)} J/kg")
-            if li     is not None: parts.append(f"LI {li:+.1f}")
-            if cin    is not None: parts.append(f"CIN {int(cin)} J/kg")
-            if gusts  is not None: parts.append(s["gusts"].format(v=int(gusts)))
-            if precip is not None: parts.append(s["precip"].format(v=int(precip)))
-
-            lines.append(f"  <code>{band_label}</code>  {label}  <b>{score:.1f}/10</b>")
-            lines.append(f"    <i>{' · '.join(parts)}</i>")
-
-        if day_scores:
-            day_max = max(day_scores)
-            lines.append(s["daily_max"].format(label=_risk_label(day_max, lang), score=f"{day_max:.1f}"))
+        if day_trs:
+            peak = max(day_trs)
+            lines.append(s["daily_max"].format(label=_risk_label(peak, lang), trs=peak))
         lines.append("")
 
     lines.append(s["footer"])
@@ -241,9 +206,12 @@ async def run_thunderstorm_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     location = monitor.get("location", "").strip()
     if not location:
         raise ValueError("Monitor: 'location' field is required")
-    days = max(1, min(int(monitor.get("days", 2)), 7))
-    lang = monitor.get("language", "it")
+    days     = max(1, min(int(monitor.get("days", 2)), 7))
+    lang     = monitor.get("language", "it")
+    cape_sat = float(monitor.get("cape_sat", _CAPE_SAT_DEFAULT))
+    li_sat   = float(monitor.get("li_sat",   _LI_SAT_DEFAULT))
+    cin_supp = float(monitor.get("cin_supp", _CIN_SUPP_DEFAULT))
     lat, lon, resolved = await _geocode(location)
     data = await _fetch_instability(lat, lon, days)
     hourly = data.get("hourly", {})
-    return _format_report(resolved, lat, lon, days, hourly, tz_name, lang)
+    return _format_report(resolved, lat, lon, days, hourly, tz_name, lang, cape_sat, li_sat, cin_supp)

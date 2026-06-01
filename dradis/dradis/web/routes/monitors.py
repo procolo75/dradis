@@ -114,10 +114,11 @@ async def geocode_location(q: str = ""):
             raise HTTPException(status_code=404, detail=f"Location not found: {q!r}")
         r = results[0]
         return {
-            "name":      r.get("name", q),
-            "country":   r.get("country", ""),
-            "latitude":  r["latitude"],
-            "longitude": r["longitude"],
+            "name":         r.get("name", q),
+            "country":      r.get("country", ""),
+            "country_code": r.get("country_code", ""),
+            "latitude":     r["latitude"],
+            "longitude":    r["longitude"],
         }
     except HTTPException:
         raise
