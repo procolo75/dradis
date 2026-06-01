@@ -23,7 +23,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 - **Scheduled Tasks** — cron-based LLM tasks delivered to Telegram; use all enabled sub-agents (Web Search, Weather, Calendar, Gmail, Tasks)
 - **Scheduled Monitors** — LLM-free cron-based monitors that fetch data and compute results in Python (zero token cost, deterministic output):
-  - ⛈️ **Thunderstorm risk** — CAPE, Lifted Index, CIN, wind gusts from Open-Meteo; risk score 0–10 per time band
+  - ⛈️ **Thunderstorm risk** — multiplicative TRS score (0.0–1.0) from CAPE × LI × CIN via Open-Meteo; auto climate calibration from location country (Mediterranean / Continental / Northern Europe); 5 risk levels per time band
   - 🌧️ **Rain alert** — 15-min precipitation data from Open-Meteo; silent when clear
   - 🌍 **Seismic report** — event statistics from INGV GOSSIP JSON API (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli)
   - ☁️ **Google Drive Backup** — uploads all sensitive DRADIS config files to a dedicated "DRADIS Backup" Drive folder; `drive.file` scope only (no full Drive access)
@@ -95,7 +95,19 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 > `Cron: 0 6 * * 1` — Monitor type: ☁️ Google Drive Backup
 
 **Daily thunderstorm risk digest** *(scheduled monitor)*
-> Every morning DRADIS fetches atmospheric instability data and sends a risk summary by time band — no LLM, no token cost.
+> Every morning DRADIS fetches CAPE, Lifted Index and CIN from Open-Meteo and computes a multiplicative TRS score (0.0–1.0) per time band. Calibration constants are auto-selected from the location's country. No LLM, no token cost.
+>
+> ```
+> ⛈️ Thunderstorm Monitor — Bacoli
+> 📍 40.7967, 14.0735 | Forecast 2 days
+>
+> 📅 2 June 2026
+>   00–06  🟢 NEGLIGIBLE  0.04
+>   12–18  🟡 MODERATE  0.44
+>   18–24  🟠 HIGH  0.63
+> ➤ Peak risk: 🟠 HIGH  (0.63)
+> ```
+>
 > `Cron: 0 7 * * *` — Monitor type: ⛈️ Thunderstorm risk
 
 **Daily seismic report** *(scheduled monitor)*
