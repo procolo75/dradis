@@ -309,6 +309,10 @@
           <span class="nav-icon">📡</span>
           <span class="nav-label">MQTT / Home Assistant</span>
         </li>
+        <li class="nav-item" data-panel="bots" id="nav-bots">
+          <span class="nav-icon">🤖</span>
+          <span class="nav-label">Telegram Bots</span>
+        </li>
       </ul>
     </div>
 
@@ -1224,6 +1228,58 @@
       </div>
     </div>
 
+    <!-- Panel: Telegram Bots -->
+    <div class="panel" id="panel-bots">
+      <div class="form-card">
+        <h2>Telegram Bots</h2>
+        <p style="color:var(--text-muted);margin-bottom:16px;font-size:0.92em;">
+          Configure extra Telegram bots. Each monitor, live monitor, HA monitor and task can
+          choose which bot sends the notifications. The <strong>DRADIS</strong> bot is always
+          the default.
+        </p>
+
+        <!-- Default bot (read-only) -->
+        <h3 style="font-size:0.95em;margin-bottom:8px;color:var(--text-muted);">Default bot</h3>
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:20px;display:flex;align-items:center;gap:12px;">
+          <span style="font-size:1.4em;">🤖</span>
+          <div style="flex:1">
+            <strong>DRADIS</strong>
+            <div style="font-size:0.85em;color:var(--text-muted);">Chat ID: <span id="bots-default-chat-id">—</span></div>
+          </div>
+          <span style="font-size:0.8em;color:var(--text-muted);background:var(--border);padding:2px 8px;border-radius:4px;">default</span>
+        </div>
+
+        <!-- Extra bots table -->
+        <h3 style="font-size:0.95em;margin-bottom:8px;color:var(--text-muted);">Extra bots</h3>
+        <div id="bots-list" style="display:flex;flex-direction:column;gap:10px;"></div>
+
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="btn-save" id="btn-bots-add">+ Add bot</button>
+        </div>
+
+        <!-- Add/edit form (hidden by default) -->
+        <div id="bots-form-wrap" style="display:none;margin-top:16px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div class="form-group">
+            <label for="bot-f-name">Name</label>
+            <input type="text" id="bot-f-name" placeholder="e.g. Alerts Bot">
+          </div>
+          <div class="form-group">
+            <label for="bot-f-token">Bot Token</label>
+            <input type="password" id="bot-f-token" placeholder="123456:ABC-DEF…">
+          </div>
+          <div class="form-group">
+            <label for="bot-f-chat-id">Chat ID</label>
+            <input type="number" id="bot-f-chat-id" placeholder="-100123456789">
+          </div>
+          <input type="hidden" id="bot-f-id">
+          <div class="btn-row">
+            <button class="btn-save" id="btn-bot-save">Save</button>
+            <button class="btn-save" id="btn-bot-cancel" style="background:var(--text-muted,#888)">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
 
   </div><!-- #content -->
 </div><!-- #app -->
@@ -1245,6 +1301,7 @@ function navigateTo(panelId, navEl) {
   if (navEl) navEl.classList.add("active");
   const panel = document.getElementById("panel-" + panelId);
   if (panel) panel.classList.add("active");
+  if (panelId === "bots") renderBotsList();
 }
 
 document.querySelectorAll(".nav-item[data-panel]").forEach(item => {
@@ -2660,6 +2717,8 @@ async function init() {
   ]);
   providers = config.providers || [];
   agents    = agentList || [];
+  const defaultChatEl = document.getElementById("bots-default-chat-id");
+  if (defaultChatEl && config.default_chat_id) defaultChatEl.textContent = config.default_chat_id;
 
   try {
     await loadSettings();
@@ -2739,6 +2798,13 @@ async function init() {
     console.error("loadHaMonitors:", e);
   }
   renderSidebarHaMonitors();
+
+  try {
+    bots = await api("GET", "/api/bots");
+  } catch (e) {
+    console.error("loadBots:", e);
+  }
+  renderSidebarBots();
 }
 
 // ── Tasks sidebar ─────────────────────────────────────────────────────────────
@@ -2890,6 +2956,11 @@ function renderTaskForm(task) {
         <textarea id="t-instructions" placeholder="What should DRADIS do at this time?">${task.instructions || ""}</textarea>
       </div>
 
+      <div class="form-group">
+        <label for="t-bot-id">Telegram bot</label>
+        <select id="t-bot-id">${renderBotSelector(task.telegram_bot_id)}</select>
+      </div>
+
       <div class="btn-row">
         <button class="btn-save" id="btn-save-task">Save</button>
         <button class="btn-save" id="btn-run-task" style="background:var(--accent)">&#9654; Test Task</button>
@@ -2933,10 +3004,11 @@ async function saveTask() {
   const btn = document.getElementById("btn-save-task");
   btn.disabled = true;
   const payload = {
-    name:         document.getElementById("t-name").value.trim(),
-    enabled:      document.getElementById("t-enabled").checked,
-    cron:         document.getElementById("t-cron").value.trim(),
-    instructions: document.getElementById("t-instructions").value.trim(),
+    name:            document.getElementById("t-name").value.trim(),
+    enabled:         document.getElementById("t-enabled").checked,
+    cron:            document.getElementById("t-cron").value.trim(),
+    instructions:    document.getElementById("t-instructions").value.trim(),
+    telegram_bot_id: document.getElementById("t-bot-id").value,
   };
   try {
     const updated = await api("PUT", `/api/tasks/${selectedTaskId}`, payload);
@@ -2975,10 +3047,11 @@ async function duplicateTask() {
   if (!src) return;
   try {
     const copy = await api("POST", "/api/tasks", {
-      name:         `Copy of ${src.name}`,
-      enabled:      false,
-      cron:         src.cron,
-      instructions: src.instructions,
+      name:            `Copy of ${src.name}`,
+      enabled:         false,
+      cron:            src.cron,
+      instructions:    src.instructions,
+      telegram_bot_id: src.telegram_bot_id || "default",
     });
     tasks.push(copy);
     selectedTaskId = copy.id;
@@ -3330,6 +3403,11 @@ function renderMonitorForm(monitor) {
         </details>
       </div>
 
+      <div class="form-group">
+        <label for="m-bot-id">Telegram bot</label>
+        <select id="m-bot-id">${renderBotSelector(monitor.telegram_bot_id)}</select>
+      </div>
+
       <div class="btn-row">
         <button class="btn-save" id="btn-save-monitor">Save</button>
         <button class="btn-save" id="btn-run-monitor" style="background:var(--accent)">▶ Test Monitor</button>
@@ -3415,9 +3493,10 @@ async function saveMonitor() {
     instructions: document.getElementById("m-alert-mode").value === "llm"
                     ? (document.getElementById("m-instructions")?.value.trim() || "")
                     : "",
-    cape_sat:     parseFloat(document.getElementById("m-cape-sat")?.value)  || 1200,
-    li_sat:       parseFloat(document.getElementById("m-li-sat")?.value)    || 5.0,
-    cin_supp:     parseFloat(document.getElementById("m-cin-supp")?.value)  || 100,
+    cape_sat:        parseFloat(document.getElementById("m-cape-sat")?.value)  || 1200,
+    li_sat:          parseFloat(document.getElementById("m-li-sat")?.value)    || 5.0,
+    cin_supp:        parseFloat(document.getElementById("m-cin-supp")?.value)  || 100,
+    telegram_bot_id: document.getElementById("m-bot-id").value,
   };
   try {
     const updated = await api("PUT", `/api/monitors/${selectedMonitorId}`, payload);
@@ -3458,18 +3537,19 @@ async function duplicateMonitor() {
   if (!src) return;
   try {
     const copy = await api("POST", "/api/monitors", {
-      name:         `Copy of ${src.name}`,
-      enabled:      false,
-      cron:         src.cron,
-      type:         src.type,
-      location:     src.location,
-      language:     src.language,
-      days:         src.days,
-      hours_ahead:  src.hours_ahead,
-      seismic_area: src.seismic_area || "flegrei",
-      time_range:   src.time_range   || "last_24h",
-      alert_mode:   src.alert_mode   || "direct",
-      instructions: src.instructions || "",
+      name:            `Copy of ${src.name}`,
+      enabled:         false,
+      cron:            src.cron,
+      type:            src.type,
+      location:        src.location,
+      language:        src.language,
+      days:            src.days,
+      hours_ahead:     src.hours_ahead,
+      seismic_area:    src.seismic_area || "flegrei",
+      time_range:      src.time_range   || "last_24h",
+      alert_mode:      src.alert_mode   || "direct",
+      instructions:    src.instructions || "",
+      telegram_bot_id: src.telegram_bot_id || "default",
     });
     monitors.push(copy);
     selectedMonitorId = copy.id;
@@ -3629,6 +3709,11 @@ function renderLiveMonitorForm(monitor) {
         <span id="lm-status-badge" style="font-size:1rem">—</span>
       </div>
 
+      <div class="form-group">
+        <label for="lm-bot-id">Telegram bot</label>
+        <select id="lm-bot-id">${renderBotSelector(monitor.telegram_bot_id)}</select>
+      </div>
+
       <div class="btn-row">
         <button class="btn-save" id="btn-save-live-monitor">Save</button>
         <button class="btn-save" id="btn-duplicate-live-monitor" style="background:var(--text-muted,#888)">⎘ Copy</button>
@@ -3692,8 +3777,9 @@ function renderLiveMonitorForm(monitor) {
       radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 100,
       areas:        Array.from(document.querySelectorAll(".lm-area:checked")).map(c => c.value),
       language:     document.getElementById("lm-language").value,
-      quiet_start:  document.getElementById("lm-quiet-start")?.value || "",
-      quiet_end:    document.getElementById("lm-quiet-end")?.value   || "",
+      quiet_start:     document.getElementById("lm-quiet-start")?.value || "",
+      quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
+      telegram_bot_id: document.getElementById("lm-bot-id").value,
     };
     try {
       const updated = await api("PUT", `/api/live-monitors/${selectedLiveMonitorId}`, payload);
@@ -3726,15 +3812,16 @@ function renderLiveMonitorForm(monitor) {
     if (!src) return;
     try {
       const copy = await api("POST", "/api/live-monitors", {
-        name:         `Copy of ${src.name}`,
-        enabled:      false,
-        type:         src.type,
-        location:     src.location,
-        latitude:     src.latitude,
-        longitude:    src.longitude,
-        radius_km:    src.radius_km,
-        language:     src.language,
-        areas:        src.areas || [],
+        name:            `Copy of ${src.name}`,
+        enabled:         false,
+        type:            src.type,
+        location:        src.location,
+        latitude:        src.latitude,
+        longitude:       src.longitude,
+        radius_km:       src.radius_km,
+        language:        src.language,
+        areas:           src.areas || [],
+        telegram_bot_id: src.telegram_bot_id || "default",
       });
       liveMonitors.push(copy);
       selectedLiveMonitorId = copy.id;
@@ -3882,6 +3969,13 @@ function renderHaMonitorForm(monitor) {
       </div>
 
       <div class="form-group">
+        <label for="ha-monitor-prefix">MQTT prefix override</label>
+        <input type="text" id="ha-monitor-prefix" placeholder="Leave empty to use global setting (homeassistant)"
+               value="${monitor.mqtt_prefix || ""}" style="font-family:monospace;font-size:0.85rem">
+        <small style="color:var(--text-muted)">Override the global MQTT statestream prefix for this monitor. Use <code>blink</code> for blink-mqtt topics, empty for the default (<code>homeassistant</code>).</small>
+      </div>
+
+      <div class="form-group">
         <label>Entities to monitor</label>
         <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
           <button class="btn-icon" id="btn-ha-discover" title="Discover entities from MQTT broker (requires retain=true)">🔍 Discover</button>
@@ -3949,6 +4043,11 @@ function renderHaMonitorForm(monitor) {
         <span id="ha-status-badge" style="font-size:1rem">—</span>
       </div>
 
+      <div class="form-group">
+        <label for="ha-bot-id">Telegram bot</label>
+        <select id="ha-bot-id">${renderBotSelector(monitor.telegram_bot_id)}</select>
+      </div>
+
       <div class="btn-row">
         <button class="btn-save" id="btn-save-ha-monitor">Save</button>
         <button class="btn-save" id="btn-delete-ha-monitor" style="background:var(--danger,#e53935)">Delete</button>
@@ -3997,7 +4096,11 @@ function renderHaMonitorForm(monitor) {
     btn.disabled = true;
     btn.textContent = "⏳ Discovering…";
     try {
-      const entities = await api("POST", "/api/ha/discover");
+      const monitorPrefix = (document.getElementById("ha-monitor-prefix")?.value || "").trim();
+      const discoverUrl = monitorPrefix
+        ? `/api/ha/discover?prefix=${encodeURIComponent(monitorPrefix)}`
+        : "/api/ha/discover";
+      const entities = await api("POST", discoverUrl);
       const currentSelected = JSON.parse(document.getElementById("ha-entities-json").value || "[]");
       // Merge: keep selected ones even if not in discovered list
       const all = [...new Set([...entities, ...currentSelected])].sort();
@@ -4054,6 +4157,7 @@ function renderHaMonitorForm(monitor) {
     const payload = {
       name:            document.getElementById("ha-name").value.trim(),
       enabled:         document.getElementById("ha-enabled").checked,
+      mqtt_prefix:     document.getElementById("ha-monitor-prefix").value.trim(),
       entities,
       instructions:    alertMode === "llm" ? document.getElementById("ha-instructions").value.trim() : "",
       cooldown_min:    parseFloat(document.getElementById("ha-cooldown").value) || 60,
@@ -4061,6 +4165,7 @@ function renderHaMonitorForm(monitor) {
       filter_states:   filterStates,
       alert_mode:      alertMode,
       direct_template: alertMode === "direct" ? document.getElementById("ha-direct-template").value.trim() : "",
+      telegram_bot_id: document.getElementById("ha-bot-id").value,
     };
     try {
       const updated = await api("PUT", `/api/ha-monitors/${selectedHaMonitorId}`, payload);
@@ -4094,7 +4199,7 @@ document.getElementById("btn-new-ha-monitor").addEventListener("click", async ()
     const monitor = await api("POST", "/api/ha-monitors", {
       name: "New HA Monitor", enabled: false,
       entities: [], instructions: "", cooldown_min: 60, language: "it",
-      filter_states: [], alert_mode: "llm", direct_template: "",
+      filter_states: [], alert_mode: "llm", direct_template: "", mqtt_prefix: "",
     });
     haMonitors.push(monitor);
     selectedHaMonitorId = monitor.id;
@@ -4107,6 +4212,114 @@ document.getElementById("btn-new-ha-monitor").addEventListener("click", async ()
 });
 
 init();
+
+// ── Telegram Bots panel ───────────────────────────────────────────────────────
+
+let bots = [];
+
+function renderSidebarBots() {
+  // sidebar entry is static (single "Manage bots" item), nothing to render
+}
+
+function renderBotsList() {
+  const el = document.getElementById("bots-list");
+  if (!el) return;
+  if (!bots.length) {
+    el.innerHTML = '<p style="color:var(--text-muted);font-size:0.9em;">No extra bots configured.</p>';
+    return;
+  }
+  el.innerHTML = bots.map(b => `
+    <div style="display:flex;align-items:center;gap:10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+      <span style="font-size:1.3em;">🤖</span>
+      <div style="flex:1">
+        <strong>${escHtml(b.name)}</strong>
+        <div style="font-size:0.82em;color:var(--text-muted);">Chat ID: ${b.chat_id}</div>
+      </div>
+      <button class="btn-icon" title="Send a test message to this bot's chat" onclick="testBot('${b.id}')">🔗</button>
+      <button class="btn-icon" title="Edit name, token or chat ID" onclick="editBot('${b.id}')">✏️</button>
+      <button class="btn-icon" title="Delete bot — monitors using it will fall back to DRADIS" onclick="deleteBot('${b.id}')">🗑️</button>
+    </div>
+  `).join("");
+}
+
+function renderBotSelector(currentBotId) {
+  const opts = [`<option value="default"${!currentBotId || currentBotId === "default" ? " selected" : ""}>🤖 DRADIS (default)</option>`];
+  for (const b of bots) {
+    opts.push(`<option value="${b.id}"${currentBotId === b.id ? " selected" : ""}>${escHtml(b.name)}</option>`);
+  }
+  return opts.join("");
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+document.getElementById("btn-bots-add").addEventListener("click", () => {
+  document.getElementById("bots-form-wrap").style.display = "block";
+  document.getElementById("bot-f-name").value    = "";
+  document.getElementById("bot-f-token").value   = "";
+  document.getElementById("bot-f-chat-id").value = "";
+  document.getElementById("bot-f-id").value      = "";
+  document.getElementById("bot-f-name").focus();
+});
+
+document.getElementById("btn-bot-cancel").addEventListener("click", () => {
+  document.getElementById("bots-form-wrap").style.display = "none";
+});
+
+document.getElementById("btn-bot-save").addEventListener("click", async () => {
+  const id      = document.getElementById("bot-f-id").value.trim();
+  const name    = document.getElementById("bot-f-name").value.trim();
+  const token   = document.getElementById("bot-f-token").value.trim();
+  const chat_id = parseInt(document.getElementById("bot-f-chat-id").value.trim());
+  if (!name || !token || !chat_id) { showToast("Fill in all fields", true); return; }
+  try {
+    if (id) {
+      const updated = await api("PUT", `/api/bots/${id}`, { name, token, chat_id });
+      bots = bots.map(b => b.id === id ? updated : b);
+    } else {
+      const created = await api("POST", "/api/bots", { name, token, chat_id });
+      bots.push(created);
+    }
+    document.getElementById("bots-form-wrap").style.display = "none";
+    renderBotsList();
+    showToast(id ? "Bot updated" : "Bot added");
+  } catch (err) {
+    showToast(err.message || "Error saving bot", true);
+  }
+});
+
+function editBot(id) {
+  const b = bots.find(b => b.id === id);
+  if (!b) return;
+  document.getElementById("bots-form-wrap").style.display = "block";
+  document.getElementById("bot-f-name").value    = b.name;
+  document.getElementById("bot-f-token").value   = b.token;
+  document.getElementById("bot-f-chat-id").value = b.chat_id;
+  document.getElementById("bot-f-id").value      = b.id;
+  document.getElementById("bot-f-name").focus();
+}
+
+async function testBot(id) {
+  try {
+    const res = await api("POST", `/api/bots/${id}/test`);
+    showToast(`Test OK — @${res.username}`);
+  } catch (err) {
+    showToast(err.message || "Test failed", true);
+  }
+}
+
+async function deleteBot(id) {
+  if (!confirm("Delete this bot? Monitors using it will fall back to DRADIS.")) return;
+  try {
+    await api("DELETE", `/api/bots/${id}`);
+    bots = bots.filter(b => b.id !== id);
+    renderBotsList();
+    showToast("Bot deleted");
+  } catch (err) {
+    showToast(err.message || "Error deleting bot", true);
+  }
+}
 
 // ── Collapsible sidebar sections ──────────────────────────────────────────────
 document.querySelectorAll(".nav-section > .nav-section-label").forEach(label => {

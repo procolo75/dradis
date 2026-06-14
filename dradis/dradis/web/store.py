@@ -284,8 +284,12 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict) -> None:
-    filtered = {k: v for k, v in settings.items() if k in SETTINGS_KEYS}
-    SETTINGS_FILE.write_text(json.dumps(filtered, ensure_ascii=False, indent=2))
+    try:
+        existing = json.loads(SETTINGS_FILE.read_text())
+    except Exception:
+        existing = {}
+    existing.update({k: v for k, v in settings.items() if k in SETTINGS_KEYS})
+    SETTINGS_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2))
 
 
 # ── Callback registrations ────────────────────────────────────────────────────
@@ -358,6 +362,38 @@ def _notify_live_monitors_changed() -> None:
 def _notify_ha_monitors_changed() -> None:
     if _on_ha_monitors_changed:
         _on_ha_monitors_changed()
+
+
+# ── Extra Telegram bots ───────────────────────────────────────────────────────
+
+_on_bots_changed: Callable | None = None
+
+
+def register_bots_changed_callback(fn: Callable) -> None:
+    global _on_bots_changed
+    _on_bots_changed = fn
+
+
+def _notify_bots_changed() -> None:
+    if _on_bots_changed:
+        _on_bots_changed()
+
+
+def load_bots() -> list[dict]:
+    try:
+        raw = json.loads(SETTINGS_FILE.read_text())
+        return raw.get("telegram_bots", [])
+    except Exception:
+        return []
+
+
+def save_bots(bots: list[dict]) -> None:
+    try:
+        raw = json.loads(SETTINGS_FILE.read_text())
+    except Exception:
+        raw = {}
+    raw["telegram_bots"] = bots
+    SETTINGS_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2))
 
 
 # ── Provider helpers ──────────────────────────────────────────────────────────

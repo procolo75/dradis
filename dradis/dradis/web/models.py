@@ -15,42 +15,45 @@ class AgentPayload(BaseModel):
 
 
 class TaskPayload(BaseModel):
-    name:         str
-    enabled:      bool = False
-    cron:         str  = "0 8 * * *"
-    instructions: str  = ""
+    name:            str
+    enabled:         bool = False
+    cron:            str  = "0 8 * * *"
+    instructions:    str  = ""
+    telegram_bot_id: str  = "default"
 
 
 class MonitorPayload(BaseModel):
-    name:         str
-    enabled:      bool = False
-    cron:         str  = "0 7 * * *"
-    type:         str  = "thunderstorm"
-    location:     str  = ""
-    days:         int  = 2
-    language:     str  = "it"
-    hours_ahead:  int  = 2
-    seismic_area: str  = "flegrei"
-    time_range:   str  = "last_24h"
-    alert_mode:   str   = "direct"
-    instructions: str   = ""
-    cape_sat:     float = 1200.0
-    li_sat:       float = 5.0
-    cin_supp:     float = 100.0
+    name:            str
+    enabled:         bool  = False
+    cron:            str   = "0 7 * * *"
+    type:            str   = "thunderstorm"
+    location:        str   = ""
+    days:            int   = 2
+    language:        str   = "it"
+    hours_ahead:     int   = 2
+    seismic_area:    str   = "flegrei"
+    time_range:      str   = "last_24h"
+    alert_mode:      str   = "direct"
+    instructions:    str   = ""
+    cape_sat:        float = 1200.0
+    li_sat:          float = 5.0
+    cin_supp:        float = 100.0
+    telegram_bot_id: str   = "default"
 
 
 class LiveMonitorPayload(BaseModel):
-    name:        str
-    enabled:     bool      = False
-    type:        str       = "lightning"
-    location:    str       = ""
-    latitude:    float     = 0.0
-    longitude:   float     = 0.0
-    radius_km:   float     = 100.0
-    language:    str       = "it"
-    areas:       list[str] = []
-    quiet_start: str       = ""
-    quiet_end:   str       = ""
+    name:            str
+    enabled:         bool      = False
+    type:            str       = "lightning"
+    location:        str       = ""
+    latitude:        float     = 0.0
+    longitude:       float     = 0.0
+    radius_km:       float     = 100.0
+    language:        str       = "it"
+    areas:           list[str] = []
+    quiet_start:     str       = ""
+    quiet_end:       str       = ""
+    telegram_bot_id: str       = "default"
 
 
 class HaMonitorPayload(BaseModel):
@@ -63,6 +66,14 @@ class HaMonitorPayload(BaseModel):
     filter_states:   list  = []
     alert_mode:      str   = "llm"
     direct_template: str   = ""
+    mqtt_prefix:     str   = ""
+    telegram_bot_id: str   = "default"
+
+
+class BotPayload(BaseModel):
+    name:    str
+    token:   str
+    chat_id: int
 
 
 class SettingsPayload(BaseModel):

@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## [2.21.0] - 2026-06-14
+- **Feat — Multi-bot Telegram support**: DRADIS can now manage multiple Telegram bots. Each scheduled monitor, live monitor, HA monitor, and task has an optional **Telegram bot** selector — by default the DRADIS bot (from the HA Configuration tab) is used, but any configured extra bot can be chosen instead.
+  - Extra bots are configured via **Settings → Telegram Bots** in the Web UI: add a name, bot token and chat ID, then click **+ Add bot**. A **🔗 Test** button sends a verification message to confirm the bot is reachable.
+  - Extra bot configurations are stored in `/data/dradis_settings.json` (never committed to git, persists across restarts) and loaded into a runtime registry at startup. Updating the bot list reloads the registry immediately without restart.
+  - All execution paths (scheduled cron, manual "Test" button, live monitors, HA monitors) use the per-item bot selection. Live monitors capture the bot choice at reload time via a per-monitor closure.
+  - Monitors/tasks created before this update continue to use the DRADIS default bot unchanged — fully backward compatible.
+- **Fix — `save_settings` was wiping extra bot config**: `save_settings()` previously overwrote `/data/dradis_settings.json` with only the known settings keys, silently deleting `telegram_bots` (and any other extra keys). Fixed by reading the existing file first and performing a targeted update, preserving all unrecognised keys.
+
+## [2.20.1] - 2026-06-03
+- **Fix — Lightning live monitor: "storm cleared" / "still approaching" without prior notification**: `initial_alert_sent` and `all_clear_sent` flags were set optimistically *before* the Telegram send. If the send failed (exception caught silently), the flags remained `True`, causing periodic and all-clear alerts to fire without the user ever receiving the initial detection alert. Fixed by moving both flag assignments to *after* a confirmed successful send inside `_dispatch_alert`. New clusters now start with `initial_alert_sent=False`; the flag is promoted to `True` only on delivery. Same fix applied to `all_clear_sent`. Side-effect: if the initial send fails, it is retried automatically on the next 2-min poll cycle instead of being silently dropped.
+
 ## [2.20.0] - 2026-06-01
 - **Feat — Thunderstorm monitor: auto climate calibration per location**: the three TRS normalisation constants (CAPE sat., LI sat., CIN ceiling) are now saved per-monitor and auto-populated from the location's country code when a location is resolved in the UI. A `CLIMATE_PRESETS` map covers Mediterranean (IT/ES/GR/…), Continental (DE/FR/AT/…) and Northern Europe (GB/NO/SE/…). The three read-only fields are shown in the Thunderstorm monitor form with an expandable explanation. The geocode endpoint now returns `country_code`.
 - **Refactor — Thunderstorm monitor: TRS multiplicative formula, Mediterranean calibration, simplified output**: replaced the previous additive weighted score (0–10, 4 levels) with a **Thunderstorm Risk Score (TRS)** composite index (0.0–1.0, 5 levels).

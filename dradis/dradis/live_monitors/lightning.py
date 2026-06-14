@@ -432,7 +432,6 @@ class LightningLiveMonitor:
 
             if not cluster.initial_alert_sent and can_alert:
                 cluster.zone = new_zone
-                cluster.initial_alert_sent = True
                 cluster.last_alert_ts = now
                 alerts.append(AlertEvent("initial", cluster, None))
                 alerted.add(cid)
@@ -468,7 +467,7 @@ class LightningLiveMonitor:
                 zone=bisect.bisect(ZONES, dist),
                 last_alert_ts=now,
                 last_periodic_ts=0.0,
-                initial_alert_sent=True,
+                initial_alert_sent=False,
                 all_clear_sent=False,
                 last_seen_ts=now,
             )
@@ -500,7 +499,6 @@ class LightningLiveMonitor:
             msg = self._fmt_periodic(cluster)
         elif kind == "all_clear":
             msg = self._fmt_all_clear(cluster)
-            cluster.all_clear_sent = True
         else:
             return
 
@@ -512,6 +510,10 @@ class LightningLiveMonitor:
         )
         try:
             await self._send(msg)
+            if kind == "initial":
+                cluster.initial_alert_sent = True
+            elif kind == "all_clear":
+                cluster.all_clear_sent = True
         except Exception as e:
             _LOGGER.error("[LiveMonitor] '%s' send error: %s", self.name, e)
 
@@ -644,7 +646,7 @@ class LiveMonitorManager:
     def __init__(self):
         self._monitors: dict[str, LightningLiveMonitor] = {}
 
-    def reload(self, configs: list[dict], telegram_send_fn, tz_name: str):
+    def reload(self, configs: list[dict], make_send_fn, tz_name: str):
         wanted: set[str] = set()
         for cfg in configs:
             if cfg.get("type") != "lightning":
@@ -655,7 +657,7 @@ class LiveMonitorManager:
             wanted.add(mid)
             if mid in self._monitors:
                 self._monitors[mid].stop()
-            m = LightningLiveMonitor(cfg, telegram_send_fn, tz_name)
+            m = LightningLiveMonitor(cfg, make_send_fn(cfg), tz_name)
             self._monitors[mid] = m
             m.start()
         for mid in list(self._monitors):

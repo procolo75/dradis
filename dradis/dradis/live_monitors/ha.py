@@ -49,6 +49,8 @@ class HaLiveMonitor:
         self.alert_mode      = cfg.get("alert_mode", "llm")
         self.filter_states   = {s.strip().lower() for s in cfg.get("filter_states", []) if s.strip()}
         self.direct_template = cfg.get("direct_template", "").strip()
+        # Per-monitor MQTT prefix override — empty means use the global mqtt_statestream_prefix
+        self._prefix_override = cfg.get("mqtt_prefix", "").strip().rstrip("/")
 
         self._send    = telegram_send_fn
         self._llm     = llm_fn
@@ -75,7 +77,8 @@ class HaLiveMonitor:
         port     = int(self._mqtt.get("mqtt_port", 1883))
         username = self._mqtt.get("mqtt_username") or None
         password = self._mqtt.get("mqtt_password") or None
-        prefix   = self._mqtt.get("mqtt_statestream_prefix", "homeassistant").rstrip("/")
+        prefix   = (self._prefix_override or
+                    self._mqtt.get("mqtt_statestream_prefix", "homeassistant")).rstrip("/")
 
         state_topics = [f"{prefix}/{e}/state"        for e in self.entities]
         avail_topics  = [f"{prefix}/{e}/availability" for e in self.entities]
@@ -193,7 +196,7 @@ class HaMonitorManager:
     def __init__(self):
         self._monitors: dict[str, HaLiveMonitor] = {}
 
-    def reload(self, configs: list[dict], telegram_send_fn, llm_fn, mqtt_cfg: dict, tz_name: str):
+    def reload(self, configs: list[dict], make_send_fn, llm_fn, mqtt_cfg: dict, tz_name: str):
         wanted: set[str] = set()
         for cfg in configs:
             if not cfg.get("enabled"):
@@ -202,7 +205,7 @@ class HaMonitorManager:
             wanted.add(mid)
             if mid in self._monitors:
                 self._monitors[mid].stop()
-            m = HaLiveMonitor(cfg, telegram_send_fn, llm_fn, mqtt_cfg, tz_name)
+            m = HaLiveMonitor(cfg, make_send_fn(cfg), llm_fn, mqtt_cfg, tz_name)
             self._monitors[mid] = m
             m.start()
         for mid in list(self._monitors):

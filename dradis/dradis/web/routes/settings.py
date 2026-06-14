@@ -31,7 +31,11 @@ async def index():
 
 @router.get("/api/config")
 async def get_config():
-    return {"providers": PROVIDERS}
+    import bot.state as _state
+    return {
+        "providers":    PROVIDERS,
+        "default_chat_id": _state.ALLOWED_CHAT_ID,
+    }
 
 
 @router.get("/api/settings")

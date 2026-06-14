@@ -331,7 +331,7 @@ class SeismicMonitorManager:
     def __init__(self):
         self._monitors: dict[str, SeismicLiveMonitor] = {}
 
-    def reload(self, configs: list[dict], telegram_send_fn, tz_name: str):
+    def reload(self, configs: list[dict], make_send_fn, tz_name: str):
         wanted: set[str] = set()
         for cfg in configs:
             if cfg.get("type") != "seismic":
@@ -341,7 +341,7 @@ class SeismicMonitorManager:
             if mid in self._monitors:
                 self._monitors[mid].stop()
             cfg_with_notify = {**cfg, "_notify_enabled": bool(cfg.get("enabled", True))}
-            m = SeismicLiveMonitor(cfg_with_notify, telegram_send_fn, tz_name)
+            m = SeismicLiveMonitor(cfg_with_notify, make_send_fn(cfg), tz_name)
             self._monitors[mid] = m
             m.start()
         for mid in list(self._monitors):

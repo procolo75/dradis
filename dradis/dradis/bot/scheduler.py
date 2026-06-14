@@ -30,8 +30,12 @@ from live_monitors.seismic   import seismic_monitor_manager
 _TG_MAX_LEN = 4096
 
 
-async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML) -> None:
+async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML,
+                        bot_id: str = "default") -> None:
     """Split text on line boundaries and send as multiple Telegram messages if needed."""
+    bot, chat_id = _state.get_bot_and_chat(bot_id)
+    if not bot:
+        return
     lines  = text.split("\n")
     chunk  = ""
     first  = True
@@ -41,8 +45,8 @@ async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML) -> None:
             if chunk:
                 if not first:
                     await asyncio.sleep(0.5)
-                await _state._telegram_bot.send_message(
-                    chat_id=_state.ALLOWED_CHAT_ID,
+                await bot.send_message(
+                    chat_id=chat_id,
                     text=chunk,
                     parse_mode=parse_mode,
                     read_timeout=30,
@@ -55,8 +59,8 @@ async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML) -> None:
     if chunk:
         if not first:
             await asyncio.sleep(0.5)
-        await _state._telegram_bot.send_message(
-            chat_id=_state.ALLOWED_CHAT_ID,
+        await bot.send_message(
+            chat_id=chat_id,
             text=chunk,
             parse_mode=parse_mode,
             read_timeout=30,
@@ -79,6 +83,7 @@ async def run_scheduled_task(task: dict):
         return
     task_name    = task.get("name", "Task")
     instructions = task.get("instructions", "").strip()
+    bot_id       = task.get("telegram_bot_id", "default")
     if not instructions:
         return
 
@@ -106,28 +111,35 @@ async def run_scheduled_task(task: dict):
         if used_fallback:
             await _state._send_error_telegram(
                 f"❌ Task <b>{html.escape(task_name)}</b> — primary (<code>{html.escape(model)}</code>) "
-                f"and fallback (<code>{html.escape(fb_model_id)}</code>) both failed: {html.escape(str(error))}"
+                f"and fallback (<code>{html.escape(fb_model_id)}</code>) both failed: {html.escape(str(error))}",
+                bot_id=bot_id,
             )
         else:
             await _state._send_error_telegram(
                 f"❌ Task <b>{html.escape(task_name)}</b> failed (<code>{html.escape(model)}</code>): "
-                f"{html.escape(str(error))}\n<i>No fallback model configured.</i>"
+                f"{html.escape(str(error))}\n<i>No fallback model configured.</i>",
+                bot_id=bot_id,
             )
         return
 
     if used_fallback:
-        await _state._send_error_telegram(_state._build_fallback_used_msg(settings, model, task_name))
+        await _state._send_error_telegram(
+            _state._build_fallback_used_msg(settings, model, task_name),
+            bot_id=bot_id,
+        )
 
     member_responses = _state._collect_member_responses(response)
     text  = (response.content or "").strip()
     label = _state._agents_label(member_responses) + f" · <i>{html.escape(task_name)}</i>"
 
     if text:
-        await _state._telegram_bot.send_message(
-            chat_id=_state.ALLOWED_CHAT_ID,
-            text=_state.md_to_html(text) + f"\n\n{label}",
-            parse_mode=ParseMode.HTML,
-        )
+        bot, chat_id = _state.get_bot_and_chat(bot_id)
+        if bot:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=_state.md_to_html(text) + f"\n\n{label}",
+                parse_mode=ParseMode.HTML,
+            )
 
 
 def _cron_task(task: dict):
@@ -164,10 +176,12 @@ async def run_scheduled_monitor(monitor: dict):
     monitor_name = monitor.get("name", "Monitor")
     monitor_type = monitor.get("type", "thunderstorm")
     alert_mode   = monitor.get("alert_mode", "direct")
+    bot_id       = monitor.get("telegram_bot_id", "default")
     runner = _MONITOR_RUNNERS.get(monitor_type)
     if not runner:
         await _state._send_error_telegram(
-            f"⚠️ Monitor <b>{html.escape(monitor_name)}</b>: unknown type '{html.escape(monitor_type)}'"
+            f"⚠️ Monitor <b>{html.escape(monitor_name)}</b>: unknown type '{html.escape(monitor_type)}'",
+            bot_id=bot_id,
         )
         return
 
@@ -182,7 +196,8 @@ async def run_scheduled_monitor(monitor: dict):
         traceback.print_exc()
         print(f"[DRADIS] Monitor '{monitor_name}' error: {exc_desc}")
         await _state._send_error_telegram(
-            f"❌ Monitor <b>{html.escape(monitor_name)}</b> failed: {html.escape(exc_desc)}"
+            f"❌ Monitor <b>{html.escape(monitor_name)}</b> failed: {html.escape(exc_desc)}",
+            bot_id=bot_id,
         )
         return
 
@@ -190,18 +205,20 @@ async def run_scheduled_monitor(monitor: dict):
         return
 
     if alert_mode == "llm":
-        await _run_monitor_llm(monitor_name, text, monitor.get("instructions", ""), settings)
+        await _run_monitor_llm(monitor_name, text, monitor.get("instructions", ""), settings, bot_id=bot_id)
     else:
         try:
-            await _send_chunked(text)
+            await _send_chunked(text, bot_id=bot_id)
         except Exception as e:
             print(f"[DRADIS] Monitor '{monitor_name}' send_message error: {e}")
             await _state._send_error_telegram(
-                f"❌ Monitor <b>{html.escape(monitor_name)}</b> — send error: {html.escape(str(e))}"
+                f"❌ Monitor <b>{html.escape(monitor_name)}</b> — send error: {html.escape(str(e))}",
+                bot_id=bot_id,
             )
 
 
-async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: str, settings: dict):
+async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: str,
+                           settings: dict, bot_id: str = "default"):
     sys_prompt = _state.build_system_prompt()
     model      = settings.get("model",    _state.SETTINGS_DEFAULTS["model"])
     provider   = settings.get("provider", _state.SETTINGS_DEFAULTS["provider"])
@@ -229,22 +246,26 @@ async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: st
         fb_model_id = _state._apply_fallback_settings(settings).get("model", model) if used_fallback else model
         model_info  = f"{html.escape(model)} + fallback {html.escape(fb_model_id)}" if used_fallback else html.escape(model)
         await _state._send_error_telegram(
-            f"❌ Monitor <b>{html.escape(monitor_name)}</b> (LLM) failed ({model_info}): {html.escape(str(error))}"
+            f"❌ Monitor <b>{html.escape(monitor_name)}</b> (LLM) failed ({model_info}): {html.escape(str(error))}",
+            bot_id=bot_id,
         )
         return
 
-    if response is not None and _state._telegram_bot:
+    if response is not None:
         text = (response.content or "").strip()
         if text:
             try:
-                await _state._telegram_bot.send_message(
-                    chat_id=_state.ALLOWED_CHAT_ID,
-                    text=_state.md_to_html(text) + f"\n\n<i>🤖 DRADIS · {html.escape(monitor_name)}</i>",
-                    parse_mode=ParseMode.HTML,
-                )
+                bot, chat_id = _state.get_bot_and_chat(bot_id)
+                if bot:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=_state.md_to_html(text) + f"\n\n<i>🤖 DRADIS · {html.escape(monitor_name)}</i>",
+                        parse_mode=ParseMode.HTML,
+                    )
             except Exception as e:
                 await _state._send_error_telegram(
-                    f"❌ Monitor <b>{html.escape(monitor_name)}</b> — LLM send error: {html.escape(str(e))}"
+                    f"❌ Monitor <b>{html.escape(monitor_name)}</b> — LLM send error: {html.escape(str(e))}",
+                    bot_id=bot_id,
                 )
 
 
@@ -280,17 +301,15 @@ def reload_live_monitors():
     settings = _state.read_settings()
     tz_name  = settings.get("timezone", "UTC") or "UTC"
 
-    async def _send(text: str):
-        if _state._telegram_bot:
-            await _state._telegram_bot.send_message(
-                chat_id=_state.ALLOWED_CHAT_ID,
-                text=text,
-                parse_mode=ParseMode.HTML,
-            )
+    def _make_send(cfg: dict):
+        bid = cfg.get("telegram_bot_id", "default")
+        async def _send(text: str):
+            await _state.send_telegram(text, bot_id=bid)
+        return _send
 
     configs = load_live_monitors()
-    live_monitor_manager.reload(configs, _send, tz_name)
-    seismic_monitor_manager.reload(configs, _send, tz_name)
+    live_monitor_manager.reload(configs, _make_send, tz_name)
+    seismic_monitor_manager.reload(configs, _make_send, tz_name)
 
 
 def _live_status_dispatcher(monitor_id: str) -> str:
@@ -309,13 +328,11 @@ def reload_ha_monitors():
         "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password", "mqtt_statestream_prefix"
     ] if k in settings}
 
-    async def _send(text: str):
-        if _state._telegram_bot:
-            await _state._telegram_bot.send_message(
-                chat_id=_state.ALLOWED_CHAT_ID,
-                text=text,
-                parse_mode=ParseMode.HTML,
-            )
+    def _make_send(cfg: dict):
+        bid = cfg.get("telegram_bot_id", "default")
+        async def _send(text: str):
+            await _state.send_telegram(text, bot_id=bid)
+        return _send
 
     async def _llm(prompt: str) -> str:
         s          = _state.read_settings()
@@ -337,4 +354,4 @@ def reload_ha_monitors():
             return ""
         return (response.content or "").strip()
 
-    ha_monitor_manager.reload(load_ha_monitors(), _send, _llm, mqtt_cfg, tz_name)
+    ha_monitor_manager.reload(load_ha_monitors(), _make_send, _llm, mqtt_cfg, tz_name)

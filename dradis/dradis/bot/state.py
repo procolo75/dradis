@@ -20,6 +20,7 @@ import traceback
 from pathlib import Path
 
 from groq import Groq as GroqClient
+from telegram import Bot as _TelegramBot
 from telegram.constants import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -68,6 +69,35 @@ _groq_client: GroqClient | None = (
 _scheduler: AsyncIOScheduler              = AsyncIOScheduler()
 _telegram_bot                             = None
 _main_loop: asyncio.AbstractEventLoop | None = None
+
+# ── Extra bot registry ────────────────────────────────────────────────────────
+
+_extra_bots:     dict[str, "_TelegramBot"] = {}
+_extra_chat_ids: dict[str, int]            = {}
+
+
+def get_bot_and_chat(bot_id: str = "default") -> tuple:
+    if bot_id and bot_id != "default" and bot_id in _extra_bots:
+        return _extra_bots[bot_id], _extra_chat_ids[bot_id]
+    return _telegram_bot, ALLOWED_CHAT_ID
+
+
+def reload_extra_bots() -> None:
+    from web.store import load_bots
+    global _extra_bots, _extra_chat_ids
+    _extra_bots.clear()
+    _extra_chat_ids.clear()
+    for b in load_bots():
+        bid = b.get("id", "").strip()
+        tok = b.get("token", "").strip()
+        cid = b.get("chat_id")
+        if bid and tok and cid:
+            try:
+                _extra_bots[bid]     = _TelegramBot(token=tok)
+                _extra_chat_ids[bid] = int(cid)
+                print(f"[DRADIS] Extra bot loaded: id={bid!r} name={b.get('name')!r}")
+            except Exception as e:
+                print(f"[DRADIS] WARNING: cannot init bot {bid!r}: {e}")
 
 # ── Settings helpers ──────────────────────────────────────────────────────────
 
@@ -134,16 +164,19 @@ def build_context(question: str) -> str:
 
 # ── Telegram helpers ──────────────────────────────────────────────────────────
 
-async def _send_error_telegram(msg: str) -> None:
-    if _telegram_bot:
-        try:
-            await _telegram_bot.send_message(
-                chat_id=ALLOWED_CHAT_ID,
-                text=msg,
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as ex:
-            print(f"[DRADIS] Could not send error notification: {ex}")
+async def send_telegram(text: str, bot_id: str = "default",
+                        parse_mode: str = ParseMode.HTML) -> None:
+    bot, chat_id = get_bot_and_chat(bot_id)
+    if not bot:
+        return
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+    except Exception as ex:
+        print(f"[DRADIS] send_telegram(bot_id={bot_id!r}) error: {ex}")
+
+
+async def _send_error_telegram(msg: str, bot_id: str = "default") -> None:
+    await send_telegram(msg, bot_id=bot_id)
 
 
 # ── Markdown → HTML ───────────────────────────────────────────────────────────

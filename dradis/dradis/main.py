@@ -62,6 +62,7 @@ from web.store import (
     register_live_monitor_status_callback,
     register_ha_monitors_changed_callback,
     register_ha_monitor_status_callback,
+    register_bots_changed_callback,
 )
 from live_monitors.ha import ha_monitor_manager
 
@@ -109,6 +110,8 @@ async def main():
         await telegram_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         await _register_commands(telegram_app.bot)
         _state._telegram_bot = telegram_app.bot
+        register_bots_changed_callback(_state.reload_extra_bots)
+        _state.reload_extra_bots()
         _state._scheduler.start()
 
         register_tasks_changed_callback(reload_task_jobs)

@@ -50,7 +50,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | File | Responsibility |
 |------|---------------|
 | `main.py` | Entry point — wires bot, scheduler, web server, and live monitors together |
-| `bot/state.py` | Global state, startup options, settings, history, fallback engine, `_run_with_fallback()` |
+| `bot/state.py` | Global state, startup options, settings, history, fallback engine, `_run_with_fallback()`, extra-bot registry (`get_bot_and_chat`, `reload_extra_bots`, `send_telegram`) |
 | `bot/scheduler.py` | Task and monitor cron jobs, live-monitor lifecycle, `reload_*()` functions |
 | `bot/commands.py` | Telegram command handlers: `/info`, `/gcalauth`, `/gmailauth`, `/gtasksauth`, `/backupauth` |
 | `backup/gdrive.py` | Google Drive backup module — OAuth2 flow, file upload, `run_backup_monitor()` |
@@ -74,6 +74,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `web/routes/tasks.py` | FastAPI routes: task CRUD, cron validation, manual run |
 | `web/routes/monitors.py` | FastAPI routes: scheduled monitor, live monitor, HA monitor CRUD; geocode; HA test/discover |
 | `web/routes/tools.py` | FastAPI routes: Google OAuth callbacks, web search test, weather test |
+| `web/routes/bots.py` | FastAPI routes: extra Telegram bot CRUD, test-connection endpoint |
 | `web/server.py` | FastAPI app assembly — includes all routers, re-exports store symbols |
 
 ---
@@ -158,7 +159,7 @@ Fill in at least one LLM provider key. The active provider is selected from the 
 
 After startup, the app exposes a web panel accessible directly from the Home Assistant sidebar (via HA Ingress — no external port required).
 
-The UI uses a **vertical left sidebar** with eight collapsible sections: **Settings**, **Agents**, **Tools**, **Tasks**, **Scheduled Monitors**, **Live Monitors**, and **HA Monitors**. All sections except Settings are collapsed by default — click any header to expand it.
+The UI uses a **vertical left sidebar** with seven collapsible sections: **Settings**, **Agents**, **Tools**, **Tasks**, **Scheduled Monitors**, **Live Monitors**, and **HA Monitors**. All sections except Settings are collapsed by default — click any header to expand it.
 
 ### Settings → DRADIS
 
@@ -328,6 +329,27 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
 
+### Settings → Telegram Bots
+
+Configure additional Telegram bots. Each monitor, live monitor, HA monitor, and task can independently choose which bot delivers its notifications — the default DRADIS bot (configured in the HA Configuration tab) is always available as the fallback.
+
+Extra bots are stored in `/data/dradis_settings.json` and never committed to version control.
+
+| Field | Description |
+|-------|-------------|
+| Name | Label shown in the bot selector dropdown inside each monitor/task form. |
+| Bot Token | Telegram Bot API token (from [@BotFather](https://t.me/BotFather)). Stored as plain text in `/data/`. |
+| Chat ID | Telegram chat or group ID that the bot should send messages to. |
+
+**Actions per bot:**
+- **🔗 Test** — sends a verification message to the configured chat ID to confirm the bot is reachable.
+- **✏️ Edit** — update name, token, or chat ID.
+- **🗑️ Delete** — removes the bot. Monitors/tasks that were using it will automatically fall back to the DRADIS default bot on their next execution.
+
+Bot instances are loaded into a runtime registry at startup and refreshed immediately when you add, edit, or delete a bot — no restart required.
+
+---
+
 ### Settings → MQTT / Home Assistant
 
 Configure the MQTT broker connection used by HA Monitors. Required before creating any HA Monitor.
@@ -361,6 +383,7 @@ Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. 
 | DRADIS Instructions | *(LLM mode only)* Instructions for the agent: what to do with the report. If empty, the agent sends the report to Telegram. |
 | Schedule preset | Dropdown of common schedules. |
 | Cron expression | Raw 5-part cron with live validation and next-fire preview. |
+| Telegram bot | Bot used to send the monitor output. Defaults to the DRADIS bot; select any extra bot configured in **Settings → Telegram Bots**. |
 
 #### Thunderstorm risk monitor
 
@@ -432,6 +455,7 @@ Click `+` in the Tasks sidebar header to create a new task. Each task has:
 | Schedule preset | Dropdown of common schedules: Every minute, Every hour, Daily at 8:00, Daily at 20:00, Every Monday at 9:00, Weekdays 9–18 every hour. |
 | Cron expression | Raw 5-part cron field (minute hour day month weekday). Editing it directly sets the preset to "Custom…" and shows a live human-readable description below the field. |
 | Instructions | What DRADIS should do at this time — passed directly to the main agent, which automatically selects the right tools (Web Search, Weather, Google Calendar, etc.) as needed. |
+| Telegram bot | Bot used to deliver the task response. Defaults to the DRADIS bot; select any extra bot configured in **Settings → Telegram Bots**. |
 
 When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no app restart required.
 
@@ -455,6 +479,7 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 | Location | City name — resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and exact lat/lon as you type. Coordinates are stored and used for distance calculations. |
 | Alert language | Language of the Telegram alert: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Radius (km) | Strikes within this distance from the configured location trigger an alert (1–500 km, default 100). |
+| Telegram bot | Bot used to send alerts. Defaults to the DRADIS bot; select any extra bot configured in **Settings → Telegram Bots**. |
 | Status badge | Shows 🟢 Running or 🔴 Stopped, fetched live from the backend. |
 
 There is no cron field, no **▶ Test** button, and no "run now" action — the monitor is always-on when enabled.
@@ -574,6 +599,7 @@ mqtt_discoverystream_alt:
 | Message template | *(Direct mode only)* Fixed message text sent to Telegram. Supports placeholders: `{entity}`, `{state}`, `{previous_state}`, `{time}`. |
 | Alert language | Language of the alert: 🇮🇹 Italiano or 🇬🇧 English. |
 | Cooldown per entity (minutes) | Minimum time between alerts for the same entity (1–1440 min, default 60). Prevents spam on rapidly toggling sensors. |
+| Telegram bot | Bot used to send alerts. Defaults to the DRADIS bot; select any extra bot configured in **Settings → Telegram Bots**. |
 | Status badge | Shows 🟢 Running or 🔴 Stopped, fetched live from the backend. |
 
 → Full setup guide: [Wiki → HA Monitors](https://github.com/procolo75/dradis/wiki/HA-Monitors)

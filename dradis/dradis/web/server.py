@@ -15,6 +15,7 @@ from web.routes.agents   import router as agents_router
 from web.routes.tasks    import router as tasks_router
 from web.routes.monitors import router as monitors_router
 from web.routes.tools    import router as tools_router
+from web.routes.bots     import router as bots_router
 
 # ── Re-exports for backwards-compatible imports in main.py and agents/ ────────
 from web.store import (  # noqa: F401
@@ -28,10 +29,12 @@ from web.store import (  # noqa: F401
     load_live_monitors, save_live_monitors,
     load_ha_monitors, save_ha_monitors,
     load_settings, save_settings,
+    load_bots, save_bots,
     register_tasks_changed_callback, register_run_task_callback,
     register_monitors_changed_callback, register_run_monitor_callback,
     register_live_monitors_changed_callback, register_live_monitor_status_callback,
     register_ha_monitors_changed_callback, register_ha_monitor_status_callback,
+    register_bots_changed_callback,
     set_gcal_code_event, pop_gcal_pending_code,
     set_gmail_code_event, pop_gmail_pending_code,
     set_gtasks_code_event, pop_gtasks_pending_code,
@@ -45,3 +48,4 @@ app.include_router(agents_router)
 app.include_router(tasks_router)
 app.include_router(monitors_router)
 app.include_router(tools_router)
+app.include_router(bots_router)

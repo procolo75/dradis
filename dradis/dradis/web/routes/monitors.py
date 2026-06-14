@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import aiomqtt
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 import web.store as _store
 from web.store import (
@@ -247,13 +247,14 @@ async def test_ha_connection():
 
 
 @router.post("/api/ha/discover")
-async def discover_ha_entities():
+async def discover_ha_entities(prefix: str = Query(default="")):
     settings = load_settings()
     host     = settings.get("mqtt_host", "core-mosquitto")
     port     = int(settings.get("mqtt_port", 1883))
     username = settings.get("mqtt_username") or None
     password = settings.get("mqtt_password") or None
-    prefix   = settings.get("mqtt_statestream_prefix", "homeassistant").rstrip("/")
+    prefix   = (prefix.strip().rstrip("/") if prefix.strip()
+                else settings.get("mqtt_statestream_prefix", "homeassistant").rstrip("/"))
 
     discovered: set[str] = set()
     kwargs = {}
@@ -264,7 +265,7 @@ async def discover_ha_entities():
 
     try:
         async with aiomqtt.Client(host, port, **kwargs) as client:
-            await client.subscribe(f"{prefix}/+/+/state")
+            await client.subscribe(f"{prefix}/#")
             deadline = asyncio.get_event_loop().time() + 3.0
             async for message in client.messages:
                 topic  = str(message.topic)
