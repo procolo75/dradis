@@ -1,8 +1,8 @@
 # CHANGELOG
 
-## [2.22.1] - 2026-06-15
+## [2.24.0] - 2026-06-15
 
-- Hotfix: version bump to clear phantom v2.23 from HA addon cache.
+- Hotfix: version bump to supersede phantom v2.23 from HA addon cache. No functional changes.
 
 ## [2.22.0] - 2026-06-15
 
