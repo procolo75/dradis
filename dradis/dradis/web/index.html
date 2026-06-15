@@ -3607,7 +3607,7 @@ function renderSidebarLiveMonitors() {
     li.dataset.panel         = "live-monitor";
     li.dataset.liveMonitorId = m.id;
     li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
-                    <span class="nav-icon">${m.type === "seismic" ? "🌍" : "⚡"}</span>
+                    <span class="nav-icon">${m.type === "seismic" ? "🌍" : m.type === "football_betting" ? "⚽" : "⚡"}</span>
                     <span class="nav-label">${m.name}</span>`;
     li.addEventListener("click", () => {
       selectedLiveMonitorId = m.id;
@@ -3629,8 +3629,9 @@ function renderLiveMonitorForm(monitor) {
   }
 
   const _TYPE_DESCS_LIVE = {
-    lightning: "Persistent MQTT listener on Blitzortung. Strikes within radius buffered 15 min; DBSCAN clustering (eps=8 km) every 2 min identifies storm cells and tracks each centroid. Zone-based alerts: initial detection · zone crossing (<15 / 15–30 / 30–50 km) · periodic re-alert every 10 min if approaching · ✅ all-clear after 15 min of silence. Multi-storm support. No LLM, no cron.",
-    seismic:   "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
+    lightning:        "Persistent MQTT listener on Blitzortung. Strikes within radius buffered 15 min; DBSCAN clustering (eps=8 km) every 2 min identifies storm cells and tracks each centroid. Zone-based alerts: initial detection · zone crossing (<15 / 15–30 / 30–50 km) · periodic re-alert every 10 min if approaching · ✅ all-clear after 15 min of silence. Multi-storm support. No LLM, no cron.",
+    seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
+    football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };
 
   panel.innerHTML = `
@@ -3652,8 +3653,9 @@ function renderLiveMonitorForm(monitor) {
       <div class="form-group">
         <label for="lm-type">Type</label>
         <select id="lm-type">
-          <option value="lightning" ${monitor.type === "lightning" ? "selected" : ""}>⚡ Lightning alert (Blitzortung MQTT)</option>
-          <option value="seismic"   ${monitor.type === "seismic"   ? "selected" : ""}>🌍 Seismic alert (INGV GOSSIP RSS)</option>
+          <option value="lightning"        ${monitor.type === "lightning"        ? "selected" : ""}>⚡ Lightning alert (Blitzortung MQTT)</option>
+          <option value="seismic"          ${monitor.type === "seismic"          ? "selected" : ""}>🌍 Seismic alert (INGV GOSSIP RSS)</option>
+          <option value="football_betting" ${monitor.type === "football_betting" ? "selected" : ""}>⚽ Football Betting (RapidAPI)</option>
         </select>
         <small id="lm-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)">${_TYPE_DESCS_LIVE[monitor.type] || ""}</small>
       </div>
@@ -3677,14 +3679,14 @@ function renderLiveMonitorForm(monitor) {
       </div>
 
       <div class="form-group" id="lm-quiet-block">
-        <label>🔕 Silenzio notifiche</label>
+        <label id="lm-quiet-label">🔕 Silenzio notifiche</label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
           <span style="color:var(--text-muted);font-size:0.85rem">Da</span>
           <input type="time" id="lm-quiet-start" value="${monitor.quiet_start || ""}" style="width:115px">
           <span style="color:var(--text-muted);font-size:0.85rem">a</span>
           <input type="time" id="lm-quiet-end"   value="${monitor.quiet_end   || ""}" style="width:115px">
         </div>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Lascia vuoto per disabilitare. Gli eventi avvenuti durante il silenzio vengono inviati tutti insieme al risveglio.</small>
+        <small id="lm-quiet-desc" style="color:var(--text-muted);margin-top:4px;display:block">Lascia vuoto per disabilitare. Gli eventi avvenuti durante il silenzio vengono inviati tutti insieme al risveglio.</small>
       </div>
 
       <div class="form-group">
@@ -3702,6 +3704,40 @@ function renderLiveMonitorForm(monitor) {
 
       <div class="form-group" id="lm-lightning-hint">
         <small style="color:var(--text-muted)">Zone-based alerts: <b>initial detection</b> when a storm enters the radius · <b>zone crossing</b> (&lt;15 / 15–30 / 30–50 km) · <b>periodic re-alert every 10 min</b> if approaching · <b>✅ all clear</b> after 15 min of silence.</small>
+      </div>
+
+      <div class="form-group" id="lm-windows-block">
+        <label>Minute windows (2nd half)</label>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+          <label><input type="checkbox" class="lm-window" value="55-65" ${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "checked" : ""}> 55'–65'</label>
+          <label><input type="checkbox" class="lm-window" value="75-81" ${(monitor.windows||["55-65","75-81"]).includes("75-81") ? "checked" : ""}> 75'–81'</label>
+        </div>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Alert when losing team's next-goal odds &lt; winning team's next-goal odds. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
+
+        <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+          <button class="btn-icon" id="btn-football-test">🔍 Test API</button>
+          <span id="football-test-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
+        </div>
+        <div id="football-test-results" style="margin-top:10px;display:none">
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:6px" id="football-test-meta"></div>
+          <div style="overflow-x:auto">
+            <table id="football-test-table" style="width:100%;border-collapse:collapse;font-size:0.8rem">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border)">
+                  <th style="text-align:left;padding:4px 6px">Min</th>
+                  <th style="text-align:left;padding:4px 6px">Campionato</th>
+                  <th style="text-align:left;padding:4px 6px">Casa</th>
+                  <th style="text-align:left;padding:4px 6px">Fuori</th>
+                  <th style="text-align:center;padding:4px 6px">Ris.</th>
+                  <th style="text-align:center;padding:4px 6px">NG Casa</th>
+                  <th style="text-align:center;padding:4px 6px">NG Fuori</th>
+                  <th style="text-align:center;padding:4px 6px">⚽</th>
+                </tr>
+              </thead>
+              <tbody id="football-test-tbody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <div class="form-group" id="lm-status-group" style="display:none">
@@ -3723,16 +3759,73 @@ function renderLiveMonitorForm(monitor) {
   `;
 
   function _lmApplyType(type) {
-    const isSeismic = type === "seismic";
+    const isSeismic   = type === "seismic";
+    const isFootball  = type === "football_betting";
+    const isLightning = !isSeismic && !isFootball;
     document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[type] || "";
-    document.getElementById("lm-location-block").style.display  = isSeismic ? "none" : "";
-    document.getElementById("lm-radius-block").style.display    = isSeismic ? "none" : "";
-    document.getElementById("lm-lightning-hint").style.display  = isSeismic ? "none" : "";
-    document.getElementById("lm-areas-block").style.display     = isSeismic ? ""     : "none";
-    document.getElementById("lm-quiet-block").style.display     = isSeismic ? ""     : "none";
+    document.getElementById("lm-location-block").style.display  = isLightning          ? "" : "none";
+    document.getElementById("lm-radius-block").style.display    = isLightning          ? "" : "none";
+    document.getElementById("lm-lightning-hint").style.display  = isLightning          ? "" : "none";
+    document.getElementById("lm-areas-block").style.display     = isSeismic            ? "" : "none";
+    document.getElementById("lm-quiet-block").style.display     = (isSeismic||isFootball) ? "" : "none";
+    document.getElementById("lm-windows-block").style.display   = isFootball           ? "" : "none";
+    const quietDesc  = document.getElementById("lm-quiet-desc");
+    const quietLabel = document.getElementById("lm-quiet-label");
+    if (isFootball) {
+      const qs = document.getElementById("lm-quiet-start");
+      const qe = document.getElementById("lm-quiet-end");
+      if (!qs.value) qs.value = "23:00";
+      if (!qe.value) qe.value = "07:00";
+      quietLabel.textContent = "🔕 Pausa chiamate API";
+      quietDesc.textContent  = "In questo intervallo le chiamate all'API non vengono eseguite. Lascia vuoto per disabilitare.";
+    } else {
+      quietLabel.textContent = "🔕 Silenzio notifiche";
+      quietDesc.textContent  = "Lascia vuoto per disabilitare. Gli eventi avvenuti durante il silenzio vengono inviati tutti insieme al risveglio.";
+    }
   }
   _lmApplyType(monitor.type || "lightning");
   document.getElementById("lm-type").addEventListener("change", e => _lmApplyType(e.target.value));
+
+  document.getElementById("btn-football-test").addEventListener("click", async () => {
+    const statusEl  = document.getElementById("football-test-status");
+    const resultsEl = document.getElementById("football-test-results");
+    const metaEl    = document.getElementById("football-test-meta");
+    const tbody     = document.getElementById("football-test-tbody");
+    statusEl.textContent = "⏳ Caricamento…";
+    resultsEl.style.display = "none";
+    try {
+      const data = await api("GET", "/api/football/inplaying");
+      const second_half = data.matches.filter(m => m.period_id === "3");
+      statusEl.textContent = "";
+      metaEl.textContent   = `${second_half.length} partite al 2° tempo (${data.count} live totali) — provider: ${data.matches[0]?.provider || "—"}`;
+      tbody.innerHTML = second_half.map(m => {
+        const inWindow = m.in_55_65 || m.in_75_81;
+        const diffAbs  = Math.abs(m.home_score - m.away_score);
+        const isSecond = m.period_id === "3";
+        const rowBg    = m.signal     ? "background:rgba(46,213,115,0.12)"
+                       : inWindow     ? "background:rgba(255,193,7,0.10)"
+                       : "";
+        const winBadge = m.signal ? "🔔" : inWindow && diffAbs === 1 && isSecond ? "⚠️" : "";
+        const ngHome   = m.ng_home != null ? m.ng_home.toFixed(2) : "—";
+        const ngAway   = m.ng_away != null ? m.ng_away.toFixed(2) : "—";
+        const period   = m.period_id === "3" ? "2T" : m.period_id === "2" ? "1T" : m.period_id;
+        return `<tr style="border-bottom:1px solid var(--border);${rowBg}">
+          <td style="padding:3px 6px">${m.minutes}'<br><span style="font-size:0.7rem;color:var(--text-muted)">${period}</span></td>
+          <td style="padding:3px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.league}</td>
+          <td style="padding:3px 6px">${m.home}</td>
+          <td style="padding:3px 6px">${m.away}</td>
+          <td style="padding:3px 6px;text-align:center;font-weight:bold">${m.score}</td>
+          <td style="padding:3px 6px;text-align:center">${ngHome}</td>
+          <td style="padding:3px 6px;text-align:center">${ngAway}</td>
+          <td style="padding:3px 6px;text-align:center">${winBadge}</td>
+        </tr>`;
+      }).join("");
+      resultsEl.style.display = "";
+    } catch (err) {
+      statusEl.textContent = `❌ ${err.message || "Errore"}`;
+      statusEl.style.color = "var(--danger)";
+    }
+  });
 
   // Live geocoding
   let _lmLocTimer = null;
@@ -3776,6 +3869,7 @@ function renderLiveMonitorForm(monitor) {
       longitude:    parseFloat(document.getElementById("lm-longitude").value) || 0,
       radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 100,
       areas:        Array.from(document.querySelectorAll(".lm-area:checked")).map(c => c.value),
+      windows:      Array.from(document.querySelectorAll(".lm-window:checked")).map(c => c.value),
       language:     document.getElementById("lm-language").value,
       quiet_start:     document.getElementById("lm-quiet-start")?.value || "",
       quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
@@ -3820,7 +3914,8 @@ function renderLiveMonitorForm(monitor) {
         longitude:       src.longitude,
         radius_km:       src.radius_km,
         language:        src.language,
-        areas:           src.areas || [],
+        areas:           src.areas   || [],
+        windows:         src.windows || ["55-65", "75-81"],
         telegram_bot_id: src.telegram_bot_id || "default",
       });
       liveMonitors.push(copy);

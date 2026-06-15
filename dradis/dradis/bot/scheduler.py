@@ -26,6 +26,7 @@ from backup.gdrive         import run_backup_monitor
 from live_monitors.lightning import live_monitor_manager
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
+from live_monitors.football  import football_monitor_manager
 
 _TG_MAX_LEN = 4096
 
@@ -310,12 +311,15 @@ def reload_live_monitors():
     configs = load_live_monitors()
     live_monitor_manager.reload(configs, _make_send, tz_name)
     seismic_monitor_manager.reload(configs, _make_send, tz_name)
+    football_monitor_manager.reload(configs, _make_send)
 
 
 def _live_status_dispatcher(monitor_id: str) -> str:
     cfg = next((m for m in load_live_monitors() if m["id"] == monitor_id), None)
     if cfg and cfg.get("type") == "seismic":
         return seismic_monitor_manager.status(monitor_id)
+    if cfg and cfg.get("type") == "football_betting":
+        return football_monitor_manager.status(monitor_id)
     return live_monitor_manager.status(monitor_id)
 
 

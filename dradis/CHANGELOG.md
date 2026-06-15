@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## [2.22.0] - 2026-06-15
+
+- **Feat — Football Betting live monitor**: new live monitor type `football_betting` that polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse/api/football-betting-odds1) every 5 minutes and sends a Telegram alert when statistically favourable conditions are detected in a live match.
+
+  **Alert conditions (all must be true):**
+  - Match is in the **2nd half** (`periodID == "3"`)
+  - Match minute falls inside a configured **minute window** (default: 55′–65′ and 75′–81′)
+  - **Goal difference == 1** (one team ahead by exactly one goal)
+  - The **losing team's next-goal odds are lower** than the winning team's next-goal odds (i.e. the market expects the losing team to score next — a statistically relevant signal)
+
+  **Clock-aligned polling**: polls are always triggered at exact 5-minute clock boundaries (:00, :05, :10, :15 …) regardless of when DRADIS started, so alerts are consistent and predictable.
+
+  **Provider fallback**: the API is queried via `provider1` → `provider2` → `provider3` → `provider4` in order; the first successful response wins.
+
+  **Alert message format:**
+  ```
+  ⚽ SEGNALE SCOMMESSA LIVE
+
+  🏆 Ethiopia - Premier League
+  Negele Arsi Ketema vs Hawassa Kenema SC
+  1-0  ⏱ 57'
+  ```
+
+  **Web UI** (Live Monitors panel):
+  - New type option `⚽ Football Betting (RapidAPI)` in the type dropdown
+  - Two configurable **minute windows** via checkboxes (55′–65′ and 75′–81′); more windows coming in a future release
+  - **🔍 Test API** button fetches all current live matches and renders them in a table showing minute, league, home/away teams, score, next-goal odds for each side, and a 🔔 signal flag
+  - **🔕 Pausa chiamate API** time range (default 23:00–07:00): API calls are suppressed during this window to avoid unnecessary costs
+  - No location field (not needed — the API returns all in-play matches globally)
+
+  **Configuration tab**: requires `rapidapi_football_key` (password field) — available from [RapidAPI](https://rapidapi.com/fluis.lacasse/api/football-betting-odds1).
+
+  **Telegram `/monitors`**: football monitors are listed with a `⚽ live` badge and show window configuration and polling interval when tapped.
+
+  **More options coming soon**: additional minute windows, configurable goal-difference threshold, league filtering, and minimum-odds filter are planned for upcoming releases.
+
+  **New files**: `live_monitors/football.py` — `FootballLiveMonitor`, `FootballMonitorManager`, `fetch_inplaying_data()` (used by the test API endpoint).
+
+  **Integration points**: `bot/state.py` (`RAPIDAPI_FOOTBALL_KEY`), `bot/scheduler.py` (`football_monitor_manager.reload`), `bot/handlers.py` (monitor list + callback detail), `web/models.py` (`windows` field), `web/routes/monitors.py` (no-location validation bypass), `web/routes/tools.py` (`/api/football/inplaying` endpoint), `web/index.html` (full UI panel).
+
 ## [2.21.0] - 2026-06-14
 - **Feat — Multi-bot Telegram support**: DRADIS can now manage multiple Telegram bots. Each scheduled monitor, live monitor, HA monitor, and task has an optional **Telegram bot** selector — by default the DRADIS bot (from the HA Configuration tab) is used, but any configured extra bot can be chosen instead.
   - Extra bots are configured via **Settings → Telegram Bots** in the Web UI: add a name, bot token and chat ID, then click **+ Add bot**. A **🔗 Test** button sends a verification message to confirm the bot is reachable.

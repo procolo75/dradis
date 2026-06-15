@@ -16,6 +16,7 @@ All API keys and credentials are configured in the add-on **Configuration** tab 
 | `tavily_api_key` | password | *(Optional)* Tavily API key — required for the Web Search sub-agent |
 | `google_client_id` | str | *(Optional)* Google OAuth2 client ID — required for Google Calendar, Gmail, and/or Google Tasks |
 | `google_client_secret` | password | *(Optional)* Google OAuth2 client secret |
+| `rapidapi_football_key` | password | *(Optional)* RapidAPI key — required for the Football Betting live monitor |
 
 At least one LLM provider key is required. The active provider is selected from the Web UI.
 
@@ -29,6 +30,7 @@ At least one LLM provider key is required. The active provider is selected from 
 - **Gemini API key**: sign up at [aistudio.google.com](https://aistudio.google.com), click **Get API key**
 - **Groq API key**: sign up at [console.groq.com](https://console.groq.com), go to **API Keys**
 - **Tavily API key** *(optional)*: sign up at [tavily.com](https://tavily.com) — the free tier includes 1 000 searches/month
+- **RapidAPI Football key** *(optional)*: sign up at [rapidapi.com](https://rapidapi.com/fluis.lacasse/api/football-betting-odds1) and subscribe to the `football-betting-odds1` API — required for the Football Betting live monitor
 
 ## Google OAuth2 Credential
 
@@ -66,7 +68,7 @@ All runtime data is stored in `/data/` (inside the add-on container — never ex
 | `/data/agents.json` | Custom sub-agent definitions |
 | `/data/tasks.json` | Scheduled LLM tasks |
 | `/data/monitors.json` | Scheduled monitors (thunderstorm, rain, seismic) |
-| `/data/live_monitors.json` | Live monitors (lightning, seismic live) |
+| `/data/live_monitors.json` | Live monitors (lightning, seismic live, football betting) |
 | `/data/ha_monitors.json` | HA entity monitors |
 | `/data/google_calendar_token.json` | Google Calendar OAuth token |
 | `/data/google_gmail_token.json` | Gmail OAuth token |

@@ -228,6 +228,8 @@ async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if m.get("type") == "seismic":
             areas = ", ".join(m.get("areas", [])) or "—"
             label = f"{badge} {m['name']} ({areas})"
+        elif m.get("type") == "football_betting":
+            label = f"{badge} {m['name']} (⚽ live)"
         else:
             label = f"{badge} {m['name']} ({m.get('location', '?')})"
         keyboard.append([InlineKeyboardButton(label, callback_data=f"live:{m['id']}")])
@@ -349,6 +351,13 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Areas: {html.escape(areas)}\n"
                f"Status: {badge}\n"
                f"Polling: 60s")
+    elif mtype == "football_betting":
+        windows = ", ".join(monitor.get("windows") or ["55-65", "75-81"])
+        msg = (f"⚽ <b>{html.escape(monitor['name'])}</b>\n"
+               f"Tipo: Football Betting Live\n"
+               f"Finestre: {windows}'\n"
+               f"Status: {badge}\n"
+               f"Polling: 300s")
     else:
         msg = (f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
                f"📍 {html.escape(monitor.get('location', '?'))}\n"

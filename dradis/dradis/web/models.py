@@ -53,6 +53,7 @@ class LiveMonitorPayload(BaseModel):
     areas:           list[str] = []
     quiet_start:     str       = ""
     quiet_end:       str       = ""
+    windows:         list[str] = ["55-65", "75-81"]
     telegram_bot_id: str       = "default"
 
 

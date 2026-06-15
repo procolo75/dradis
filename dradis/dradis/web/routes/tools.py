@@ -17,6 +17,21 @@ import web.store as _store
 router = APIRouter()
 
 
+# ── Football Betting ──────────────────────────────────────────────────────────
+
+@router.get("/api/football/inplaying")
+async def football_inplaying():
+    import bot.state as _state
+    if not _state.RAPIDAPI_FOOTBALL_KEY:
+        raise HTTPException(status_code=400, detail="rapidapi_football_key not configured in add-on settings")
+    try:
+        from live_monitors.football import fetch_inplaying_data
+        matches = await fetch_inplaying_data()
+        return {"count": len(matches), "matches": matches}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Web Search ────────────────────────────────────────────────────────────────
 
 @router.post("/api/websearch-test")

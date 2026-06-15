@@ -1,6 +1,6 @@
 name: DRADIS Agentic AI for Home Assistant
 description: AI orchestrator agent controlled via Telegram
-version: "2.21.0"
+version: "2.22.0"
 slug: dradis
 init: false
 arch:
@@ -25,6 +25,7 @@ options:
   tavily_api_key: ""
   google_client_id: ""
   google_client_secret: ""
+  rapidapi_football_key: ""
 schema:
   telegram_bot_token: password
   telegram_allowed_chat_id: int
@@ -36,3 +37,4 @@ schema:
   tavily_api_key: password
   google_client_id: str
   google_client_secret: password
+  rapidapi_football_key: password

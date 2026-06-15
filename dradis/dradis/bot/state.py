@@ -46,9 +46,10 @@ _startup_options = _load_startup_options()
 
 TELEGRAM_TOKEN       = _startup_options["telegram_bot_token"]
 ALLOWED_CHAT_ID      = int(_startup_options["telegram_allowed_chat_id"])
-TAVILY_API_KEY       = _startup_options.get("tavily_api_key", "")
-GOOGLE_CLIENT_ID     = _startup_options.get("google_client_id", "")
-GOOGLE_CLIENT_SECRET = _startup_options.get("google_client_secret", "")
+TAVILY_API_KEY        = _startup_options.get("tavily_api_key", "")
+GOOGLE_CLIENT_ID      = _startup_options.get("google_client_id", "")
+GOOGLE_CLIENT_SECRET  = _startup_options.get("google_client_secret", "")
+RAPIDAPI_FOOTBALL_KEY = _startup_options.get("rapidapi_football_key", "")
 WEB_PORT             = 8099
 
 API_KEYS = {

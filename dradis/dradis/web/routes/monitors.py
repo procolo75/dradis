@@ -133,9 +133,12 @@ async def list_live_monitors():
     return load_live_monitors()
 
 
+_LIVE_TYPES_WITHOUT_LOCATION = {"football_betting"}
+
+
 @router.post("/api/live-monitors")
 async def create_live_monitor(payload: LiveMonitorPayload):
-    if not payload.location.strip():
+    if payload.type not in _LIVE_TYPES_WITHOUT_LOCATION and not payload.location.strip():
         raise HTTPException(status_code=400, detail="Location is required")
     items = load_live_monitors()
     item = {
@@ -151,7 +154,7 @@ async def create_live_monitor(payload: LiveMonitorPayload):
 
 @router.put("/api/live-monitors/{item_id}")
 async def update_live_monitor(item_id: str, payload: LiveMonitorPayload):
-    if not payload.location.strip():
+    if payload.type not in _LIVE_TYPES_WITHOUT_LOCATION and not payload.location.strip():
         raise HTTPException(status_code=400, detail="Location is required")
     items = load_live_monitors()
     for i, m in enumerate(items):

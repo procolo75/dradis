@@ -67,6 +67,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `live_monitors/lightning.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
 | `live_monitors/ha.py` | HA Monitor — persistent MQTT listener for Home Assistant entity state changes; `HaLiveMonitor` + `HaMonitorManager` singleton |
 | `live_monitors/seismic.py` | Seismic live monitor — polls INGV GOSSIP JSON API every 60 s, alerts on new events and state promotions |
+| `live_monitors/football.py` | Football Betting live monitor — polls RapidAPI every 5 min (clock-aligned); `FootballLiveMonitor` + `FootballMonitorManager` singleton |
 | `web/store.py` | Shared data layer: load/save functions, callback registrations, cron validation, provider helpers, OAuth state |
 | `web/models.py` | Pydantic request models for all API endpoints |
 | `web/routes/settings.py` | FastAPI routes: settings CRUD, config, server timezone |
@@ -116,6 +117,7 @@ Only API keys and credentials go here. All other settings are managed at runtime
 | `tavily_api_key` | password | *(Optional)* Tavily API key — required for the Web Search sub-agent |
 | `google_client_id` | str | *(Optional)* Google OAuth2 client ID — required for Google Calendar, Gmail, and/or Google Tasks |
 | `google_client_secret` | password | *(Optional)* Google OAuth2 client secret — required for Google Calendar, Gmail, and/or Google Tasks |
+| `rapidapi_football_key` | password | *(Optional)* RapidAPI key — required for the Football Betting live monitor |
 
 Fill in at least one LLM provider key. The active provider is selected from the Web UI.
 
@@ -467,22 +469,17 @@ When a task fires, the agent response is sent to your Telegram chat with a label
 
 ### Live Monitors
 
-Create persistent push-based monitors that stay connected to an external data source and react to events in real time — no cron schedule, no polling. Live monitors are stored in `/data/live_monitors.json` (separate from scheduled monitors).
+Create persistent push-based monitors that stay connected to an external data source and react to events in real time — no cron schedule, no LLM, no token cost. Live monitors are stored in `/data/live_monitors.json` (separate from scheduled monitors).
 
-Click `+` in the **Live Monitors** sidebar header to create a new live monitor. Each live monitor has:
+Click `+` in the **Live Monitors** sidebar header to create a new live monitor. Each monitor has a **Name**, **Enabled** toggle, and **Type** selector. Additional fields depend on the type:
 
-| Field | Description |
-|-------|-------------|
-| Name | Display name shown in the sidebar. |
-| Enabled | Toggle — a green dot in the sidebar shows the monitor is active. When enabled, DRADIS starts the MQTT listener at startup (or immediately on save). |
-| Type | Push integration type. Currently: **⚡ Lightning alert**. |
-| Location | City name — resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and exact lat/lon as you type. Coordinates are stored and used for distance calculations. |
-| Alert language | Language of the Telegram alert: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
-| Radius (km) | Strikes within this distance from the configured location trigger an alert (1–500 km, default 100). |
-| Telegram bot | Bot used to send alerts. Defaults to the DRADIS bot; select any extra bot configured in **Settings → Telegram Bots**. |
-| Status badge | Shows 🟢 Running or 🔴 Stopped, fetched live from the backend. |
+| Type | Required fields |
+|------|----------------|
+| ⚡ Lightning alert | Location, Radius (km), Language |
+| 🌍 Seismic live | Areas, Quiet hours |
+| ⚽ Football Betting | Minute windows, Quiet hours (API pause) |
 
-There is no cron field, no **▶ Test** button, and no "run now" action — the monitor is always-on when enabled.
+There is no cron field and no "run now" action — the monitor is always-on when enabled.
 
 #### Lightning alert
 
@@ -554,6 +551,49 @@ Hard cooldown of 5 min between any two alerts for the same cluster.
 | Language | 🇮🇹 Italiano |
 
 **Duplicating a live monitor:** click **⎘ Copy** to create a copy named `Copy of <name>`. The duplicate is disabled by default, with all fields copied. Useful for monitoring multiple locations.
+
+#### Football Betting
+
+Polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse/api/football-betting-odds1) every 5 minutes — always at clock-aligned boundaries (:00, :05, :10, :15 …) regardless of when DRADIS started. Sends a Telegram alert when a statistically favourable signal is detected in a live match. Requires `rapidapi_football_key` in the Configuration tab.
+
+**Alert conditions (all must be true):**
+1. Match is in the **2nd half** (`periodID == "3"`)
+2. Match minute falls inside a configured **minute window** (default: 55′–65′ and/or 75′–81′)
+3. **Goal difference == 1** (exactly one team ahead)
+4. The **losing team's next-goal odds are lower** than the winning team's — a market signal that the losing team is expected to equalise
+
+**Provider fallback:** the API is queried via `provider1` → `provider2` → `provider3` → `provider4`; the first successful response wins.
+
+**Alert message:**
+```
+⚽ SEGNALE SCOMMESSA LIVE
+
+🏆 Ethiopia - Premier League
+Negele Arsi Ketema vs Hawassa Kenema SC
+1-0  ⏱ 57'
+```
+
+**Configuration fields:**
+
+| Field | Description |
+|-------|-------------|
+| Minute windows | Checkboxes for 55′–65′ and 75′–81′ (both enabled by default). More windows coming in a future release. |
+| API pause | Time range during which API calls are suppressed (default 23:00–07:00). Leave blank to disable. |
+
+**🔍 Test API button:** fetches all current live matches and renders them in a table with columns: minute, league, home, away, score, next-goal odds (home / away), and a 🔔 signal flag. Matches that meet all alert conditions are highlighted in green; matches in a window with 1-goal difference but without the odds signal are highlighted in yellow.
+
+**Deduplication:** one alert is sent per match per window. The alert key (`match_id:window`) is pruned automatically when the match leaves the live feed — a new alert fires if the same match re-enters a window.
+
+**More options coming soon:** additional minute windows, configurable goal-difference threshold, minimum-odds filter, and league filtering are planned for upcoming releases.
+
+**Example configuration:**
+
+| Field | Value |
+|-------|-------|
+| Name | Football Betting |
+| Type | ⚽ Football Betting (RapidAPI) |
+| Minute windows | 55′–65′ ✅, 75′–81′ ✅ |
+| API pause | 23:00 – 07:00 |
 
 ---
 
