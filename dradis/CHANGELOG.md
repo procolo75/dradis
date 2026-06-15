@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [2.22.1] - 2026-06-15
+
+- Hotfix: version bump to clear phantom v2.23 from HA addon cache.
+
 ## [2.22.0] - 2026-06-15
 
 - **Feat — Football Betting live monitor**: new live monitor type `football_betting` that polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse/api/football-betting-odds1) every 5 minutes and sends a Telegram alert when statistically favourable conditions are detected in a live match.
