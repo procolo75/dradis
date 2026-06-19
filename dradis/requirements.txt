@@ -10,3 +10,4 @@ apscheduler
 google-auth-oauthlib
 google-api-python-client
 aiomqtt
+matplotlib

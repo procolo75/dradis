@@ -3256,10 +3256,11 @@ function renderMonitorForm(monitor) {
       <div class="form-group">
         <label for="m-type">Monitor type</label>
         <select id="m-type">
-          <option value="thunderstorm" ${monitor.type === "thunderstorm" ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
-          <option value="rain"         ${monitor.type === "rain"         ? "selected" : ""}>🌧️ Rain alert (Open-Meteo)</option>
-          <option value="seismic"      ${monitor.type === "seismic"      ? "selected" : ""}>🌍 Seismic report (INGV GOSSIP)</option>
-          <option value="backup"       ${monitor.type === "backup"       ? "selected" : ""}>☁️ Google Drive Backup</option>
+          <option value="thunderstorm"  ${monitor.type === "thunderstorm"  ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
+          <option value="rain"          ${monitor.type === "rain"          ? "selected" : ""}>🌧️ Rain alert (Open-Meteo)</option>
+          <option value="weather_chart" ${monitor.type === "weather_chart" ? "selected" : ""}>📊 Weather Charts (Open-Meteo)</option>
+          <option value="seismic"       ${monitor.type === "seismic"       ? "selected" : ""}>🌍 Seismic report (INGV GOSSIP)</option>
+          <option value="backup"        ${monitor.type === "backup"        ? "selected" : ""}>☁️ Google Drive Backup</option>
         </select>
         <small id="m-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)"></small>
       </div>
@@ -3355,6 +3356,57 @@ function renderMonitorForm(monitor) {
         </details>
       </div>
 
+      <div class="form-group" id="fg-weather-models">
+        <label>Weather models</label>
+        <div style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:6px">
+          ${[
+            ["ecmwf_ifs04",               "ECMWF IFS 9km",        "Global, 9 km, ~10-day horizon"],
+            ["icon_eu",                   "ICON EU 7km",           "DWD regional Europe, 7 km, 5-day"],
+            ["meteofrance_arpege_europe",  "Météo-France ARPEGE",  "European, ~10 km, 4-day"],
+            ["gfs025",                    "GFS Global",            "NOAA global, 13 km, 16-day — all variables"],
+            ["italia_meteo_arpae",        "ItaliaMeteo ARPAE",     "Italy, 2 km, 48h — ARPAE ICON 2i"],
+          ].map(([id, lbl, desc]) => `
+            <label style="display:flex;align-items:flex-start;gap:6px;font-size:0.85rem;cursor:pointer">
+              <input type="checkbox" class="wc-model" value="${id}"
+                ${(monitor.weather_models||[]).includes(id) ? "checked" : ""}
+                style="margin-top:3px;flex-shrink:0">
+              <span>${lbl}<span style="display:block;font-size:0.75rem;color:var(--text-muted)">${desc}</span></span>
+            </label>
+          `).join("")}
+        </div>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">
+          Select at least one model. Only GFS supports precipitation probability and UV index.
+        </small>
+      </div>
+
+      <div class="form-group" id="fg-chart-variables">
+        <label>Variables to plot</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+          ${[
+            ["temperature_2m",              "Temperature 2m (°C)"],
+            ["apparent_temperature",        "Apparent Temperature (°C)"],
+            ["precipitation",               "Precipitation (mm)"],
+            ["precipitation_probability",   "Precip. Probability (%)"],
+            ["wind_speed_10m",              "Wind 10m (km/h)"],
+            ["relative_humidity_2m",        "Humidity 2m (%)"],
+            ["pressure_msl",                "Sea Level Pressure (hPa)"],
+            ["cloud_cover",                 "Cloud Cover (%)"],
+            ["uv_index",                    "UV Index"],
+            ["geopotential_height_500hPa",  "Geopotential 500 hPa (m)"],
+            ["temperature_850hPa",          "Temp. 850 hPa (°C)"],
+          ].map(([id, lbl]) => `
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;cursor:pointer">
+              <input type="checkbox" class="wc-variable" value="${id}"
+                ${(monitor.chart_variables||[]).includes(id) ? "checked" : ""}>
+              ${lbl}
+            </label>
+          `).join("")}
+        </div>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">
+          Each selected variable generates a subplot in the chart.
+        </small>
+      </div>
+
       <div class="form-group" id="fg-hours-ahead">
         <label for="m-hours-ahead">Hours ahead (1–24)</label>
         <input type="number" id="m-hours-ahead" min="1" max="24" value="${monitor.hours_ahead || 2}" style="width:80px">
@@ -3419,20 +3471,23 @@ function renderMonitorForm(monitor) {
 
   // Type-specific field visibility
   const _TYPE_DESCS = {
-    thunderstorm: "Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.",
-    rain: "Checks 15-minute precipitation forecast for the next N hours. Sends an alert only if rain is expected. No LLM used.",
-    seismic: "Fetches earthquake events from INGV GOSSIP for the selected area and time range. Returns a summary with event count, depth statistics and a list of recent events. No LLM used.",
-    backup: "Uploads DRADIS config files (options.json, tokens, settings) to a 'DRADIS Backup' folder on Google Drive. Requires /backupauth. No LLM used.",
+    thunderstorm:  "Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.",
+    rain:          "Checks 15-minute precipitation forecast for the next N hours. Sends an alert only if rain is expected. No LLM used.",
+    weather_chart: "Generates a multi-model PNG chart with hourly Open-Meteo data (temperature, rain, wind, humidity, geopotential…) and sends it to Telegram as an image. No LLM used.",
+    seismic:       "Fetches earthquake events from INGV GOSSIP for the selected area and time range. Returns a summary with event count, depth statistics and a list of recent events. No LLM used.",
+    backup:        "Uploads DRADIS config files (options.json, tokens, settings) to a 'DRADIS Backup' folder on Google Drive. Requires /backupauth. No LLM used.",
   };
   const _TYPES_WITHOUT_LOCATION = new Set(["seismic", "backup"]);
   function applyTypeVisibility(type) {
-    document.getElementById("fg-days").style.display          = type === "thunderstorm"              ? "" : "none";
-    document.getElementById("fg-calibration").style.display   = type === "thunderstorm"              ? "" : "none";
-    document.getElementById("fg-hours-ahead").style.display   = type === "rain"                     ? "" : "none";
-    document.getElementById("fg-location").style.display      = _TYPES_WITHOUT_LOCATION.has(type)   ? "none" : "";
-    document.getElementById("fg-seismic-area").style.display  = type === "seismic"                  ? "" : "none";
-    document.getElementById("fg-time-range").style.display    = type === "seismic"                  ? "" : "none";
-    document.getElementById("m-type-desc").textContent        = _TYPE_DESCS[type] || "";
+    document.getElementById("fg-days").style.display            = (type === "thunderstorm" || type === "weather_chart") ? "" : "none";
+    document.getElementById("fg-calibration").style.display     = type === "thunderstorm"              ? "" : "none";
+    document.getElementById("fg-hours-ahead").style.display     = type === "rain"                     ? "" : "none";
+    document.getElementById("fg-location").style.display        = _TYPES_WITHOUT_LOCATION.has(type)   ? "none" : "";
+    document.getElementById("fg-seismic-area").style.display    = type === "seismic"                  ? "" : "none";
+    document.getElementById("fg-time-range").style.display      = type === "seismic"                  ? "" : "none";
+    document.getElementById("fg-weather-models").style.display  = type === "weather_chart"            ? "" : "none";
+    document.getElementById("fg-chart-variables").style.display = type === "weather_chart"            ? "" : "none";
+    document.getElementById("m-type-desc").textContent          = _TYPE_DESCS[type] || "";
   }
   applyTypeVisibility(monitor.type || "thunderstorm");
   document.getElementById("m-type").addEventListener("change", e => applyTypeVisibility(e.target.value));
@@ -3496,6 +3551,8 @@ async function saveMonitor() {
     cape_sat:        parseFloat(document.getElementById("m-cape-sat")?.value)  || 1200,
     li_sat:          parseFloat(document.getElementById("m-li-sat")?.value)    || 5.0,
     cin_supp:        parseFloat(document.getElementById("m-cin-supp")?.value)  || 100,
+    weather_models:  [...document.querySelectorAll(".wc-model:checked")].map(el => el.value),
+    chart_variables: [...document.querySelectorAll(".wc-variable:checked")].map(el => el.value),
     telegram_bot_id: document.getElementById("m-bot-id").value,
   };
   try {
@@ -3545,10 +3602,12 @@ async function duplicateMonitor() {
       language:        src.language,
       days:            src.days,
       hours_ahead:     src.hours_ahead,
-      seismic_area:    src.seismic_area || "flegrei",
-      time_range:      src.time_range   || "last_24h",
-      alert_mode:      src.alert_mode   || "direct",
-      instructions:    src.instructions || "",
+      seismic_area:    src.seismic_area    || "flegrei",
+      time_range:      src.time_range      || "last_24h",
+      alert_mode:      src.alert_mode      || "direct",
+      instructions:    src.instructions    || "",
+      weather_models:  src.weather_models  || [],
+      chart_variables: src.chart_variables || [],
       telegram_bot_id: src.telegram_bot_id || "default",
     });
     monitors.push(copy);
@@ -3582,6 +3641,7 @@ document.getElementById("btn-new-monitor").addEventListener("click", async () =>
     const monitor = await api("POST", "/api/monitors", {
       name: "New Monitor", enabled: false, cron: "0 7 * * *",
       type: "thunderstorm", location: "Rome", days: 2,
+      weather_models: [], chart_variables: [],
     });
     monitors.push(monitor);
     selectedMonitorId = monitor.id;
@@ -3714,9 +3774,14 @@ function renderLiveMonitorForm(monitor) {
         </div>
         <small style="color:var(--text-muted);margin-top:4px;display:block">Alert when losing team's next-goal odds &lt; winning team's next-goal odds. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
 
-        <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
-          <button class="btn-icon" id="btn-football-test">🔍 Test API</button>
-          <span id="football-test-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
+        <div style="margin-top:12px">
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            ${["provider1","provider2","provider3","provider4"].map(p => `
+              <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+                <button class="btn-icon fp-provider-btn" data-fp="${p}">🔍 ${p}</button>
+                <span class="fp-status" id="fp-status-${p}" style="font-size:0.75rem;color:var(--text-muted)">—</span>
+              </div>`).join("")}
+          </div>
         </div>
         <div id="football-test-results" style="margin-top:10px;display:none">
           <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:6px" id="football-test-meta"></div>
@@ -3729,8 +3794,8 @@ function renderLiveMonitorForm(monitor) {
                   <th style="text-align:left;padding:4px 6px">Casa</th>
                   <th style="text-align:left;padding:4px 6px">Fuori</th>
                   <th style="text-align:center;padding:4px 6px">Ris.</th>
-                  <th style="text-align:center;padding:4px 6px">NG Casa</th>
-                  <th style="text-align:center;padding:4px 6px">NG Fuori</th>
+                  <th style="text-align:center;padding:4px 6px">ROM Casa</th>
+                  <th style="text-align:center;padding:4px 6px">ROM Fuori</th>
                   <th style="text-align:center;padding:4px 6px">⚽</th>
                 </tr>
               </thead>
@@ -3786,45 +3851,53 @@ function renderLiveMonitorForm(monitor) {
   _lmApplyType(monitor.type || "lightning");
   document.getElementById("lm-type").addEventListener("change", e => _lmApplyType(e.target.value));
 
-  document.getElementById("btn-football-test").addEventListener("click", async () => {
-    const statusEl  = document.getElementById("football-test-status");
-    const resultsEl = document.getElementById("football-test-results");
-    const metaEl    = document.getElementById("football-test-meta");
-    const tbody     = document.getElementById("football-test-tbody");
-    statusEl.textContent = "⏳ Caricamento…";
-    resultsEl.style.display = "none";
-    try {
-      const data = await api("GET", "/api/football/inplaying");
-      const second_half = data.matches.filter(m => m.period_id === "3");
-      statusEl.textContent = "";
-      metaEl.textContent   = `${second_half.length} partite al 2° tempo (${data.count} live totali) — provider: ${data.matches[0]?.provider || "—"}`;
-      tbody.innerHTML = second_half.map(m => {
-        const inWindow = m.in_55_65 || m.in_75_81;
-        const diffAbs  = Math.abs(m.home_score - m.away_score);
-        const isSecond = m.period_id === "3";
-        const rowBg    = m.signal     ? "background:rgba(46,213,115,0.12)"
-                       : inWindow     ? "background:rgba(255,193,7,0.10)"
-                       : "";
-        const winBadge = m.signal ? "🔔" : inWindow && diffAbs === 1 && isSecond ? "⚠️" : "";
-        const ngHome   = m.ng_home != null ? m.ng_home.toFixed(2) : "—";
-        const ngAway   = m.ng_away != null ? m.ng_away.toFixed(2) : "—";
-        const period   = m.period_id === "3" ? "2T" : m.period_id === "2" ? "1T" : m.period_id;
-        return `<tr style="border-bottom:1px solid var(--border);${rowBg}">
-          <td style="padding:3px 6px">${m.minutes}'<br><span style="font-size:0.7rem;color:var(--text-muted)">${period}</span></td>
-          <td style="padding:3px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.league}</td>
-          <td style="padding:3px 6px">${m.home}</td>
-          <td style="padding:3px 6px">${m.away}</td>
-          <td style="padding:3px 6px;text-align:center;font-weight:bold">${m.score}</td>
-          <td style="padding:3px 6px;text-align:center">${ngHome}</td>
-          <td style="padding:3px 6px;text-align:center">${ngAway}</td>
-          <td style="padding:3px 6px;text-align:center">${winBadge}</td>
-        </tr>`;
-      }).join("");
-      resultsEl.style.display = "";
-    } catch (err) {
-      statusEl.textContent = `❌ ${err.message || "Errore"}`;
-      statusEl.style.color = "var(--danger)";
-    }
+  panel.querySelectorAll(".fp-provider-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const provider  = btn.dataset.fp;
+      const statusEl  = document.getElementById(`fp-status-${provider}`);
+      const resultsEl = document.getElementById("football-test-results");
+      const metaEl    = document.getElementById("football-test-meta");
+      const tbody     = document.getElementById("football-test-tbody");
+      statusEl.textContent = "⏳…";
+      statusEl.style.color = "var(--text-muted)";
+      resultsEl.style.display = "none";
+      try {
+        const data = await api("GET", `/api/football/provider/${provider}`);
+        if (!data.ok) {
+          statusEl.textContent = `❌ ${data.error}`;
+          statusEl.style.color = "var(--danger)";
+          return;
+        }
+        const second_half = data.matches.filter(m => m.period_id === "3");
+        statusEl.textContent = `✅ ${data.count}`;
+        statusEl.style.color = "var(--success)";
+        metaEl.textContent   = `${second_half.length} matches 2nd half (${data.count} live total) — ${provider}`;
+        tbody.innerHTML = second_half.map(m => {
+          const inWindow = m.in_55_65 || m.in_75_81;
+          const diffAbs  = Math.abs(m.home_score - m.away_score);
+          const rowBg    = m.signal ? "background:rgba(46,213,115,0.12)"
+                         : inWindow ? "background:rgba(255,193,7,0.10)" : "";
+          const badge    = m.signal ? "🔔" : inWindow && diffAbs === 1 ? "⚠️" : "";
+          const ngHome   = m.ng_home != null ? m.ng_home.toFixed(2) : "—";
+          const ngAway   = m.ng_away != null ? m.ng_away.toFixed(2) : "—";
+          const period   = m.period_id === "3" ? "2T" : m.period_id === "2" ? "1T" : m.period_id;
+          return `<tr style="border-bottom:1px solid var(--border);${rowBg}">
+            <td style="padding:3px 6px">${m.minutes}'<br><span style="font-size:0.7rem;color:var(--text-muted)">${period}</span></td>
+            <td style="padding:3px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.league}</td>
+            <td style="padding:3px 6px">${m.home}</td>
+            <td style="padding:3px 6px">${m.away}</td>
+            <td style="padding:3px 6px;text-align:center;font-weight:bold">${m.score}</td>
+            <td style="padding:3px 6px;text-align:center">${ngHome}</td>
+            <td style="padding:3px 6px;text-align:center">${ngAway}</td>
+            <td style="padding:3px 6px;text-align:center">${badge}</td>
+          </tr>`;
+        }).join("");
+        resultsEl.style.display = "";
+      } catch (err) {
+        statusEl.textContent = `❌ ${err.message || "Error"}`;
+        statusEl.style.color = "var(--danger)";
+      }
+    });
   });
 
   // Live geocoding

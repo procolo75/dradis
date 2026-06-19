@@ -144,40 +144,54 @@ class FootballLiveMonitor:
         ]
         live_ids: set[str] = {m["id"] for m in matches}
 
+        n_total      = len(matches)
+        n_2nd        = 0
+        n_window     = 0
+        n_diff1      = 0
+        n_new        = 0
+        n_odds_ok    = 0
+        n_signal     = 0
+
         for match in matches:
             if match["period_id"] != "3":
                 continue
+            n_2nd += 1
 
             minute = match["minutes"]
             window = _get_window(minute, self._windows)
             if window is None:
                 continue
+            n_window += 1
 
             home_score = match["home_score"]
             away_score = match["away_score"]
             diff = home_score - away_score
             if abs(diff) != 1:
                 continue
+            n_diff1 += 1
 
             alert_key = f"{match['id']}:{window}"
             if alert_key in self._alerted:
                 continue
+            n_new += 1
 
-            # Compute next-goal odds keys
-            tot        = home_score + away_score
-            key_home   = f"next-goal-{tot + 1}-1"
-            key_away   = f"next-goal-{tot + 1}-2"
-            odds       = match["odds"]
-
+            # Try next-goal-N-1/2 first (provider1/3), fall back to rest-of-match (provider2)
+            odds = match["odds"]
+            tot = home_score + away_score
             try:
-                odds_home_next = float(odds[key_home])
-                odds_away_next = float(odds[key_away])
+                odds_home_next = float(odds[f"next-goal-{tot + 1}-1"])
+                odds_away_next = float(odds[f"next-goal-{tot + 1}-2"])
             except (KeyError, TypeError, ValueError):
-                _LOGGER.debug(
-                    "[FootballMonitor] '%s' missing next-goal odds for %s (keys: %s, %s)",
-                    self.name, match["id"], key_home, key_away,
-                )
-                continue
+                try:
+                    odds_home_next = float(odds["rest-of-match-1"])
+                    odds_away_next = float(odds["rest-of-match-2"])
+                except (KeyError, TypeError, ValueError):
+                    _LOGGER.debug(
+                        "[FootballMonitor] '%s' missing next-goal and rest-of-match odds for %s",
+                        self.name, match["id"],
+                    )
+                    continue
+            n_odds_ok += 1
 
             # Determine winning/losing team and their next-goal odds
             if diff > 0:
@@ -195,14 +209,17 @@ class FootballLiveMonitor:
 
             if losing_odds >= winning_odds:
                 continue
+            n_signal += 1
 
             self._alerted.add(alert_key)
             msg = self._build_alert(
-                league  = match["country_leagues"],
-                home    = match["home"],
-                away    = match["away"],
-                score   = match["score"],
-                minute  = minute,
+                league       = match["country_leagues"],
+                home         = match["home"],
+                away         = match["away"],
+                score        = match["score"],
+                minute       = minute,
+                odds_home    = odds_home_next,
+                odds_away    = odds_away_next,
             )
             print(
                 f"[FootballMonitor] '{self.name}' ALERT {alert_key} "
@@ -212,6 +229,12 @@ class FootballLiveMonitor:
                 await self._send(msg)
             except Exception as e:
                 _LOGGER.error("[FootballMonitor] '%s' send error: %s", self.name, e)
+
+        print(
+            f"[FootballMonitor] '{self.name}' poll: "
+            f"total={n_total} 2nd={n_2nd} window={n_window} diff1={n_diff1} "
+            f"new={n_new} odds_ok={n_odds_ok} signal={n_signal}"
+        )
 
         # Prune alerted keys for matches no longer in the live feed
         if live_ids:
@@ -230,6 +253,7 @@ class FootballLiveMonitor:
                 if isinstance(data, dict) and data:
                     print(f"[FootballMonitor] '{self.name}' fetched via {provider} ({len(data)} matches)")
                     return data
+                _LOGGER.warning("[FootballMonitor] '%s' %s returned empty/invalid data: %s", self.name, provider, type(data).__name__)
             except Exception as e:
                 _LOGGER.warning("[FootballMonitor] '%s' %s failed: %s", self.name, provider, e)
         return {}
@@ -241,11 +265,11 @@ class FootballLiveMonitor:
         return {
             "id":              match_id,
             "period_id":       str(raw.get("periodID", "")),
-            "minutes":         int(raw.get("minutes", 0)),
+            "minutes":         int(raw.get("minutes") or 0),
             "home":            raw.get("home", ""),
             "away":            raw.get("away", ""),
-            "home_score":      int(raw.get("home_score", 0)),
-            "away_score":      int(raw.get("away_score", 0)),
+            "home_score":      int(raw.get("home_score") or 0),
+            "away_score":      int(raw.get("away_score") or 0),
             "score":           raw.get("score", ""),
             "country_leagues": raw.get("country_leagues", ""),
             "odds":            raw.get("odds", {}),
@@ -254,85 +278,92 @@ class FootballLiveMonitor:
     # ── Alert message ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def _build_alert(*, league: str, home: str, away: str, score: str, minute: int) -> str:
+    def _build_alert(*, league: str, home: str, away: str, score: str, minute: int,
+                     odds_home: float, odds_away: float) -> str:
         return (
             "⚽ <b>SEGNALE SCOMMESSA LIVE</b>\n\n"
             f"🏆 {html.escape(league)}\n"
             f"{html.escape(home)} vs {html.escape(away)}\n"
-            f"{html.escape(score)}  ⏱ {minute}'"
+            f"{html.escape(score)}  ⏱ {minute}'\n\n"
+            f"📊 Quote prossimo gol:\n"
+            f"  {html.escape(home)}: <b>{odds_home:.2f}</b>\n"
+            f"  {html.escape(away)}: <b>{odds_away:.2f}</b>"
         )
 
 
-# ── Standalone test helper (used by /api/football/inplaying) ─────────────────
+# ── Standalone test helpers (used by /api/football/…) ────────────────────────
+
+def _normalise_for_ui(match_id: str, obj: dict, provider: str) -> dict:
+    m    = FootballLiveMonitor._normalise(match_id, obj)
+    odds = m["odds"]
+    tot  = m["home_score"] + m["away_score"]
+    try:
+        ng_home = float(odds[f"next-goal-{tot + 1}-1"])
+    except (KeyError, TypeError, ValueError):
+        try:
+            ng_home = float(odds["rest-of-match-1"])
+        except (KeyError, TypeError, ValueError):
+            ng_home = None
+    try:
+        ng_away = float(odds[f"next-goal-{tot + 1}-2"])
+    except (KeyError, TypeError, ValueError):
+        try:
+            ng_away = float(odds["rest-of-match-2"])
+        except (KeyError, TypeError, ValueError):
+            ng_away = None
+    diff           = m["home_score"] - m["away_score"]
+    is_second_half = m["period_id"] == "3"
+    minute         = m["minutes"]
+    in_55_65       = is_second_half and 55 < minute < 65
+    in_75_81       = is_second_half and 75 < minute < 81
+    signal = False
+    if is_second_half and (in_55_65 or in_75_81) and abs(diff) == 1 and ng_home is not None and ng_away is not None:
+        if diff > 0 and ng_away < ng_home:
+            signal = True
+        elif diff < 0 and ng_home < ng_away:
+            signal = True
+    return {
+        "id":         m["id"],
+        "league":     m["country_leagues"],
+        "home":       m["home"],
+        "away":       m["away"],
+        "score":      m["score"],
+        "minutes":    minute,
+        "period_id":  m["period_id"],
+        "home_score": m["home_score"],
+        "away_score": m["away_score"],
+        "ng_home":    ng_home,
+        "ng_away":    ng_away,
+        "in_55_65":   in_55_65,
+        "in_75_81":   in_75_81,
+        "signal":     signal,
+        "provider":   provider,
+    }
+
+
+async def fetch_provider_data(provider_name: str) -> dict:
+    """Fetch from a single named provider. Returns {ok, count, matches, error}."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        url = f"{_BASE_URL}/{provider_name}/live/inplaying"
+        try:
+            resp = await client.get(url, headers=_build_headers())
+            resp.raise_for_status()
+            raw = resp.json()
+        except Exception as e:
+            return {"ok": False, "error": str(e), "count": 0, "matches": []}
+        if not isinstance(raw, dict) or not raw:
+            return {"ok": False, "error": f"Empty/invalid response ({type(raw).__name__})", "count": 0, "matches": []}
+        matches = [_normalise_for_ui(mid, obj, provider_name) for mid, obj in raw.items()]
+        matches.sort(key=lambda x: x["minutes"], reverse=True)
+        return {"ok": True, "error": None, "count": len(matches), "matches": matches}
+
 
 async def fetch_inplaying_data() -> list[dict]:
-    """
-    Fetch and normalise all live matches. Returns a list of dicts with
-    all fields needed for the test UI, including computed next-goal odds
-    and a signal flag indicating whether the alert condition would fire.
-    """
-    async with httpx.AsyncClient(timeout=30) as client:
-        for provider in _PROVIDERS:
-            url = f"{_BASE_URL}/{provider}/live/inplaying"
-            try:
-                resp = await client.get(url, headers=_build_headers())
-                resp.raise_for_status()
-                raw = resp.json()
-                if not isinstance(raw, dict) or not raw:
-                    continue
-                matches = []
-                for match_id, obj in raw.items():
-                    m = FootballLiveMonitor._normalise(match_id, obj)
-                    tot       = m["home_score"] + m["away_score"]
-                    key_home  = f"next-goal-{tot + 1}-1"
-                    key_away  = f"next-goal-{tot + 1}-2"
-                    odds      = m["odds"]
-
-                    try:
-                        ng_home = float(odds[key_home])
-                    except (KeyError, TypeError, ValueError):
-                        ng_home = None
-                    try:
-                        ng_away = float(odds[key_away])
-                    except (KeyError, TypeError, ValueError):
-                        ng_away = None
-
-                    diff = m["home_score"] - m["away_score"]
-                    is_second_half = m["period_id"] == "3"
-                    minute = m["minutes"]
-                    in_55_65 = is_second_half and 55 < minute < 65
-                    in_75_81 = is_second_half and 75 < minute < 81
-                    in_any_window = in_55_65 or in_75_81
-
-                    # Signal: all conditions met
-                    signal = False
-                    if is_second_half and in_any_window and abs(diff) == 1 and ng_home is not None and ng_away is not None:
-                        if diff > 0 and ng_away < ng_home:   # home winning, away losing has better odds
-                            signal = True
-                        elif diff < 0 and ng_home < ng_away:  # away winning, home losing has better odds
-                            signal = True
-
-                    matches.append({
-                        "id":              m["id"],
-                        "league":          m["country_leagues"],
-                        "home":            m["home"],
-                        "away":            m["away"],
-                        "score":           m["score"],
-                        "minutes":         minute,
-                        "period_id":       m["period_id"],
-                        "home_score":      m["home_score"],
-                        "away_score":      m["away_score"],
-                        "ng_home":         ng_home,
-                        "ng_away":         ng_away,
-                        "in_55_65":        in_55_65,
-                        "in_75_81":        in_75_81,
-                        "signal":          signal,
-                        "provider":        provider,
-                    })
-                matches.sort(key=lambda x: x["minutes"], reverse=True)
-                return matches
-            except Exception as e:
-                _LOGGER.warning("[FootballMonitor] test fetch %s failed: %s", provider, e)
+    """Fetch from providers in order; return matches from first successful one."""
+    for provider in _PROVIDERS:
+        result = await fetch_provider_data(provider)
+        if result["ok"]:
+            return result["matches"]
     return []
 
 

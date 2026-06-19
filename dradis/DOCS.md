@@ -64,6 +64,7 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability + pressure-level data, computes multiplicative TRS (0.0–1.0) in Python |
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
+| `monitors/weather_chart.py` | Weather Charts monitor — LLM-free, fetches hourly Open-Meteo forecasts for up to 5 models, generates one PNG chart per variable and returns `list[bytes]` |
 | `live_monitors/lightning.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
 | `live_monitors/ha.py` | HA Monitor — persistent MQTT listener for Home Assistant entity state changes; `HaLiveMonitor` + `HaMonitorManager` singleton |
 | `live_monitors/seismic.py` | Seismic live monitor — polls INGV GOSSIP JSON API every 60 s, alerts on new events and state promotions |
@@ -376,7 +377,7 @@ Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. 
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
-| Monitor type | Type of data source: **⛈️ Thunderstorm risk** or **🌧️ Rain alert** (both Open-Meteo, no API key required), **🌍 Seismic report** (INGV GOSSIP), or **☁️ Google Drive Backup**. |
+| Monitor type | Type of data source: **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts** (all Open-Meteo, no API key required), **🌍 Seismic report** (INGV GOSSIP), or **☁️ Google Drive Backup**. |
 | Response language | Language of the Telegram report: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Location | City name or geographic description (e.g. *Bacoli*, *Naples*, *Rome*). Resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and coordinates as you type. |
 | Forecast days | *(Thunderstorm only)* Number of days to fetch (1–7, default 2). |
@@ -422,6 +423,62 @@ The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–1
 **Testing a monitor manually:** each monitor form includes a **▶ Test Monitor** button that triggers an immediate execution. The result is delivered to Telegram within seconds.
 
 **Duplicating a monitor:** click **⎘ Copy** in any monitor form to create a copy named `Copy of <name>`. The duplicate is disabled by default, with the same cron, type, location, and all other fields. It is immediately selected in the sidebar and ready to edit.
+
+#### Weather Charts monitor
+
+Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 5 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM is used.
+
+**Supported models:**
+
+| Model key | API parameter | Coverage | Notes |
+|-----------|--------------|----------|-------|
+| ECMWF IFS 9km | `ecmwf_ifs025` | Global | ~10-day horizon; no UV index |
+| ICON EU 7km | `icon_eu` | Europe | 5-day horizon |
+| Météo-France ARPEGE | `meteofrance_arpege_europe` | Europe | 4-day horizon |
+| GFS Global | `gfs_global` | Global | 16-day horizon; supports all variables |
+| ItaliaMeteo ARPAE | `italia_meteo_arpae_icon_2i` | Italy | 2 km, 48h horizon |
+
+**Supported variables:**
+
+| Variable | Unit | Chart type | Notes |
+|----------|------|-----------|-------|
+| Temperature 2m | °C | Line | All models |
+| Apparent Temperature | °C | Line | All models |
+| Precipitation | mm | Bar | Always sent (shows 0 if no rain expected) |
+| Precipitation Probability | % | Bar | ECMWF IFS + GFS only; always sent |
+| Wind Speed 10m | km/h | Line | All models |
+| Humidity 2m | % | Line | All models |
+| Sea Level Pressure | hPa | Line | All models |
+| Cloud Cover | % | Line | All models |
+| UV Index | — | Bar | GFS only; suppressed if all-zero |
+| Geopotential 500 hPa | m | Line | All models |
+| Temperature 850 hPa | °C | Line | All models |
+
+**Chart appearance:** 16×5 inch figure at 150 dpi, dark theme (#111 background), five high-contrast colours (blue / red / green / amber / magenta), 2-px line width. Each chart title includes the variable name, location, forecast days, and generation timestamp.
+
+**Precipitation and precipitation probability** are sent even when all values are zero, so the absence of bars communicates "no rain expected." All other bar-type variables are suppressed if no model returns any non-zero value.
+
+**Configuration fields:**
+
+| Field | Description |
+|-------|-------------|
+| Location | City name resolved via Open-Meteo geocoding. |
+| Forecast days | Number of days to fetch (1–7, default 3). |
+| Weather models | Select one or more models (checkboxes with description). |
+| Variables to plot | Select one or more variables. Each generates a separate chart image sent to Telegram. |
+| Cron | Schedule (e.g. `0 7 * * *` = daily at 07:00). |
+
+**Example configuration:**
+
+| Field | Value |
+|-------|-------|
+| Name | Morning Weather Charts |
+| Type | 📊 Weather Charts (Open-Meteo) |
+| Location | Naples |
+| Forecast days | 3 |
+| Weather models | ECMWF IFS 9km ✅, ICON EU 7km ✅, GFS Global ✅ |
+| Variables | Temperature 2m ✅, Precipitation ✅, Wind Speed 10m ✅, Precip. Probability ✅ |
+| Cron | `0 7 * * *` |
 
 #### Rain alert monitor
 

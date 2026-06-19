@@ -19,10 +19,11 @@ from web.store import (
     load_live_monitors,
     load_ha_monitors,
 )
-from monitors.thunderstorm import run_thunderstorm_monitor
-from monitors.rain         import run_rain_monitor
-from monitors.seismic      import run_seismic_monitor
-from backup.gdrive         import run_backup_monitor
+from monitors.thunderstorm  import run_thunderstorm_monitor
+from monitors.rain          import run_rain_monitor
+from monitors.seismic       import run_seismic_monitor
+from monitors.weather_chart import run_weather_chart_monitor
+from backup.gdrive          import run_backup_monitor
 from live_monitors.lightning import live_monitor_manager
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
@@ -70,10 +71,11 @@ async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML,
 
 
 _MONITOR_RUNNERS = {
-    "thunderstorm": run_thunderstorm_monitor,
-    "rain":         run_rain_monitor,
-    "seismic":      run_seismic_monitor,
-    "backup":       run_backup_monitor,
+    "thunderstorm":  run_thunderstorm_monitor,
+    "rain":          run_rain_monitor,
+    "seismic":       run_seismic_monitor,
+    "weather_chart": run_weather_chart_monitor,
+    "backup":        run_backup_monitor,
 }
 
 
@@ -191,7 +193,7 @@ async def run_scheduled_monitor(monitor: dict):
     print(f"[DRADIS] Monitor '{monitor_name}' type={monitor_type} alert_mode={alert_mode}")
 
     try:
-        text = await runner(monitor, tz_name=tz_name)
+        result = await runner(monitor, tz_name=tz_name)
     except Exception as e:
         exc_desc = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
         traceback.print_exc()
@@ -202,6 +204,35 @@ async def run_scheduled_monitor(monitor: dict):
         )
         return
 
+    # Image result — send as photo(s), ignore alert_mode
+    photos: list[bytes] = []
+    if isinstance(result, bytes):
+        photos = [result]
+    elif isinstance(result, list) and result and isinstance(result[0], bytes):
+        photos = result
+
+    if photos:
+        bot, chat_id = _state.get_bot_and_chat(bot_id)
+        if bot:
+            for i, photo in enumerate(photos):
+                try:
+                    if i > 0:
+                        await asyncio.sleep(0.5)
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo,
+                        read_timeout=60,
+                        write_timeout=60,
+                    )
+                except Exception as e:
+                    print(f"[DRADIS] Monitor '{monitor_name}' send_photo error: {e}")
+                    await _state._send_error_telegram(
+                        f"❌ Monitor <b>{html.escape(monitor_name)}</b> — send_photo error: {html.escape(str(e))}",
+                        bot_id=bot_id,
+                    )
+        return
+
+    text = result
     if not text:
         return
 

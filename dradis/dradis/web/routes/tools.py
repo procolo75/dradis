@@ -19,6 +19,9 @@ router = APIRouter()
 
 # ── Football Betting ──────────────────────────────────────────────────────────
 
+_FOOTBALL_PROVIDERS = {"provider1", "provider2", "provider3", "provider4"}
+
+
 @router.get("/api/football/inplaying")
 async def football_inplaying():
     import bot.state as _state
@@ -30,6 +33,17 @@ async def football_inplaying():
         return {"count": len(matches), "matches": matches}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/football/provider/{provider_name}")
+async def football_provider_test(provider_name: str):
+    import bot.state as _state
+    if provider_name not in _FOOTBALL_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_name}")
+    if not _state.RAPIDAPI_FOOTBALL_KEY:
+        raise HTTPException(status_code=400, detail="rapidapi_football_key not configured in add-on settings")
+    from live_monitors.football import fetch_provider_data
+    return await fetch_provider_data(provider_name)
 
 
 # ── Web Search ────────────────────────────────────────────────────────────────

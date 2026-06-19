@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## [2.25.0] - 2026-06-19
+
+- **Feat — Weather Charts scheduled monitor**: new monitor type `📊 Weather Charts (Open-Meteo)` that fetches hourly forecasts from Open-Meteo and sends **one PNG chart per variable** to Telegram. No LLM used, no API key required.
+  - **5 models supported**: ECMWF IFS 9km, ICON EU 7km, Météo-France ARPEGE, GFS Global, ItaliaMeteo ARPAE (ICON 2i) — each with its correct Open-Meteo API parameter and a known per-model variable exclusion list
+  - **11 variables**: temperature 2m, apparent temperature, precipitation, precipitation probability, wind speed 10m, humidity 2m, sea level pressure, cloud cover, UV index, geopotential 500 hPa, temperature 850 hPa
+  - Precipitation and precipitation probability are always sent even when all values are zero (so the user knows no rain is expected); other bar-type variables (UV index) are suppressed when all-zero
+  - Chart style: 16×5 in figure at 150 dpi, dark theme (#111 background), high-contrast colour palette, 2-px line width, legend per chart
+  - **Scheduler** updated to handle `list[bytes]` returns: sends each chart as a separate Telegram photo with 0.5 s delay between messages
+
+## [2.24.1] - 2026-06-17
+
+- **Fix — Football Monitor crash on empty field**: `int(raw.get("minutes", 0))` raised `invalid literal for int() with base 10: ''` when the API returns an empty string instead of a missing key. Fixed with `int(raw.get("minutes") or 0)` — handles both absent key and empty string. Same fix applied to `home_score` and `away_score`.
+- **Fix — Football Monitor silent on provider2**: provider1/3 supply `next-goal-N-1/2` odds; provider2 does not. When provider1 went down and the monitor fell back to provider2, all odds lookups silently failed and no alerts fired. Fix: try `next-goal-*` first, fall back to `rest-of-match-1/2` if absent. Works correctly on all active providers.
+- **Fix — Football Monitor provider1 silent fallback**: provider1 returns an empty dict `{}` for this API key; added explicit warning log when a provider returns empty/invalid data.
+- **Feat — Football Monitor per-provider test buttons**: four independent `🔍 provider1/2/3/4` buttons each show their own status and populate the match table.
+
 ## [2.24.0] - 2026-06-15
 
 - Hotfix: version bump to supersede phantom v2.23 from HA addon cache. No functional changes.

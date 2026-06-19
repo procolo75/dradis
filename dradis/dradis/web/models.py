@@ -35,10 +35,12 @@ class MonitorPayload(BaseModel):
     time_range:      str   = "last_24h"
     alert_mode:      str   = "direct"
     instructions:    str   = ""
-    cape_sat:        float = 1200.0
-    li_sat:          float = 5.0
-    cin_supp:        float = 100.0
-    telegram_bot_id: str   = "default"
+    cape_sat:        float     = 1200.0
+    li_sat:          float     = 5.0
+    cin_supp:        float     = 100.0
+    weather_models:  list[str] = []
+    chart_variables: list[str] = []
+    telegram_bot_id: str       = "default"
 
 
 class LiveMonitorPayload(BaseModel):
