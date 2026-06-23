@@ -335,8 +335,10 @@ def reload_live_monitors():
 
     def _make_send(cfg: dict):
         bid = cfg.get("telegram_bot_id", "default")
-        async def _send(text: str):
-            await _state.send_telegram(text, bot_id=bid)
+        async def _send(text: str) -> bool:
+            # Propagate delivery status so callers (lightning monitor) can gate
+            # state flags on a confirmed send.
+            return await _state.send_telegram(text, bot_id=bid)
         return _send
 
     configs = load_live_monitors()

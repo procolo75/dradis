@@ -166,14 +166,19 @@ def build_context(question: str) -> str:
 # ── Telegram helpers ──────────────────────────────────────────────────────────
 
 async def send_telegram(text: str, bot_id: str = "default",
-                        parse_mode: str = ParseMode.HTML) -> None:
+                        parse_mode: str = ParseMode.HTML) -> bool:
+    """Send a Telegram message. Returns True on confirmed delivery, False otherwise.
+    Callers that need to react to delivery failure (e.g. live monitors that gate
+    state flags on a successful send) must inspect the return value."""
     bot, chat_id = get_bot_and_chat(bot_id)
     if not bot:
-        return
+        return False
     try:
         await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+        return True
     except Exception as ex:
         print(f"[DRADIS] send_telegram(bot_id={bot_id!r}) error: {ex}")
+        return False
 
 
 async def _send_error_telegram(msg: str, bot_id: str = "default") -> None:

@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## [2.25.1] - 2026-06-23
+
+- **Fix — Lightning live monitor: "storm cleared" / "still approaching" without the initial detection alert (real root cause)**: two compounding bugs.
+  1. **Unescaped `<` / `>` in zone labels**: `_zone_label()` returned `"Zona pericolo (<15 km)"` / `"Danger zone (<15 km)"` and `"Zona distante (>50 km)"` / `"Distant zone (>50 km)"` with raw angle brackets. These labels are embedded in `parse_mode=HTML` Telegram messages, so Telegram read `<15 km)…` as a malformed tag and **rejected the whole message** (`can't parse entities`). This silently dropped the **initial** (`_fmt_initial`) and **zone-change** (`_fmt_zone_change`) alerts whenever the storm sat in the danger (`<15 km`) or distant (`>50 km`) zone — `_fmt_periodic` and `_fmt_all_clear` carry no zone label and delivered fine. Fixed by emitting `&lt;` / `&gt;` entities.
+  2. **`send_telegram` swallowed exceptions**: it caught every error and returned `None`, so `await self._send(msg)` never raised even when delivery failed. `_dispatch_alert` therefore promoted `initial_alert_sent = True` regardless, and 15 min later the all-clear (gated on that flag) fired with a clean message that *did* deliver — hence "storm cleared" with no prior warning. This is also why the earlier "set the flag after the await" fix was ineffective. `send_telegram` now returns `bool`; `reload_live_monitors._make_send` propagates it; `_dispatch_alert` promotes `initial_alert_sent` / `all_clear_sent` **only on a confirmed send**, otherwise logs a warning and retries on the next poll.
+
 ## [2.25.0] - 2026-06-19
 
 - **Feat — Weather Charts scheduled monitor**: new monitor type `📊 Weather Charts (Open-Meteo)` that fetches hourly forecasts from Open-Meteo and sends **one PNG chart per variable** to Telegram. No LLM used, no API key required.

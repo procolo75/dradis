@@ -509,11 +509,22 @@ class LightningLiveMonitor:
             cluster.state,
         )
         try:
-            await self._send(msg)
-            if kind == "initial":
-                cluster.initial_alert_sent = True
-            elif kind == "all_clear":
-                cluster.all_clear_sent = True
+            # Promote the flags ONLY on confirmed delivery. send_telegram swallows
+            # its own exceptions and returns False on failure, so awaiting it never
+            # raises — we must check the return value, otherwise a rejected initial
+            # alert (e.g. HTML parse error) would still flip initial_alert_sent and
+            # let all_clear/periodic fire without the user ever seeing a warning.
+            ok = await self._send(msg)
+            if ok:
+                if kind == "initial":
+                    cluster.initial_alert_sent = True
+                elif kind == "all_clear":
+                    cluster.all_clear_sent = True
+            else:
+                _LOGGER.warning(
+                    "[LiveMonitor] '%s' alert kind=%s NOT delivered — flag not promoted, "
+                    "will retry next poll", self.name, kind,
+                )
         except Exception as e:
             _LOGGER.error("[LiveMonitor] '%s' send error: %s", self.name, e)
 
@@ -617,11 +628,14 @@ class LightningLiveMonitor:
 
     def _zone_label(self, zone_idx: int) -> str:
         idx = min(zone_idx, 3)
+        # &lt;/&gt; entities: these labels are inserted into HTML (parse_mode=HTML)
+        # Telegram messages; a raw '<' is read as a malformed tag and the whole
+        # message is rejected with "can't parse entities".
         if self.language == "it":
-            return ["Zona pericolo (<15 km)", "Zona vicina (15–30 km)",
-                    "Zona intermedia (30–50 km)", "Zona distante (>50 km)"][idx]
-        return ["Danger zone (<15 km)", "Near zone (15–30 km)",
-                "Intermediate zone (30–50 km)", "Distant zone (>50 km)"][idx]
+            return ["Zona pericolo (&lt;15 km)", "Zona vicina (15–30 km)",
+                    "Zona intermedia (30–50 km)", "Zona distante (&gt;50 km)"][idx]
+        return ["Danger zone (&lt;15 km)", "Near zone (15–30 km)",
+                "Intermediate zone (30–50 km)", "Distant zone (&gt;50 km)"][idx]
 
     def _state_label(self, state: str) -> str:
         if self.language == "it":
