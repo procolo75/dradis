@@ -8,7 +8,7 @@ Click `+` in the **Live Monitors** sidebar header. Select a **Type** to reveal t
 
 | Type | Description |
 |------|-------------|
-| ⚡ Lightning alert | Persistent MQTT listener on Blitzortung; DBSCAN clustering; zone-based storm alerts |
+| ⚡ Lightning alert | Persistent MQTT listener on Blitzortung; DBSCAN cells reduced to one nearest-threat track; single 🟡/🔴/✅ state machine |
 | 🌍 Seismic live | Polls INGV GOSSIP every 60 s; alerts on new events and state promotions |
 | ⚽ Football Betting | Polls RapidAPI every 5 min (clock-aligned); alerts on statistically favourable live-match conditions |
 
@@ -20,53 +20,56 @@ There is no cron field and no "run now" action — the monitor is always-on when
 
 ## ⚡ Lightning Alert
 
-Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. Incoming strikes within `radius_km` are collected in a **15-minute sliding window**. Every 2 minutes a polling task runs **pure-Python DBSCAN** (eps = 8 km, min_samples = 2) to identify distinct storm cells, tracks each cell's centroid over a 20-minute rolling history, and classifies each cell as APPROACHING / RETREATING / STATIONARY / UNKNOWN. Multiple simultaneous storms are tracked independently.
+Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. Incoming strikes within `radius_km` are collected in a **15-minute sliding window**. Every 2 minutes a polling task runs **pure-Python DBSCAN** (eps = 8 km, min_samples = 2) to identify storm cells, then reduces all activity to a **single scalar** — the distance of the *nearest significant cell* — appended to a **30-minute series**. That series (not per-cell centroids) drives the approach trend, velocity and ETA, so it does not reset when DBSCAN re-labels cells. A single **threat state machine** per monitor produces one coherent thread per storm episode instead of one alert per cell.
 
-### Storm States
+> **Why the change (v2.26.0):** the previous per-cell zone alerts split one storm front into several clusters, each firing its own "Storm detected — Undetermined" with jumping distance/direction, and intermittent strikes caused clear ↔ approaching flapping. It was impossible to tell whether a storm was actually coming.
 
-| State | Condition |
-|-------|-----------|
-| APPROACHING | Last 3 centroid distances all decreasing by > 0.5 km/sample |
-| RETREATING | Last 3 centroid distances all increasing by > 0.5 km/sample |
-| STATIONARY | Trend below threshold |
-| UNKNOWN | Fewer than 3 centroid history samples (insufficient data — no alert sent) |
+### Threat Levels
 
-### Alert Triggers (zone-based)
+| Level | Meaning |
+|-------|---------|
+| 🟢 CLEAR | No significant activity, or quiet for ≥ 25 min |
+| 🟡 WATCH | Significant activity within 50 km, approach not yet confirmed |
+| 🔴 WARNING | Confirmed approach (≥ 2 approaching polls, ≥ 3 strikes) and close (≤ 15 km) or short ETA (≤ 30 min) |
+
+Trend over the series — APPROACHING / RETREATING / STATIONARY / UNKNOWN (last 3 samples, > 0.5 km/sample) — is shown in the WATCH message.
+
+### Alert Triggers (level-based)
 
 | Event | Trigger | Icon |
 |-------|---------|------|
-| Initial detection | New storm cell appears within radius | ⚡ |
-| Zone approaching | Cell crosses a zone boundary inward (<15 / 15–30 / 30–50 km) | 🔴 |
-| Zone retreating | Cell crosses a zone boundary outward (RETREATING state) | 🟢 |
-| Periodic re-alert | Every 10 min while APPROACHING | 🔴 |
-| All clear | No strikes for 15 consecutive minutes | ✅ |
+| Watch | First significant activity within 50 km | 🟡 |
+| Warning | Approach confirmed and close / short-ETA | 🔴 |
+| Periodic re-alert | Every 10 min while in WARNING | 🔴 |
+| De-escalation | 12-min gap → drops WARNING to WATCH | 🟡 |
+| All clear | No significant activity for 25 consecutive minutes | ✅ |
 
-Hard cooldown of 5 minutes between any two alerts for the same cluster.
+Alerts fire **only on level change** (plus the periodic WARNING re-alert). Confirmation polls (escalation) and a quiet gap (de-escalation) provide hysteresis, so brief strike gaps no longer cause flapping. The state machine advances only on a confirmed Telegram send.
 
 ### Alert Examples
 
-**Initial detection:**
+**Watch:**
 ```
-⚡ Storm detected — Bacoli
-📍 Distance: 48.2 km to NW (315°)
-🏷 Zone: Distant zone (>50 km)
-🟡 Status: Undetermined
+🟡 Storm in the area — Bacoli
+📍 Activity at 28.3 km to NW (315°)
+📊 Approaching
+🔢 Strikes (last 15 min): 9
 🕐 14:20
 ```
 
-**Zone approaching:**
+**Warning:**
 ```
-🔴 Storm approaching — Bacoli
-📍 Distance: 28.3 km to NW (315°)
-🏷 Zone: Near zone (15–30 km)
-🚀 ~42 km/h — estimated arrival: 40 min
+🔴 Storm WARNING — Bacoli
+📍 Approaching: 12.0 km to NW (315°)
+🚀 ~42 km/h — estimated arrival: 18 min
+🔢 Strikes (last 15 min): 24
 🕐 14:32
 ```
 
 **All clear:**
 ```
-✅ Storm cleared — Bacoli
-🔇 No lightning in the last 15 min
+✅ Storm threat cleared — Bacoli
+🔇 No lightning for 25 min
 🕐 15:10
 ```
 

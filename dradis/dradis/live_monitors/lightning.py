@@ -2,7 +2,7 @@
 live_monitors/lightning.py
 ───────────────────────────
 LLM-free live monitor: persistent MQTT listener on the Blitzortung public broker.
-Sends Telegram alerts based on DBSCAN storm cell tracking.
+Sends Telegram alerts driven by a single location-level threat state machine.
 
 Algorithm
 ─────────
@@ -10,12 +10,15 @@ Algorithm
 - Subscribes to geohash-based topics covering the configured area.
 - Buffers all incoming strikes within radius_km in a 15-minute sliding window.
 - Every 2 minutes a polling task runs pure-Python DBSCAN (eps=8 km, min_samples=2)
-  to identify storm cells, tracks each cell's centroid over a 20-minute history,
-  and classifies each cell as APPROACHING / RETREATING / STATIONARY / UNKNOWN.
-- Alerts are zone-based: <15 km · 15-30 km · 30-50 km · >50 km.
-  Triggered on: initial detection, zone crossing, 10-min periodic re-alert (if
-  APPROACHING), and "all clear" after 15 min with no new strikes.
-- Hard cooldown of 5 min between alerts per cluster (except all-clear).
+  to identify storm cells. Instead of alerting per cell, it reduces all activity to
+  ONE scalar: the distance of the nearest significant cell to the configured point.
+  That scalar is tracked as a 30-minute series — the single source of truth for the
+  approach trend, velocity and ETA (it does not reset when DBSCAN re-labels cells).
+- A single threat state machine per monitor decides one of three levels:
+  🟢 CLEAR · 🟡 WATCH · 🔴 WARNING. Alerts fire only on level changes (plus a
+  periodic re-alert while in WARNING). Going up to WARNING needs a confirmed approach
+  trend; coming down to CLEAR needs a quiet period — both with hysteresis so the user
+  sees one coherent thread per storm episode instead of contradictory micro-updates.
 
 One LightningLiveMonitor instance per enabled live monitor entry.
 All instances are owned by LiveMonitorManager (singleton live_monitor_manager).
@@ -23,14 +26,12 @@ Called by main.py on startup and on config changes — NOT via the APScheduler c
 """
 
 import asyncio
-import bisect
 import html
 import json
 import math
 import time
 import logging
 from collections import namedtuple
-from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -42,26 +43,36 @@ MQTT_HOST       = "blitzortung.ha.sed.pl"
 MQTT_PORT       = 1883
 RECONNECT_DELAY = 15
 
-# ── DBSCAN & clustering ────────────────────────────────────────────────────────
-DBSCAN_EPS_KM        = 8.0
-DBSCAN_MIN_SAMPLES   = 2
-STRIKE_BUFFER_MIN    = 15
-CENTROID_HISTORY_MIN = 20
+# ── DBSCAN & strike buffer ─────────────────────────────────────────────────────
+DBSCAN_EPS_KM       = 8.0
+DBSCAN_MIN_SAMPLES  = 2
+STRIKE_BUFFER_MIN   = 15
+MIN_CLUSTER_STRIKES = 2     # strikes for a DBSCAN cell to count as significant activity
 
-# ── State classification ───────────────────────────────────────────────────────
-TREND_SAMPLES     = 3
-APPROACH_SLOPE_KM = -0.5
+# ── Threat-distance series (location level) ────────────────────────────────────
+THREAT_SERIES_MIN = 30      # rolling window for the nearest-threat distance track
+TREND_SAMPLES     = 3       # samples used to classify the approach trend
+APPROACH_SLOPE_KM = -0.5    # per-step distance delta (km) considered "approaching"
 RETREAT_SLOPE_KM  =  0.5
 
-# ── Distance zones (km) ───────────────────────────────────────────────────────
-ZONES = [15, 30, 50]   # bisect.bisect(ZONES, dist) → 0=<15, 1=15-30, 2=30-50, 3=>50
+# ── Threat levels ──────────────────────────────────────────────────────────────
+LEVEL_CLEAR   = 0
+LEVEL_WATCH   = 1
+LEVEL_WARNING = 2
+
+# ── Level thresholds & hysteresis ──────────────────────────────────────────────
+WATCH_DIST_KM         = 50    # significant activity within this range → at least WATCH
+WARNING_DIST_KM       = 15    # active activity this close → WARNING
+WARNING_ETA_MIN       = 30    # confirmed approach reaching us within this ETA → WARNING
+WARNING_MIN_STRIKES   = 3     # min strikes in the buffer for a WARNING
+WARNING_CONFIRM_POLLS = 2     # consecutive approaching polls required before WARNING
+WARNING_HOLD_KM       = 5     # must move beyond WARNING_DIST + this to drop WARNING→WATCH
 
 # ── Alert timing ──────────────────────────────────────────────────────────────
-POLL_INTERVAL_SEC    = 120
-PERIODIC_ALERT_MIN   = 10
-CLUSTER_COOLDOWN_MIN = 5
-CLUSTER_GONE_MIN     = 15
-MAX_MATCH_KM         = 20
+POLL_INTERVAL_SEC  = 120
+PERIODIC_ALERT_MIN = 10     # re-alert cadence while in WARNING
+DEESCALATE_MIN     = 12     # quiet gap before WARNING de-escalates to WATCH
+CLEAR_QUIET_MIN    = 25     # no significant activity this long → all-clear
 
 
 # ── Geo helpers ───────────────────────────────────────────────────────────────
@@ -158,26 +169,6 @@ def _topics_for_area(lat: float, lon: float) -> list[str]:
     return [f"blitzortung/1.1/{c[0]}/{c[1]}/{c[2]}/#" for c in cells]
 
 
-# ── Data structures ───────────────────────────────────────────────────────────
-
-@dataclass
-class StormCluster:
-    cluster_id: str
-    centroid_history: list   # [(ts, lat, lon, dist_km), ...]
-    state: str               # APPROACHING | RETREATING | STATIONARY | UNKNOWN
-    zone: int                # bisect index into ZONES
-    last_alert_ts: float
-    last_periodic_ts: float
-    initial_alert_sent: bool
-    all_clear_sent: bool
-    last_seen_ts: float
-
-
-AlertEvent = namedtuple("AlertEvent", ["kind", "cluster", "old_zone"])
-# kind ∈ {"initial", "zone", "periodic", "all_clear"}
-# old_zone: int for "zone" events, None otherwise
-
-
 # ── DBSCAN (pure Python, O(n²)) ───────────────────────────────────────────────
 
 def _dbscan(points: list, eps_km: float, min_samples: int) -> list:
@@ -218,43 +209,14 @@ def _dbscan(points: list, eps_km: float, min_samples: int) -> list:
     return labels
 
 
-# ── Cluster helpers ───────────────────────────────────────────────────────────
+# ── Trend / velocity over the threat-distance series ──────────────────────────
+# A "series" is a list of (ts, lat, lon, dist_km) samples of the nearest significant
+# activity, oldest first. Trend, velocity and ETA are all derived from it.
 
-def _match_clusters(
-    new_centroids: dict,
-    existing: dict,
-) -> tuple:
-    """Greedy nearest-centroid matching. Returns (matched, unmatched_new, gone)."""
-    consumed: set = set()
-    matched: dict = {}   # cluster_id → raw_label
-
-    for cid, cluster in existing.items():
-        if not cluster.centroid_history:
-            continue
-        last = cluster.centroid_history[-1]
-        best_dist = float("inf")
-        best_raw = None
-        for raw_label, (clat, clon) in new_centroids.items():
-            if raw_label in consumed:
-                continue
-            d = _distance_km(last[1], last[2], clat, clon)
-            if d < best_dist:
-                best_dist = d
-                best_raw = raw_label
-        if best_raw is not None and best_dist <= MAX_MATCH_KM:
-            matched[cid] = best_raw
-            consumed.add(best_raw)
-
-    unmatched_new = [r for r in new_centroids if r not in consumed]
-    gone = [cid for cid in existing if cid not in matched]
-    return matched, unmatched_new, gone
-
-
-def _classify_state(cluster: StormCluster) -> str:
-    hist = cluster.centroid_history
-    if len(hist) < TREND_SAMPLES:
+def _classify_trend(series: list) -> str:
+    if len(series) < TREND_SAMPLES:
         return "UNKNOWN"
-    dists = [h[3] for h in hist[-TREND_SAMPLES:]]
+    dists = [s[3] for s in series[-TREND_SAMPLES:]]
     diffs = [dists[i + 1] - dists[i] for i in range(len(dists) - 1)]
     if all(d < APPROACH_SLOPE_KM for d in diffs):
         return "APPROACHING"
@@ -263,22 +225,26 @@ def _classify_state(cluster: StormCluster) -> str:
     return "STATIONARY"
 
 
-def _compute_velocity_eta(cluster: StormCluster) -> tuple:
-    hist = cluster.centroid_history
-    if len(hist) < 2:
+def _velocity_eta(series: list) -> tuple:
+    """Return (velocity_kmh, eta_min) — either may be None."""
+    if len(series) < 2:
         return None, None
-    first, last = hist[0], hist[-1]
+    first, last = series[0], series[-1]
     time_h = (last[0] - first[0]) / 3600.0
     if time_h <= 0:
         return None, None
     displacement_km = _distance_km(first[1], first[2], last[1], last[2])
     velocity = round(displacement_km / time_h, 1) if displacement_km > 0 else None
-    # ETA from distance decrease rate (not raw centroid displacement)
     approach_rate_kmh = -(last[3] - first[3]) / time_h   # positive = approaching
     eta_min = None
     if approach_rate_kmh > 0 and last[3] > 0:
         eta_min = int(last[3] / (approach_rate_kmh / 60.0))
     return velocity, eta_min
+
+
+# ── Pending alert ─────────────────────────────────────────────────────────────
+
+Alert = namedtuple("Alert", ["level", "text", "periodic"])
 
 
 # ── Monitor class ─────────────────────────────────────────────────────────────
@@ -296,8 +262,15 @@ class LightningLiveMonitor:
         self.language   = cfg.get("language", "it")
         self.tz_name    = tz_name
         self._send      = telegram_send_fn
-        self._strike_buffer: list = []          # [(ts, lat, lon, dist_km), ...]
-        self._clusters: dict[str, StormCluster] = {}
+        # Perception layer
+        self._strike_buffer: list = []   # [(ts, lat, lon, dist_km), ...]
+        self._series: list = []          # [(ts, lat, lon, dist_km), ...] nearest activity
+        # Threat state machine
+        self._level             = LEVEL_CLEAR
+        self._approach_streak   = 0
+        self._last_significant_ts = 0.0
+        self._last_periodic_ts    = 0.0
+        # Tasks
         self._task: asyncio.Task | None      = None
         self._poll_task: asyncio.Task | None = None
 
@@ -310,7 +283,7 @@ class LightningLiveMonitor:
                 self._poll_loop(), name=f"lightning_poll:{self.monitor_id}"
             )
             print(f"[LiveMonitor] '{self.name}' started "
-                  f"(radius={self.radius_km:.0f}km, DBSCAN clustering)")
+                  f"(radius={self.radius_km:.0f}km, threat state machine)")
 
     def stop(self) -> None:
         for task in (self._poll_task, self._task):
@@ -352,10 +325,7 @@ class LightningLiveMonitor:
         dist = _distance_km(self.lat, self.lon, float(s_lat), float(s_lon))
         if dist > self.radius_km:
             return
-        self._add_to_buffer(time.time(), float(s_lat), float(s_lon), dist)
-
-    def _add_to_buffer(self, ts: float, lat: float, lon: float, dist: float) -> None:
-        self._strike_buffer.append((ts, lat, lon, dist))
+        self._strike_buffer.append((time.time(), float(s_lat), float(s_lon), dist))
 
     # ── Polling task ──────────────────────────────────────────────────────────
 
@@ -364,285 +334,207 @@ class LightningLiveMonitor:
             try:
                 await asyncio.sleep(POLL_INTERVAL_SEC)
                 now = time.time()
-                alerts = self._update_clusters(now)
-                for alert in alerts:
-                    await self._dispatch_alert(alert, now)
-                # All-clear for clusters gone >= CLUSTER_GONE_MIN minutes
-                for cid in list(self._clusters):
-                    cluster = self._clusters[cid]
-                    if ((now - cluster.last_seen_ts) >= CLUSTER_GONE_MIN * 60
-                            and cluster.initial_alert_sent
-                            and not cluster.all_clear_sent):
-                        await self._dispatch_alert(AlertEvent("all_clear", cluster, None), now)
-                # Remove clusters that have been cleaned up
-                for cid in list(self._clusters):
-                    cluster = self._clusters[cid]
-                    if (now - cluster.last_seen_ts) >= CLUSTER_GONE_MIN * 60:
-                        if cluster.all_clear_sent or not cluster.initial_alert_sent:
-                            del self._clusters[cid]
+                for alert in self._evaluate(now):
+                    await self._dispatch(alert, now)
             except asyncio.CancelledError:
                 return
             except Exception as e:
                 _LOGGER.error("[LiveMonitor] '%s' poll error: %s", self.name, e)
 
-    # ── Clustering core ───────────────────────────────────────────────────────
+    # ── Perception: nearest significant activity ──────────────────────────────
 
-    def _update_clusters(self, now: float) -> list:
-        cutoff = now - STRIKE_BUFFER_MIN * 60
-        self._strike_buffer = [(t, la, lo, d) for t, la, lo, d in self._strike_buffer
-                               if t >= cutoff]
-
-        alerts: list = []
+    def _nearest_activity(self) -> tuple | None:
+        """Return (lat, lon, dist_km) of the nearest significant DBSCAN cell, or None."""
         if len(self._strike_buffer) < DBSCAN_MIN_SAMPLES:
-            return alerts
-
+            return None
         points = [(la, lo) for _, la, lo, _ in self._strike_buffer]
         labels = _dbscan(points, DBSCAN_EPS_KM, DBSCAN_MIN_SAMPLES)
-
-        cluster_entries: dict[int, list] = {}
+        groups: dict[int, list] = {}
         for idx, label in enumerate(labels):
             if label != -1:
-                cluster_entries.setdefault(label, []).append(self._strike_buffer[idx])
-
-        new_centroids: dict[int, tuple] = {
-            label: (
-                sum(e[1] for e in entries) / len(entries),
-                sum(e[2] for e in entries) / len(entries),
-            )
-            for label, entries in cluster_entries.items()
-        }
-
-        matched, unmatched_new, _ = _match_clusters(new_centroids, self._clusters)
-        alerted: set[str] = set()
-
-        for cid, raw_label in matched.items():
-            cluster = self._clusters[cid]
-            clat, clon = new_centroids[raw_label]
+                groups.setdefault(label, []).append(self._strike_buffer[idx])
+        best = None
+        for entries in groups.values():
+            if len(entries) < MIN_CLUSTER_STRIKES:
+                continue
+            clat = sum(e[1] for e in entries) / len(entries)
+            clon = sum(e[2] for e in entries) / len(entries)
             dist = _distance_km(self.lat, self.lon, clat, clon)
+            if best is None or dist < best[2]:
+                best = (clat, clon, dist)
+        return best
 
-            cluster.centroid_history.append((now, clat, clon, dist))
-            h_cutoff = now - CENTROID_HISTORY_MIN * 60
-            cluster.centroid_history = [h for h in cluster.centroid_history if h[0] >= h_cutoff]
-            cluster.last_seen_ts = now
-            cluster.state = _classify_state(cluster)
+    # ── Decision: threat state machine ────────────────────────────────────────
 
-            new_zone = bisect.bisect(ZONES, dist)
-            old_zone = cluster.zone
-            can_alert = (now - cluster.last_alert_ts) >= CLUSTER_COOLDOWN_MIN * 60
+    def _evaluate(self, now: float) -> list:
+        # 1. Age out the strike buffer and refresh the nearest-activity sample.
+        self._strike_buffer = [s for s in self._strike_buffer
+                               if s[0] >= now - STRIKE_BUFFER_MIN * 60]
+        nearest = self._nearest_activity()
+        if nearest:
+            self._series.append((now, nearest[0], nearest[1], nearest[2]))
+            self._last_significant_ts = now
+        self._series = [s for s in self._series if s[0] >= now - THREAT_SERIES_MIN * 60]
 
-            if not cluster.initial_alert_sent and can_alert:
-                cluster.zone = new_zone
-                cluster.last_alert_ts = now
-                alerts.append(AlertEvent("initial", cluster, None))
-                alerted.add(cid)
-            elif can_alert and new_zone != old_zone:
-                approaching_zone = new_zone < old_zone
-                retreating_zone = new_zone > old_zone and cluster.state == "RETREATING"
-                if approaching_zone or retreating_zone:
-                    cluster.last_alert_ts = now
-                    alerts.append(AlertEvent("zone", cluster, old_zone))
-                    alerted.add(cid)
-                cluster.zone = new_zone
-            else:
-                cluster.zone = new_zone
+        # 2. Trend + approach confirmation streak.
+        trend = _classify_trend(self._series)
+        if nearest and trend == "APPROACHING":
+            self._approach_streak += 1
+        else:
+            self._approach_streak = 0
 
-            if (cid not in alerted
-                    and cluster.initial_alert_sent
-                    and cluster.state == "APPROACHING"
-                    and can_alert
-                    and (now - cluster.last_periodic_ts) >= PERIODIC_ALERT_MIN * 60):
-                cluster.last_alert_ts = now
-                cluster.last_periodic_ts = now
-                alerts.append(AlertEvent("periodic", cluster, None))
-                alerted.add(cid)
+        _, eta = _velocity_eta(self._series)
+        strikes = len(self._strike_buffer)
+        target = self._target_level(now, nearest, trend, eta, strikes)
 
-        for raw_label in unmatched_new:
-            clat, clon = new_centroids[raw_label]
-            dist = _distance_km(self.lat, self.lon, clat, clon)
-            cid = self._make_cluster_id(clat, clon)
-            cluster = StormCluster(
-                cluster_id=cid,
-                centroid_history=[(now, clat, clon, dist)],
-                state="UNKNOWN",
-                zone=bisect.bisect(ZONES, dist),
-                last_alert_ts=now,
-                last_periodic_ts=0.0,
-                initial_alert_sent=False,
-                all_clear_sent=False,
-                last_seen_ts=now,
-            )
-            self._clusters[cid] = cluster
-            alerts.append(AlertEvent("initial", cluster, None))
+        # 3. Emit on level change, or periodic re-alert while in WARNING.
+        if target != self._level:
+            return [self._make_alert(target, trend)]
+        if (target == LEVEL_WARNING
+                and (now - self._last_periodic_ts) >= PERIODIC_ALERT_MIN * 60):
+            return [self._make_alert(target, trend, periodic=True)]
+        return []
 
-        return alerts
+    def _target_level(self, now, nearest, trend, eta, strikes) -> int:
+        cur = self._level
+        if nearest is None:
+            # No current activity — de-escalate only with hysteresis on the quiet gap.
+            gap = now - self._last_significant_ts
+            if gap >= CLEAR_QUIET_MIN * 60:
+                return LEVEL_CLEAR
+            if cur == LEVEL_WARNING and gap >= DEESCALATE_MIN * 60:
+                return LEVEL_WATCH
+            return cur
 
-    def _make_cluster_id(self, lat: float, lon: float) -> str:
-        base = f"{round(lat, 1):.1f}:{round(lon, 1):.1f}"
-        if base not in self._clusters:
-            return base
-        n = 1
-        while f"{base}#{n}" in self._clusters:
-            n += 1
-        return f"{base}#{n}"
+        dist = nearest[2]
+        confirmed_warning = (
+            self._approach_streak >= WARNING_CONFIRM_POLLS
+            and strikes >= WARNING_MIN_STRIKES
+            and (dist <= WARNING_DIST_KM or (eta is not None and 0 < eta <= WARNING_ETA_MIN))
+        )
+        if confirmed_warning:
+            return LEVEL_WARNING
+        if cur == LEVEL_WARNING:
+            # Hold WARNING until the cell clearly pulls away (distance + hysteresis).
+            if dist > WARNING_DIST_KM + WARNING_HOLD_KM and trend != "APPROACHING":
+                return LEVEL_WATCH
+            return LEVEL_WARNING
+        if dist <= WATCH_DIST_KM:
+            return LEVEL_WATCH
+        return cur
+
+    def _make_alert(self, level: int, trend: str, periodic: bool = False) -> Alert:
+        if level == LEVEL_CLEAR:
+            text = self._fmt_clear()
+        elif level == LEVEL_WATCH:
+            text = self._fmt_watch(trend)
+        else:
+            text = self._fmt_warning(trend)
+        return Alert(level, text, periodic)
 
     # ── Alert dispatch ────────────────────────────────────────────────────────
 
-    async def _dispatch_alert(self, alert: AlertEvent, now: float) -> None:
-        cluster = alert.cluster
-        kind = alert.kind
-
-        if kind == "initial":
-            msg = self._fmt_initial(cluster)
-        elif kind == "zone":
-            msg = self._fmt_zone_change(cluster, alert.old_zone)
-        elif kind == "periodic":
-            msg = self._fmt_periodic(cluster)
-        elif kind == "all_clear":
-            msg = self._fmt_all_clear(cluster)
-        else:
-            return
-
+    async def _dispatch(self, alert: Alert, now: float) -> None:
         _LOGGER.info(
-            "[LiveMonitor] %s | kind=%s cluster=%s dist=%.1fkm state=%s",
-            self.name, kind, cluster.cluster_id,
-            cluster.centroid_history[-1][3] if cluster.centroid_history else 0,
-            cluster.state,
+            "[LiveMonitor] %s | level→%d periodic=%s streak=%d strikes=%d",
+            self.name, alert.level, alert.periodic,
+            self._approach_streak, len(self._strike_buffer),
         )
+        # send_telegram swallows its own exceptions and returns False on failure, so
+        # the state machine is advanced ONLY on confirmed delivery — a dropped alert
+        # is retried on the next poll instead of leaving the user out of sync.
         try:
-            # Promote the flags ONLY on confirmed delivery. send_telegram swallows
-            # its own exceptions and returns False on failure, so awaiting it never
-            # raises — we must check the return value, otherwise a rejected initial
-            # alert (e.g. HTML parse error) would still flip initial_alert_sent and
-            # let all_clear/periodic fire without the user ever seeing a warning.
-            ok = await self._send(msg)
-            if ok:
-                if kind == "initial":
-                    cluster.initial_alert_sent = True
-                elif kind == "all_clear":
-                    cluster.all_clear_sent = True
-            else:
-                _LOGGER.warning(
-                    "[LiveMonitor] '%s' alert kind=%s NOT delivered — flag not promoted, "
-                    "will retry next poll", self.name, kind,
-                )
+            ok = await self._send(alert.text)
         except Exception as e:
             _LOGGER.error("[LiveMonitor] '%s' send error: %s", self.name, e)
+            return
+        if not ok:
+            _LOGGER.warning(
+                "[LiveMonitor] '%s' alert NOT delivered — state held, retry next poll",
+                self.name,
+            )
+            return
+        if alert.periodic:
+            self._last_periodic_ts = now
+            return
+        self._level = alert.level
+        if alert.level == LEVEL_WARNING:
+            self._last_periodic_ts = now
+        elif alert.level == LEVEL_CLEAR:
+            self._series.clear()
+            self._approach_streak = 0
 
     # ── Message formatters ────────────────────────────────────────────────────
 
-    def _fmt_initial(self, cluster: StormCluster) -> str:
-        dist, az, dir_lbl = self._cluster_az_dir(cluster)
-        loc = html.escape(self.location or self.name)
-        zone_lbl = self._zone_label(cluster.zone)
-        state_lbl = self._state_label(cluster.state)
-        if self.language == "it":
-            lines = [f"⚡ <b>Temporale rilevato — {loc}</b>",
-                     f"📍 Distanza: <b>{dist:.1f} km</b> a {dir_lbl} ({az:.0f}°)",
-                     f"🏷 Zona: {zone_lbl}",
-                     f"🟡 Stato: {state_lbl}"]
-        else:
-            lines = [f"⚡ <b>Storm detected — {loc}</b>",
-                     f"📍 Distance: <b>{dist:.1f} km</b> to {dir_lbl} ({az:.0f}°)",
-                     f"🏷 Zone: {zone_lbl}",
-                     f"🟡 Status: {state_lbl}"]
-        lines.append(f"🕐 {self._now_str()}")
-        return "\n".join(lines)
+    def _threat_dir(self) -> tuple:
+        """Return (dist_km, azimuth, direction_label) of the latest threat sample."""
+        if not self._series:
+            return 0.0, 0.0, _direction(0.0, self.language)
+        last = self._series[-1]
+        az = _azimuth_deg(self.lat, self.lon, last[1], last[2])
+        return last[3], az, _direction(az, self.language)
 
-    def _fmt_zone_change(self, cluster: StormCluster, old_zone: int) -> str:
-        dist, az, dir_lbl = self._cluster_az_dir(cluster)
-        vel, eta = _compute_velocity_eta(cluster)
-        loc = html.escape(self.location or self.name)
-        zone_lbl = self._zone_label(cluster.zone)
-        approaching = cluster.zone < old_zone
+    def _trend_phrase(self, trend: str) -> str:
         if self.language == "it":
-            header = (f"🔴 <b>Temporale in avvicinamento — {loc}</b>"
-                      if approaching else
-                      f"🟢 <b>Temporale in allontanamento — {loc}</b>")
-            lines = [header,
-                     f"📍 Distanza: <b>{dist:.1f} km</b> a {dir_lbl} ({az:.0f}°)",
-                     f"🏷 Zona: {zone_lbl}"]
-            if vel:
-                if approaching and eta:
-                    lines.append(f"🚀 ~{vel:.0f} km/h — arrivo stimato: {eta} min")
-                else:
-                    lines.append(f"🚀 ~{vel:.0f} km/h")
-        else:
-            header = (f"🔴 <b>Storm approaching — {loc}</b>"
-                      if approaching else
-                      f"🟢 <b>Storm retreating — {loc}</b>")
-            lines = [header,
-                     f"📍 Distance: <b>{dist:.1f} km</b> to {dir_lbl} ({az:.0f}°)",
-                     f"🏷 Zone: {zone_lbl}"]
-            if vel:
-                if approaching and eta:
-                    lines.append(f"🚀 ~{vel:.0f} km/h — estimated arrival: {eta} min")
-                else:
-                    lines.append(f"🚀 ~{vel:.0f} km/h")
-        lines.append(f"🕐 {self._now_str()}")
-        return "\n".join(lines)
+            return {"APPROACHING": "In avvicinamento", "RETREATING": "In allontanamento",
+                    "STATIONARY": "Stazionario", "UNKNOWN": "In osservazione"}.get(trend, "")
+        return {"APPROACHING": "Approaching", "RETREATING": "Moving away",
+                "STATIONARY": "Stationary", "UNKNOWN": "Watching"}.get(trend, "")
 
-    def _fmt_periodic(self, cluster: StormCluster) -> str:
-        dist, az, dir_lbl = self._cluster_az_dir(cluster)
-        vel, eta = _compute_velocity_eta(cluster)
+    def _fmt_warning(self, trend: str) -> str:
+        dist, az, dir_lbl = self._threat_dir()
+        vel, eta = _velocity_eta(self._series)
         loc = html.escape(self.location or self.name)
         strikes = len(self._strike_buffer)
+        approaching = trend == "APPROACHING"
         if self.language == "it":
-            lines = [f"🔴 <b>Temporale ancora in avvicinamento — {loc}</b>",
-                     f"📍 Distanza: <b>{dist:.1f} km</b> a {dir_lbl} ({az:.0f}°)"]
-            if vel:
-                if eta:
-                    lines.append(f"🚀 ~{vel:.0f} km/h — arrivo stimato: {eta} min")
-                else:
-                    lines.append(f"🚀 ~{vel:.0f} km/h")
-            lines.append(f"🔢 Colpi ultimi {STRIKE_BUFFER_MIN} min: {strikes}")
+            lines = [f"🔴 <b>ALLERTA temporale — {loc}</b>"]
+            lead = "In avvicinamento" if approaching else "Nelle immediate vicinanze"
+            lines.append(f"📍 {lead}: <b>{dist:.1f} km</b> a {dir_lbl} ({az:.0f}°)")
+            if vel and approaching and eta:
+                lines.append(f"🚀 ~{vel:.0f} km/h — arrivo stimato: {eta} min")
+            elif vel:
+                lines.append(f"🚀 ~{vel:.0f} km/h")
+            lines.append(f"🔢 Fulmini ultimi {STRIKE_BUFFER_MIN} min: {strikes}")
         else:
-            lines = [f"🔴 <b>Storm still approaching — {loc}</b>",
-                     f"📍 Distance: <b>{dist:.1f} km</b> to {dir_lbl} ({az:.0f}°)"]
-            if vel:
-                if eta:
-                    lines.append(f"🚀 ~{vel:.0f} km/h — estimated arrival: {eta} min")
-                else:
-                    lines.append(f"🚀 ~{vel:.0f} km/h")
+            lines = [f"🔴 <b>Storm WARNING — {loc}</b>"]
+            lead = "Approaching" if approaching else "In the immediate area"
+            lines.append(f"📍 {lead}: <b>{dist:.1f} km</b> to {dir_lbl} ({az:.0f}°)")
+            if vel and approaching and eta:
+                lines.append(f"🚀 ~{vel:.0f} km/h — estimated arrival: {eta} min")
+            elif vel:
+                lines.append(f"🚀 ~{vel:.0f} km/h")
             lines.append(f"🔢 Strikes (last {STRIKE_BUFFER_MIN} min): {strikes}")
         lines.append(f"🕐 {self._now_str()}")
         return "\n".join(lines)
 
-    def _fmt_all_clear(self, cluster: StormCluster) -> str:
+    def _fmt_watch(self, trend: str) -> str:
+        dist, az, dir_lbl = self._threat_dir()
+        loc = html.escape(self.location or self.name)
+        strikes = len(self._strike_buffer)
+        phrase = self._trend_phrase(trend)
+        if self.language == "it":
+            lines = [f"🟡 <b>Temporale in zona — {loc}</b>",
+                     f"📍 Attività a <b>{dist:.1f} km</b> a {dir_lbl} ({az:.0f}°)",
+                     f"📊 {phrase}",
+                     f"🔢 Fulmini ultimi {STRIKE_BUFFER_MIN} min: {strikes}"]
+        else:
+            lines = [f"🟡 <b>Storm in the area — {loc}</b>",
+                     f"📍 Activity at <b>{dist:.1f} km</b> to {dir_lbl} ({az:.0f}°)",
+                     f"📊 {phrase}",
+                     f"🔢 Strikes (last {STRIKE_BUFFER_MIN} min): {strikes}"]
+        lines.append(f"🕐 {self._now_str()}")
+        return "\n".join(lines)
+
+    def _fmt_clear(self) -> str:
         loc = html.escape(self.location or self.name)
         if self.language == "it":
-            return (f"✅ <b>Temporale dissolto — {loc}</b>\n"
-                    f"🔇 Nessun fulmine negli ultimi {CLUSTER_GONE_MIN} min\n"
+            return (f"✅ <b>Cessato allarme temporale — {loc}</b>\n"
+                    f"🔇 Nessun fulmine da {CLEAR_QUIET_MIN} min\n"
                     f"🕐 {self._now_str()}")
-        return (f"✅ <b>Storm cleared — {loc}</b>\n"
-                f"🔇 No lightning in the last {CLUSTER_GONE_MIN} min\n"
+        return (f"✅ <b>Storm threat cleared — {loc}</b>\n"
+                f"🔇 No lightning for {CLEAR_QUIET_MIN} min\n"
                 f"🕐 {self._now_str()}")
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _cluster_az_dir(self, cluster: StormCluster) -> tuple:
-        if not cluster.centroid_history:
-            return 0.0, 0.0, "N"
-        last = cluster.centroid_history[-1]
-        az = _azimuth_deg(self.lat, self.lon, last[1], last[2])
-        return last[3], az, _direction(az, self.language)
-
-    def _zone_label(self, zone_idx: int) -> str:
-        idx = min(zone_idx, 3)
-        # &lt;/&gt; entities: these labels are inserted into HTML (parse_mode=HTML)
-        # Telegram messages; a raw '<' is read as a malformed tag and the whole
-        # message is rejected with "can't parse entities".
-        if self.language == "it":
-            return ["Zona pericolo (&lt;15 km)", "Zona vicina (15–30 km)",
-                    "Zona intermedia (30–50 km)", "Zona distante (&gt;50 km)"][idx]
-        return ["Danger zone (&lt;15 km)", "Near zone (15–30 km)",
-                "Intermediate zone (30–50 km)", "Distant zone (&gt;50 km)"][idx]
-
-    def _state_label(self, state: str) -> str:
-        if self.language == "it":
-            return {"APPROACHING": "In avvicinamento", "RETREATING": "In allontanamento",
-                    "STATIONARY": "Stazionario", "UNKNOWN": "Non determinato"}.get(state, state)
-        return {"APPROACHING": "Approaching", "RETREATING": "Retreating",
-                "STATIONARY": "Stationary", "UNKNOWN": "Undetermined"}.get(state, state)
 
     def _now_str(self) -> str:
         try:

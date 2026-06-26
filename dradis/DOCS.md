@@ -540,60 +540,62 @@ There is no cron field and no "run now" action — the monitor is always-on when
 
 #### Lightning alert
 
-Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. All incoming strikes within `radius_km` are collected in a **15-minute sliding window buffer**. Every 2 minutes a polling task runs **pure-Python DBSCAN** (eps = 8 km, min_samples = 2) on the buffer to identify distinct storm cells, tracks each cell's centroid over a 20-minute rolling history, and classifies each cell as APPROACHING / RETREATING / STATIONARY / UNKNOWN. Multiple simultaneous storms in the same area are tracked independently.
+Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. All incoming strikes within `radius_km` are collected in a **15-minute sliding window buffer**. Every 2 minutes a polling task runs **pure-Python DBSCAN** (eps = 8 km, min_samples = 2) to identify storm cells, then reduces all activity to a **single scalar** — the distance of the *nearest significant cell* — appended to a **30-minute series**. That series (not per-cell centroids) is the single source of truth for the approach trend, velocity and ETA, so it does not reset when DBSCAN re-labels cells. A single **threat state machine** per monitor turns that into one coherent thread per storm episode.
 
-**Storm states:**
+**Threat levels:**
 
-| State | Condition |
-|-------|-----------|
-| APPROACHING | Last 3 centroid distances all decreasing by > 0.5 km/sample |
-| RETREATING | Last 3 centroid distances all increasing by > 0.5 km/sample |
-| STATIONARY | Trend below threshold |
-| UNKNOWN | Fewer than 3 centroid history samples (insufficient data) |
+| Level | Meaning |
+|-------|---------|
+| 🟢 CLEAR | No significant activity, or quiet for ≥ 25 min |
+| 🟡 WATCH | Significant activity within 50 km, approach not yet confirmed |
+| 🔴 WARNING | Confirmed approach (≥ 2 approaching polls, ≥ 3 strikes) and close (≤ 15 km) or short ETA (≤ 30 min) |
 
-**Alert triggers (zone-based, not time-based):**
+Trend over the series is classified as APPROACHING / RETREATING / STATIONARY / UNKNOWN (last 3 samples, > 0.5 km/sample threshold) and shown in the WATCH message.
+
+**Alert triggers (level-based):**
 
 | Event | Trigger | Icon |
 |-------|---------|------|
-| Initial detection | New storm cell appears within radius | ⚡ |
-| Zone approaching | Cell crosses a zone boundary inward (<15 / 15–30 / 30–50 km) | 🔴 |
-| Zone retreating | Cell crosses a zone boundary outward (state = RETREATING) | 🟢 |
-| Periodic re-alert | Every 10 min while still APPROACHING | 🔴 |
-| All clear | No strikes for 15 consecutive minutes | ✅ |
+| Watch | First significant activity within 50 km | 🟡 |
+| Warning | Approach confirmed and close / short-ETA | 🔴 |
+| Periodic re-alert | Every 10 min while in WARNING | 🔴 |
+| De-escalation | Storm weakens (12-min gap) → drops WARNING to WATCH | 🟡 |
+| All clear | No significant activity for 25 consecutive minutes | ✅ |
 
-Hard cooldown of 5 min between any two alerts for the same cluster.
+Alerts fire **only on level change** (plus the periodic WARNING re-alert). Hysteresis on both escalation (confirmation polls) and de-escalation (quiet gap) prevents the old clear ↔ approaching flapping.
 
 **Behaviour:**
 1. On app startup (or save), if the monitor is enabled: a persistent MQTT task and a 2-minute polling task are created.
 2. The MQTT task connects to the broker, subscribes to geohash topics, and fills the strike buffer.
-3. Every 2 minutes: DBSCAN clusters the buffer, matches clusters to tracked cells, updates centroid history, and fires any pending alerts.
-4. On disconnect, waits 15 seconds and reconnects automatically.
+3. Every 2 minutes: `_evaluate` runs DBSCAN, refreshes the nearest-activity series, computes the target threat level, and fires an alert on any level change.
+4. The state machine advances **only on a confirmed Telegram send**; a dropped alert is retried on the next poll.
+5. On disconnect, waits 15 seconds and reconnects automatically.
 
-**Alert format — initial detection:**
+**Alert format — watch:**
 
 ```
-⚡ Storm detected — Bacoli
-📍 Distance: 48.2 km to NW (315°)
-🏷 Zone: Distant zone (>50 km)
-🟡 Status: Undetermined
+🟡 Storm in the area — Bacoli
+📍 Activity at 28.3 km to NW (315°)
+📊 Approaching
+🔢 Strikes (last 15 min): 9
 🕐 14:20
 ```
 
-**Alert format — zone approaching:**
+**Alert format — warning:**
 
 ```
-🔴 Storm approaching — Bacoli
-📍 Distance: 28.3 km to NW (315°)
-🏷 Zone: Near zone (15–30 km)
-🚀 ~42 km/h — estimated arrival: 40 min
+🔴 Storm WARNING — Bacoli
+📍 Approaching: 12.0 km to NW (315°)
+🚀 ~42 km/h — estimated arrival: 18 min
+🔢 Strikes (last 15 min): 24
 🕐 14:32
 ```
 
 **Alert format — all clear:**
 
 ```
-✅ Storm cleared — Bacoli
-🔇 No lightning in the last 15 min
+✅ Storm threat cleared — Bacoli
+🔇 No lightning for 25 min
 🕐 15:10
 ```
 

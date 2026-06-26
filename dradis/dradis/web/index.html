@@ -3689,7 +3689,7 @@ function renderLiveMonitorForm(monitor) {
   }
 
   const _TYPE_DESCS_LIVE = {
-    lightning:        "Persistent MQTT listener on Blitzortung. Strikes within radius buffered 15 min; DBSCAN clustering (eps=8 km) every 2 min identifies storm cells and tracks each centroid. Zone-based alerts: initial detection · zone crossing (<15 / 15–30 / 30–50 km) · periodic re-alert every 10 min if approaching · ✅ all-clear after 15 min of silence. Multi-storm support. No LLM, no cron.",
+    lightning:        "Persistent MQTT listener on Blitzortung. Strikes within radius buffered 15 min; DBSCAN (eps=8 km) every 2 min finds storm cells, then all activity is reduced to one scalar — the nearest cell's distance — tracked as a 30-min series for trend/ETA. A single threat state machine sends 🟡 WATCH → 🔴 WARNING → ✅ CLEAR: alerts only on level change (+10-min periodic in WARNING), WARNING needs a confirmed approach, CLEAR needs 25 min of silence (hysteresis, no flapping). No LLM, no cron.",
     seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
     football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };

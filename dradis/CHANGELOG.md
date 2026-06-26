@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## [2.26.0] - 2026-06-26
+
+- **Feat — Lightning live monitor: single location-level threat state machine (replaces per-cluster zone alerts)**: the monitor no longer fires one alert per DBSCAN cell. The old design split a single storm front into several short-lived clusters, each spawning its own "Storm detected — Undetermined" alert with jumping distance/direction, and intermittent strikes triggered repeated all-clear ↔ approaching whiplash. The user could not tell whether a storm was actually coming.
+  - **What changed**: DBSCAN and the 15-min strike buffer stay as the *perception* layer, but all activity is now reduced to ONE scalar per poll — the distance of the **nearest significant cell** — tracked as a 30-min series. That series (not per-cluster centroids) is the single source of truth for the approach trend, velocity and ETA, so it no longer resets when DBSCAN re-labels cells.
+  - **One threat state machine per monitor**: 🟢 CLEAR · 🟡 WATCH · 🔴 WARNING. Alerts fire only on **level changes** (plus a 10-min periodic re-alert while in WARNING). Escalation to 🔴 requires a **confirmed** approach (≥2 consecutive approaching polls, ≥3 strikes, and close/short-ETA); de-escalation to ✅ requires a **25-min quiet** period, stepping 🔴 → 🟡 → ✅ with hysteresis so brief strike gaps no longer cause clear/re-alert flapping.
+  - **No more "Undetermined" notifications**: the first useful message is 🟡 WATCH; 🔴 WARNING only after the trend is confirmed. Removed per-cluster `StormCluster` matching, `AlertEvent`, zone-crossing alerts and the four old formatters; replaced with `_evaluate` / `_target_level` and three level formatters (`_fmt_warning` / `_fmt_watch` / `_fmt_clear`). Delivery robustness from 2.25.1 is preserved: the state machine advances only on a confirmed Telegram send.
+
 ## [2.25.1] - 2026-06-23
 
 - **Fix — Lightning live monitor: "storm cleared" / "still approaching" without the initial detection alert (real root cause)**: two compounding bugs.
