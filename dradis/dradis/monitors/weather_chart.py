@@ -230,6 +230,11 @@ def _generate_single_chart(
         else:
             ax.plot(times, vals, color=color, linewidth=2.2, label=mlabel, alpha=0.95)
 
+    # Percentage variables are bounded 0–100; pin the axis so bars are not
+    # auto-scaled to the data max (which would exaggerate low probabilities).
+    if unit == "%":
+        ax.set_ylim(0, 100)
+
     ylabel = f"{label} ({unit})" if unit else label
     ax.set_ylabel(ylabel, color="#9e9e9e", fontsize=10)
 
