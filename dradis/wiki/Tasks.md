@@ -4,9 +4,22 @@ LLM Scheduled Tasks let you automate recurring DRADIS actions on a cron schedule
 
 ## How It Works
 
-When a task fires, its **Instructions** field is sent to the DRADIS agent exactly as if you had typed them in Telegram. The agent uses the active model and all enabled sub-agents (Weather, Web Search, Google Calendar, Gmail, Google Tasks). The result is delivered to your Telegram chat with a label identifying the task name.
+When a task fires, its **Instructions** field is sent to the DRADIS agent exactly as if you had typed them in Telegram. DRADIS runs as a single agent on the main model with the **tools** you selected for the task, and calls whichever ones it needs. The result is delivered to your Telegram chat with a label identifying the task name.
 
 Cron jobs reload immediately on save/delete — no add-on restart required.
+
+## Tool selection & the Groq 8K limit (v3.0)
+
+On the Groq free tier the limit is **8000 tokens-per-minute**, and every tool schema you attach adds ~1000 tokens to each request. So the way to keep a task under the limit is to attach only the tools it needs.
+
+Each task has a **Tools** setting:
+
+| Mode | Behavior |
+|------|----------|
+| **All available tools** (default) | Attaches every enabled + authenticated tool. |
+| **Selected tools** | Tick exactly the tools the task needs, grouped by capability. |
+
+For example, a *mail → calendar* task should select just `get_unread_emails` and `create_calendar_event`. A completion cap (**Settings → DRADIS → Max completion tokens**, default 2048) is also applied. Use **Settings → DRADIS → TPM probe** (🔬) to see how many prompt tokens the current model costs per tool.
 
 ## Creating a Task
 

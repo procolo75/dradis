@@ -57,28 +57,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history_enabled = settings.get("history_enabled", True)
     history_depth   = settings.get("history_depth", 2)
 
-    question      = update.message.text
-    system_prompt = _state.build_system_prompt()
-    prompt        = _state.build_context(question) if history_enabled else question
+    question = update.message.text
+    model    = settings.get("model", _state.SETTINGS_DEFAULTS["model"])
+    history  = _state.history_messages() if history_enabled else None
 
-    model    = settings.get("model",    _state.SETTINGS_DEFAULTS["model"])
-    provider = settings.get("provider", _state.SETTINGS_DEFAULTS["provider"])
-    members  = _state._build_members(settings)
-    executor = _state._build_executor(system_prompt, model, provider, members, settings)
-    print(f"[DRADIS] model: {model} | members: {[m.name for m in members]}")
-
-    response, used_fallback, error = await _state._run_with_fallback(
-        executor         = executor,
-        prompt           = prompt,
-        settings         = settings,
-        system_prompt    = system_prompt,
-        primary_model    = model,
-        primary_provider = provider,
-        context_label    = "handle_message",
+    # Chat gets all available tools; the single agent decides which to call.
+    result, used_fallback, error, fb_reason = await _state.run_dradis(
+        question, settings, selected=None, history=history, context_label="chat",
     )
 
     if error is not None:
-        fb_model_id = _state._apply_fallback_settings(settings).get("model", model) if used_fallback else model
+        fb_model_id = _state._apply_fallback_settings(settings).get("model", model)
         if used_fallback:
             err_msg = (
                 f"❌ Both primary (<code>{html.escape(model)}</code>) and "
@@ -95,25 +84,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if used_fallback:
-        await _state._send_error_telegram(_state._build_fallback_used_msg(settings, model))
+        await _state._send_error_telegram(_state._fallback_msg(fb_reason))
 
-    member_responses = _state._collect_member_responses(response)
-    text = (response.content or "").strip()
+    text   = (result.content or "").strip()
+    footer = _state.token_footer(settings, result)
+    footer = f"\n\n<i>{footer}</i>" if footer else ""
 
     if history_enabled:
         _state.save_turn("user", question, history_depth)
         _state.save_turn("assistant", text, history_depth)
 
-    agents_label = _state._agents_label(member_responses)
-
     if text:
         await update.message.reply_text(
-            _state.md_to_html(text) + f"\n\n<i>{agents_label}</i>",
+            _state.md_to_html(text) + footer,
             parse_mode=ParseMode.HTML,
         )
     else:
         await update.message.reply_text(
-            f"⚠️ Model <code>{html.escape(model)}</code> returned no text.\n\n<i>{agents_label}</i>",
+            f"⚠️ Model <code>{html.escape(model)}</code> returned no text.{footer}",
             parse_mode=ParseMode.HTML,
         )
 
@@ -189,6 +177,30 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"<b>DRADIS Commands:</b>\n\n{lines}", parse_mode=ParseMode.HTML)
 
 
+# ── List helpers (shared by /tasks, /monitors, /hamonitors, /manage) ──────────
+
+def _by_name(items: list) -> list:
+    """Sort a list of config dicts alphabetically by name (case-insensitive)."""
+    return sorted(items, key=lambda x: (x.get("name") or "").lower())
+
+
+def _monitor_detail(m: dict) -> str:
+    """Short parenthetical detail for a scheduled monitor (area/location)."""
+    if m.get("type") == "seismic":
+        return m.get("seismic_area", "?")
+    return m.get("location", "?")
+
+
+def _live_monitor_detail(m: dict) -> str:
+    """Short parenthetical detail for a live monitor."""
+    t = m.get("type")
+    if t == "seismic":
+        return ", ".join(m.get("areas", [])) or "—"
+    if t == "football_betting":
+        return "⚽ live"
+    return m.get("location", "?")
+
+
 async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != _state.ALLOWED_CHAT_ID:
         return
@@ -197,7 +209,7 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No tasks configured. Add tasks from the Web UI.")
         return
     keyboard = []
-    for t in tasks:
+    for t in _by_name(tasks):
         badge = "✅" if t.get("enabled") else "⏸"
         keyboard.append([InlineKeyboardButton(f"{badge} {t['name']}", callback_data=f"task:{t['id']}")])
     await update.message.reply_text(
@@ -215,23 +227,16 @@ async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No monitors configured. Add monitors from the Web UI.")
         return
     keyboard = []
-    for m in scheduled:
+    for m in _by_name(scheduled):
         badge  = "✅" if m.get("enabled") else "⏸"
-        detail = m.get("seismic_area", "?") if m.get("type") == "seismic" else m.get("location", "?")
         keyboard.append([InlineKeyboardButton(
-            f"{badge} {m['name']} ({detail})",
+            f"{badge} {m['name']} ({_monitor_detail(m)})",
             callback_data=f"monitor:{m['id']}",
         )])
-    for m in live:
+    for m in _by_name(live):
         status = _live_status_dispatcher(m["id"])
         badge  = "🟢" if status == "running" else "🔴"
-        if m.get("type") == "seismic":
-            areas = ", ".join(m.get("areas", [])) or "—"
-            label = f"{badge} {m['name']} ({areas})"
-        elif m.get("type") == "football_betting":
-            label = f"{badge} {m['name']} (⚽ live)"
-        else:
-            label = f"{badge} {m['name']} ({m.get('location', '?')})"
+        label  = f"{badge} {m['name']} ({_live_monitor_detail(m)})"
         keyboard.append([InlineKeyboardButton(label, callback_data=f"live:{m['id']}")])
     sections = []
     if scheduled:
@@ -252,7 +257,7 @@ async def cmd_ha_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No HA monitors configured. Add them from the Web UI.")
         return
     keyboard = []
-    for m in ha_monitors:
+    for m in _by_name(ha_monitors):
         status = ha_monitor_manager.status(m["id"])
         badge  = "🟢" if status == "running" else "🔴"
         keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"ha:{m['id']}")])
@@ -376,22 +381,22 @@ def _build_manage_keyboard() -> tuple[str, InlineKeyboardMarkup]:
     keyboard = []
     if tasks:
         keyboard.append([InlineKeyboardButton("── 📋 Tasks ──", callback_data="mgmt:noop")])
-        for t in tasks:
+        for t in _by_name(tasks):
             badge = "✅" if t.get("enabled") else "⏸"
             keyboard.append([InlineKeyboardButton(f"{badge} {t['name']}", callback_data=f"mgmt:task:{t['id']}")])
     if monitors:
         keyboard.append([InlineKeyboardButton("── 🌩 Monitors ──", callback_data="mgmt:noop")])
-        for m in monitors:
+        for m in _by_name(monitors):
             badge = "✅" if m.get("enabled") else "⏸"
-            keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"mgmt:monitor:{m['id']}")])
+            keyboard.append([InlineKeyboardButton(f"{badge} {m['name']} ({_monitor_detail(m)})", callback_data=f"mgmt:monitor:{m['id']}")])
     if live:
         keyboard.append([InlineKeyboardButton("── ⚡ Live ──", callback_data="mgmt:noop")])
-        for m in live:
+        for m in _by_name(live):
             badge = "✅" if m.get("enabled") else "⏸"
-            keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"mgmt:live:{m['id']}")])
+            keyboard.append([InlineKeyboardButton(f"{badge} {m['name']} ({_live_monitor_detail(m)})", callback_data=f"mgmt:live:{m['id']}")])
     if ha:
         keyboard.append([InlineKeyboardButton("── 🏠 HA ──", callback_data="mgmt:noop")])
-        for m in ha:
+        for m in _by_name(ha):
             badge = "✅" if m.get("enabled") else "⏸"
             keyboard.append([InlineKeyboardButton(f"{badge} {m['name']}", callback_data=f"mgmt:ha:{m['id']}")])
     total = len(tasks) + len(monitors) + len(live) + len(ha)

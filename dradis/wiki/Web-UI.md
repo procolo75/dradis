@@ -20,6 +20,7 @@ Runtime settings for the main DRADIS agent. Changes are saved to `/data/dradis_s
 | Startup message | `✅ DRADIS online and ready.` | Telegram message sent when the add-on starts. |
 | Conversation history | `true` | Prepend the last N exchanges as context to each request. |
 | Conversation history depth | `2` | Number of past exchanges kept in context (resets on restart). |
+| Max completion tokens | `2048` | Caps the model reply (`max_tokens`) so prompt+reply fit the model context window. Keep at 2048 for the Groq 8K free tier. |
 | Timezone | `UTC` | Timezone used to interpret all cron expressions for tasks and monitors. |
 
 **Model selection by provider:**

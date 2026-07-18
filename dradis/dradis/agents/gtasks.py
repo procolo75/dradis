@@ -1,9 +1,6 @@
 import asyncio
 from pathlib import Path
 
-from core import create_agent, _now_str
-from web.store import SETTINGS_DEFAULTS
-
 GTASKS_TOKEN_FILE   = Path("/data/google_tasks_token.json")
 GTASKS_SCOPES       = ["https://www.googleapis.com/auth/tasks"]
 GTASKS_REDIRECT_URI = "http://localhost:8099/gtasksauth/callback"
@@ -162,17 +159,9 @@ def _sync_update_task(task_list: str, task_id: str, title: str, notes: str) -> s
     return "Task updated."
 
 
-def create_gtasks_agent(settings: dict):
-    tz_name      = settings.get("timezone", "UTC") or "UTC"
+def gtasks_tools(settings: dict) -> list[dict]:
+    """Return the Google Tasks tool specs."""
     _not_auth_msg = "Google Tasks not authenticated. Send /gtasksauth to connect."
-
-    base_prompt = (
-        f"It is {_now_str(tz_name)} ({tz_name}). "
-        "You are a Google Tasks assistant. Manage the user's task list clearly and concisely "
-        "in the same language the user used. Always show task IDs in brackets so the user "
-        "can reference them for future operations. Never show completed tasks when listing. "
-        + settings.get("gtasks_instructions", "")
-    )
 
     async def list_tasks(task_list: str | None = "@default") -> str:
         """List all open tasks in a Google Tasks list.
@@ -242,11 +231,20 @@ def create_gtasks_agent(settings: dict):
             return _not_auth_msg
         return result
 
-    return create_agent(
-        system_prompt=base_prompt,
-        model=settings.get("gtasks_model") or settings.get("model", SETTINGS_DEFAULTS["model"]),
-        provider=settings.get("gtasks_provider") or settings.get("provider", SETTINGS_DEFAULTS["provider"]),
-        tools=[list_tasks, create_task, complete_task, delete_task, update_task],
-        name="gtasks",
-        tool_call_limit=4,
-    )
+    return [
+        {"name": "list_tasks", "fn": list_tasks,
+         "description": "List all open tasks in Google Tasks. Call this when the user wants to see, check or review their tasks or to-do list. Never shows completed tasks.",
+         "parameters": {"type": "object", "properties": {"task_list": {"type": "string", "description": "Task list id, default '@default'."}}, "required": []}},
+        {"name": "create_task", "fn": create_task,
+         "description": "Create a new task in Google Tasks. Call this to add, create or note down a task or to-do item. 'due' is optional, YYYY-MM-DD.",
+         "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "notes": {"type": "string"}, "due": {"type": "string"}, "task_list": {"type": "string"}}, "required": ["title"]}},
+        {"name": "complete_task", "fn": complete_task,
+         "description": "Mark a task as completed. First call list_tasks to retrieve the task ID, then call this with that ID.",
+         "parameters": {"type": "object", "properties": {"task_id": {"type": "string"}, "task_list": {"type": "string"}}, "required": ["task_id"]}},
+        {"name": "delete_task", "fn": delete_task,
+         "description": "Delete a task permanently (not just complete it). First call list_tasks to retrieve the task ID.",
+         "parameters": {"type": "object", "properties": {"task_id": {"type": "string"}, "task_list": {"type": "string"}}, "required": ["task_id"]}},
+        {"name": "update_task", "fn": update_task,
+         "description": "Update the title or notes of an existing task. First call list_tasks to retrieve the task ID.",
+         "parameters": {"type": "object", "properties": {"task_id": {"type": "string"}, "title": {"type": "string"}, "notes": {"type": "string"}, "task_list": {"type": "string"}}, "required": ["task_id"]}},
+    ]

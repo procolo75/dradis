@@ -318,7 +318,7 @@
 
     <div class="nav-section collapsed" id="section-agents">
       <span class="nav-section-label">
-        <span>▾ Agents</span>
+        <span>▾ Tools</span>
       </span>
       <ul class="nav-list" id="sidebar-agents">
         <li class="nav-item" data-panel="websearch" id="nav-websearch">
@@ -328,10 +328,6 @@
         <li class="nav-item" data-panel="weather" id="nav-weather">
           <span class="nav-dot" id="weather-dot"></span>
           <span class="nav-label">Weather</span>
-        </li>
-        <li class="nav-item" data-panel="voice" id="nav-voice">
-          <span class="nav-dot" id="voice-dot"></span>
-          <span class="nav-label">Voice</span>
         </li>
         <li class="nav-item" data-panel="gcal" id="nav-gcal">
           <span class="nav-dot" id="gcal-dot"></span>
@@ -345,19 +341,15 @@
           <span class="nav-dot" id="gtasks-dot"></span>
           <span class="nav-label">Google Tasks</span>
         </li>
-        <!-- custom agents injected by renderSidebarAgents() -->
-      </ul>
-    </div>
-
-    <div class="nav-section collapsed" id="section-tools">
-      <span class="nav-section-label">
-        <span>▾ Tools</span>
-      </span>
-      <ul class="nav-list">
         <li class="nav-item" data-panel="tools" id="nav-tools">
           <span class="nav-dot" id="read-url-dot"></span>
           <span class="nav-label">URL Fetch</span>
         </li>
+        <li class="nav-item" data-panel="voice" id="nav-voice">
+          <span class="nav-dot" id="voice-dot"></span>
+          <span class="nav-label">Voice (transcription)</span>
+        </li>
+        <!-- custom entries injected by renderSidebarAgents() -->
       </ul>
     </div>
 
@@ -465,6 +457,21 @@
         </div>
 
         <div class="form-group">
+          <label for="s-max-tokens">Max completion tokens <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">(caps the reply so prompt+reply fit the model window; 2048 is safe for Groq 8K)</span></label>
+          <input type="number" id="s-max-tokens" min="256" max="32000" step="256" style="width:120px">
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Log token usage <span style="font-weight:400;color:var(--text-muted)">— append input/output tokens to every chat & task reply</span></span>
+            <label class="toggle">
+              <input type="checkbox" id="s-token-usage">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
           <label for="s-timezone">Timezone for scheduled tasks</label>
           <select id="s-timezone" style="max-width:320px">
             <option value="UTC">UTC</option>
@@ -554,7 +561,7 @@
     <!-- Panel: Web Search -->
     <div class="panel" id="panel-websearch">
       <div class="form-card">
-        <h2>Web Search Sub-agent</h2>
+        <h2>Web Search</h2>
 
         <div class="form-group">
           <div class="toggle-row">
@@ -656,7 +663,7 @@
     <!-- Panel: Weather -->
     <div class="panel" id="panel-weather">
       <div class="form-card">
-        <h2>Weather Sub-agent</h2>
+        <h2>Weather</h2>
 
         <div class="form-group">
           <div class="toggle-row">
@@ -728,7 +735,7 @@
     <!-- Panel: Voice -->
     <div class="panel" id="panel-voice">
       <div class="form-card">
-        <h2>Voice Sub-agent</h2>
+        <h2>Voice — message transcription</h2>
 
         <div id="voice-key-warning" style="display:none; background:var(--warn-bg,#fffbe6); border:1px solid var(--warn-border,#ffe58f); border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:0.85rem; color:var(--warn-text,#7c5a00);">
           ⚠️ <strong>groq_api_key</strong> not configured — Voice agent cannot be enabled. Set it in the app <strong>Configuration</strong> tab and restart.
@@ -1366,6 +1373,8 @@ async function loadSettings() {
   document.getElementById("s-startup").value         = s.startup_message    || "";
   document.getElementById("s-history").checked       = s.history_enabled    !== false;
   document.getElementById("s-history-depth").value   = s.history_depth      ?? 2;
+  document.getElementById("s-max-tokens").value      = s.max_tokens         ?? 2048;
+  document.getElementById("s-token-usage").checked   = s.token_usage_enabled === true;
   const tzVal = s.timezone || "UTC";
   const tzSel = document.getElementById("s-timezone");
   if (![...tzSel.options].some(o => o.value === tzVal)) {
@@ -1676,6 +1685,8 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     startup_message:    document.getElementById("s-startup").value.trim(),
     history_enabled:    document.getElementById("s-history").checked,
     history_depth:      parseInt(document.getElementById("s-history-depth").value, 10) || 2,
+    max_tokens:         parseInt(document.getElementById("s-max-tokens").value, 10) || 2048,
+    token_usage_enabled: document.getElementById("s-token-usage").checked,
     timezone:                 document.getElementById("s-timezone").value.trim() || "UTC",
   };
   try {
@@ -2805,6 +2816,31 @@ async function init() {
     console.error("loadBots:", e);
   }
   renderSidebarBots();
+
+  applyV3CapabilityNotice();
+}
+
+// v3: DRADIS is one agent on the main model. The per-capability provider/model/
+// fallback selectors are no longer used — hide them and explain why. (Enabled,
+// connection test and instructions still apply.)
+function applyV3CapabilityNotice() {
+  const map = { websearch: "ws", weather: "weather", gcal: "gcal", gmail: "gmail", gtasks: "gtasks" };
+  for (const [panel, prefix] of Object.entries(map)) {
+    ["provider", "model", "fallback-provider", "fallback-model"].forEach(k => {
+      const el = document.getElementById(`${prefix}-${k}`);
+      const fg = el && el.closest(".form-group");
+      if (fg) fg.style.display = "none";
+    });
+    const card = document.querySelector(`#panel-${panel} .form-card`);
+    const h2   = card && card.querySelector("h2");
+    if (h2 && !card.querySelector(".v3-note")) {
+      const div = document.createElement("div");
+      div.className = "v3-note";
+      div.style.cssText = "background:var(--card-bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin:10px 0 14px;font-size:0.82rem;color:var(--text-muted)";
+      div.innerHTML = "ℹ️ <b>v3:</b> DRADIS now runs as a single agent on the main model (<b>Settings → DRADIS</b>). The model/fallback here are no longer used — only <b>Enabled</b>, the connection and the instructions below apply.";
+      h2.insertAdjacentElement("afterend", div);
+    }
+  }
 }
 
 // ── Tasks sidebar ─────────────────────────────────────────────────────────────
@@ -2883,11 +2919,54 @@ function renderSidebarTasks() {
   });
 }
 
+let availableTools = [];
+async function loadAvailableTools() {
+  if (availableTools.length) return availableTools;
+  try { availableTools = await api("GET", "/api/available-tools"); } catch { availableTools = []; }
+  return availableTools;
+}
+
+async function populateTaskTools(selected) {
+  const box = document.getElementById("t-tools-custom");
+  if (!box) return;
+  const tools = await loadAvailableTools();
+  if (!tools.length) {
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:0.82rem">No tools available — enable and authenticate capabilities first.</div>';
+    return;
+  }
+  const groups = {};
+  for (const t of tools) { (groups[t.capability_label] ||= []).push(t); }
+  let html = "";
+  for (const [label, list] of Object.entries(groups)) {
+    html += `<div style="font-weight:600;margin:8px 0 2px;font-size:0.82rem">${label}</div>`;
+    for (const t of list) {
+      const checked = (selected.includes(t.name) || selected.includes(t.capability)) ? "checked" : "";
+      html += `<label style="display:flex;gap:8px;align-items:flex-start;margin:3px 0;font-weight:400;text-transform:none;letter-spacing:0;">
+        <input type="checkbox" id="t-tool-${t.name}" ${checked} style="width:auto;margin:3px 0 0;">
+        <span><code>${t.name}</code> <span style="color:var(--text-muted)">— ${t.description}</span></span></label>`;
+    }
+  }
+  box.innerHTML = html;
+}
+
+function readTaskTools() {
+  const mode = document.getElementById("t-tools-mode").value;
+  if (mode === "all") return null;
+  return availableTools
+    .filter(t => { const el = document.getElementById("t-tool-" + t.name); return el && el.checked; })
+    .map(t => t.name);
+}
+
 function renderTaskForm(task) {
   const presetOptions = CRON_PRESETS.map(p =>
     `<option value="${p.cron}" ${task.cron === p.cron ? "selected" : ""}>${p.label} (${p.cron})</option>`
   ).join("");
   const isCustom = !CRON_PRESETS.find(p => p.cron === (task.cron || "").trim());
+
+  // Tool selection: null / ["*"] → all available tools; list → specific tools.
+  const _taskTools     = (task.tools ?? task.agents);   // `agents` kept for back-compat
+  const _toolMode      = (!Array.isArray(_taskTools) || _taskTools.includes("*")) ? "all" : "custom";
+  const _selectedTools = (Array.isArray(_taskTools) && !_taskTools.includes("*")) ? _taskTools : [];
 
   document.getElementById("panel-task").innerHTML = `
     <div class="form-card">
@@ -2957,6 +3036,22 @@ function renderTaskForm(task) {
       </div>
 
       <div class="form-group">
+        <label for="t-tools-mode">Tools <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">(fewer = smaller prompt)</span></label>
+        <select id="t-tools-mode">
+          <option value="all"    ${_toolMode === "all"    ? "selected" : ""}>All available tools</option>
+          <option value="custom" ${_toolMode === "custom" ? "selected" : ""}>Selected tools…</option>
+        </select>
+        <div id="t-tools-custom" style="margin-top:8px; display:${_toolMode === "custom" ? "block" : "none"};">
+          <div style="color:var(--text-muted);font-size:0.82rem">Loading tools…</div>
+        </div>
+        <small style="margin-top:6px;display:block;color:var(--text-muted)">
+          DRADIS runs as a single agent on the main model and decides which tool to call.
+          Selecting only the tools a task needs shrinks the prompt — key to staying under the
+          Groq 8K free-tier limit on multi-step tasks.
+        </small>
+      </div>
+
+      <div class="form-group">
         <label for="t-bot-id">Telegram bot</label>
         <select id="t-bot-id">${renderBotSelector(task.telegram_bot_id)}</select>
       </div>
@@ -2994,6 +3089,13 @@ function renderTaskForm(task) {
     validateCronLive(val);
   });
 
+  // Populate per-tool checkboxes and toggle their visibility with the mode.
+  populateTaskTools(_selectedTools);
+  document.getElementById("t-tools-mode").addEventListener("change", e => {
+    document.getElementById("t-tools-custom").style.display =
+      e.target.value === "custom" ? "block" : "none";
+  });
+
   document.getElementById("btn-save-task").onclick = saveTask;
   document.getElementById("btn-run-task").onclick = runTask;
   document.getElementById("btn-duplicate-task").onclick = duplicateTask;
@@ -3009,6 +3111,7 @@ async function saveTask() {
     cron:            document.getElementById("t-cron").value.trim(),
     instructions:    document.getElementById("t-instructions").value.trim(),
     telegram_bot_id: document.getElementById("t-bot-id").value,
+    tools:           readTaskTools(),
   };
   try {
     const updated = await api("PUT", `/api/tasks/${selectedTaskId}`, payload);
@@ -3052,6 +3155,7 @@ async function duplicateTask() {
       cron:            src.cron,
       instructions:    src.instructions,
       telegram_bot_id: src.telegram_bot_id || "default",
+      tools:           (src.tools ?? src.agents) ?? null,
     });
     tasks.push(copy);
     selectedTaskId = copy.id;

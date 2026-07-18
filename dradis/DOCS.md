@@ -10,40 +10,40 @@ DRADIS displays a radar-sweep icon in the Home Assistant app dashboard (`icon.pn
 
 ---
 
-## Architecture
+## Architecture (v3.0 — single agent, no framework)
 
-DRADIS uses an **agno Team** design (`coordinate` mode): a DRADIS leader agent orchestrates a team of specialist member agents. When the user sends a message the leader decides which members to invoke, runs them **in parallel**, and synthesises their responses into a single reply. If no sub-agents are enabled, DRADIS falls back to a single-agent path with no overhead.
+DRADIS is **one agent** that owns a **flat set of tools**. There is no coordinator, no sub-agents and no orchestration framework. When a message arrives, the model is called with the system prompt, the conversation and the selected tool schemas; if it asks to call a tool, the runtime executes the function, feeds the result back, and loops until the model returns a plain-text answer.
 
-### Fallback model (v2.5.0 — improved in v2.7.0, v2.8.3–2.8.4)
+This replaced the previous **agno** `Team` design in v3.0. A probe on Groq's `gpt-oss-120b` showed a raw `/chat/completions` request with 8 tool schemas costs ~800 prompt tokens, while the same call through agno cost ~8800 — the framework added ~8000 tokens per request, which made the 8K free-tier limit unreachable. Removing agno was the fix.
 
-Each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail, Google Tasks) supports an independent fallback provider and model. When an API call fails, DRADIS:
+### The runtime — `core.py`
 
-1. Detects the failure — agno never re-raises model errors; instead it sets `response.status = "ERROR"` and puts the error message in `response.content`. DRADIS checks both `status == "ERROR"` and empty content to catch all failure modes (rate limits, provider errors, context-window exceeded, etc.)
-2. Sends a Telegram warning: *"⚠️ Primary model failed — replied via fallback ✅"* if the fallback succeeds
-3. Rebuilds the executor (and any sub-agents) using the fallback settings and retries
-4. If the fallback also fails, sends a final `❌ Both primary and fallback models failed` Telegram notification with both model names
+`run_agent(system_prompt, user_prompt, tools, model, provider, …)` is a thin tool-calling loop over the `openai` SDK, pointed at any OpenAI-compatible provider via `base_url`. A "tool" is a plain spec: `{"name", "description", "parameters" (JSON schema), "fn" (async callable)}`. The loop calls the model, runs any `tool_calls`, appends their results, and repeats up to a bounded number of rounds. Only the exact tool schemas selected are sent — nothing else.
 
-The logic is centralised in the `_run_with_fallback()` helper, shared by both `handle_message` and `run_scheduled_task`.
+### Capabilities and tool selection
 
-Fallback settings are configured from the Web UI. Leaving the fallback model blank disables the feature for that agent.
+Each capability contributes tool specs (`agents/*.py` → `*_tools(settings)`):
 
-### Telegram API error notifications (v2.5.0)
+| Capability | Tools |
+|-----------|-------|
+| Web Search | `search_web` |
+| Weather | `get_weather` |
+| Google Calendar | `get_calendar_events`, `create_calendar_event`, `delete_calendar_event` |
+| Gmail | `get_emails`, `get_unread_emails`, `search_emails`, `send_email` |
+| Google Tasks | `list_tasks`, `create_task`, `complete_task`, `delete_task`, `update_task` |
+| Read URL | `read_url` |
 
-All API call failures send a Telegram notification:
+A capability's tools are available when it is **Enabled** and authenticated. **Chat** gets all available tools; a **task** can select exactly which tools to attach (fewer tools = smaller prompt). `bot/state.py:build_tools(settings, selected)` assembles the list. A capability's *Additional instructions* are appended to the system prompt when any of its tools are attached.
 
-- **Primary model failure**: if the primary model returns an error or empty response, a warning is sent before the fallback retry (or the error is surfaced directly if no fallback is configured).
-- **Fallback model failure**: a separate ❌ notification is sent if the fallback also fails.
-- **Scheduled task failures**: the same logic applies during cron-scheduled task execution.
+### One model + fallback
 
-### Tool call limit (v2.4.0)
+The single agent runs on the main model (**Settings → DRADIS**). On an API error or empty reply, `run_dradis()` retries once on the configured **fallback** model/provider and sends a Telegram warning (`⚠️ fallback triggered ✅`); if that also fails, a `❌ Both … failed` notification is sent. Per-capability model/provider/fallback settings are no longer used (v3) — the Web UI hides them with a notice.
 
-Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use loops: **4** for Gmail, Google Calendar, and Google Tasks (which may need multiple sequential tool calls for complex operations such as list-then-complete or list-then-delete), **2** for Weather and Web Search (single-tool agents). The limit is enforced by agno's `Agent.tool_call_limit` parameter and caps the worst-case LLM calls per sub-agent regardless of model behaviour.
+### Token budget & observability
 
-**Routing** is driven by each member's tool docstrings — the team leader LLM decides which members to invoke based on the user message and the tool descriptions. No keyword matching or hidden text is injected.
+`max_tokens` (**Settings → DRADIS → Max completion tokens**, default 2048) caps every reply. Each run logs the exact billed `prompt_tokens`. Enable **Settings → DRADIS → Log token usage** to append `🔢 in N · out N` to every chat and task reply.
 
-**Additional instructions**: each member applies its own per-agent `*_instructions` setting from the Web UI, appended to the member's system prompt at runtime.
-
-**Extensibility**: adding a new member requires creating a new `create_X_agent(settings)` factory file and registering it in `_build_members()` in `bot/scheduler.py`. No changes to message handling are needed.
+**Extensibility**: adding a capability means writing a `X_tools(settings)` builder in `agents/X.py` and registering it in `bot/state.py:_capability_tool_groups()` and `web/store.py:available_tool_catalogue()`.
 
 **Source layout:**
 
@@ -55,12 +55,13 @@ Each sub-agent is created with a `tool_call_limit` to prevent runaway tool-use l
 | `bot/commands.py` | Telegram command handlers: `/info`, `/gcalauth`, `/gmailauth`, `/gtasksauth`, `/backupauth` |
 | `backup/gdrive.py` | Google Drive backup module — OAuth2 flow, file upload, `run_backup_monitor()` |
 | `bot/handlers.py` | Telegram message, voice, and callback handlers |
-| `core.py` | `create_agent()`, `create_team()`, provider helpers |
-| `agents/web_search.py` | Web Search member agent — `create_web_search_agent()` |
-| `agents/weather.py` | Weather member agent — `fetch_weather()` + `create_weather_agent()` |
-| `agents/gmail.py` | Gmail member agent — `create_gmail_agent()` + OAuth token management |
-| `agents/gcal.py` | Google Calendar member agent — `create_gcal_agent()` + OAuth token management |
-| `agents/gtasks.py` | Google Tasks member agent — `create_gtasks_agent()` + OAuth token management |
+| `core.py` | Agent runtime — `run_agent()` tool-calling loop over the `openai` SDK, `AgentResult`, provider/context helpers (no agno) |
+| `bot/state.py` | Tool registry & runner — `build_tools()`, `run_dradis()`, capabilities, history, fallback, extra-bot registry |
+| `agents/web_search.py` | Web Search tools — `web_search_tools()` (Tavily) |
+| `agents/weather.py` | Weather tools — `fetch_weather()` + `weather_tools()` (Open-Meteo) |
+| `agents/gmail.py` | Gmail tools — `gmail_tools()` + OAuth token management |
+| `agents/gcal.py` | Google Calendar tools — `gcal_tools()` + OAuth token management |
+| `agents/gtasks.py` | Google Tasks tools — `gtasks_tools()` + OAuth token management |
 | `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability + pressure-level data, computes multiplicative TRS (0.0–1.0) in Python |
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
@@ -178,6 +179,8 @@ Lets you edit all non-sensitive DRADIS settings at runtime without restarting th
 | Startup message | `✅ DRADIS online and ready.` | Telegram message sent when the app starts. |
 | Conversation history | `true` | Prepend the last N exchanges as context to each request. |
 | Conversation history depth | `2` | Number of past exchanges kept in context (resets on restart). |
+| Max completion tokens | `2048` | Caps the model's reply length (passed as `max_tokens`) so prompt+reply stay inside the model context window. Keep it at 2048 for the Groq 8K free tier; raise it for larger-context providers. |
+| Log token usage | `off` | When on, appends `🔢 in N · out N` (input/output tokens) to every chat and task reply. |
 | Timezone for scheduled tasks | `UTC` | Timezone used to interpret all cron expressions. Select from the dropdown (covers Europe, Americas, Asia, Africa, Pacific). Changes take effect on next save — no restart required. |
 
 **Model selection by provider:**
@@ -513,10 +516,13 @@ Click `+` in the Tasks sidebar header to create a new task. Each task has:
 | Enabled | Toggle — a green dot in the sidebar shows the task is active. |
 | Schedule preset | Dropdown of common schedules: Every minute, Every hour, Daily at 8:00, Daily at 20:00, Every Monday at 9:00, Weekdays 9–18 every hour. |
 | Cron expression | Raw 5-part cron field (minute hour day month weekday). Editing it directly sets the preset to "Custom…" and shows a live human-readable description below the field. |
-| Instructions | What DRADIS should do at this time — passed directly to the main agent, which automatically selects the right tools (Web Search, Weather, Google Calendar, etc.) as needed. |
+| Instructions | What DRADIS should do at this time — passed to the agent, which calls whichever of the attached tools it needs. |
+| Tools | Which tools this task may use. **All available tools** (default) attaches every enabled + authenticated tool; **Selected tools** lets you tick exactly the ones the task needs (grouped by capability). Fewer tools = smaller prompt — the way to keep multi-step Gmail/Calendar tasks under the Groq 8K free-tier limit. |
 | Telegram bot | Bot used to deliver the task response. Defaults to the DRADIS bot; select any extra bot configured in **Settings → Telegram Bots**. |
 
-When a task fires, the agent response is sent to your Telegram chat with a label identifying the task name. The active DRADIS model and all enabled sub-agents are used exactly as for regular messages. Cron jobs reload immediately on save/delete — no app restart required.
+When a task fires, the agent response is sent to your Telegram chat. DRADIS runs as a single agent on the main model with the tools you selected. Cron jobs reload immediately on save/delete — no app restart required.
+
+> **Tip (v3.0):** for a *mail → calendar* task, select just `get_unread_emails` and `create_calendar_event`. That keeps each request small and well under Groq's 8000 tokens-per-minute limit, even across the read → create → summarise steps.
 
 **Testing a task manually:** each task form includes a **▶ Test Task** button. Clicking it triggers an immediate one-off execution of the task without altering the cron schedule. The result is delivered to Telegram exactly as a scheduled run would. This is useful for verifying instructions before enabling a task or debugging an existing one — no need to modify the cron expression to `* * * * *` just for a quick check.
 

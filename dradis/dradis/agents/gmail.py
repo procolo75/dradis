@@ -3,9 +3,6 @@ import base64
 from email.message import EmailMessage
 from pathlib import Path
 
-from core import create_agent, _now_str
-from web.store import SETTINGS_DEFAULTS
-
 GMAIL_TOKEN_FILE   = Path("/data/google_gmail_token.json")
 GMAIL_SCOPES       = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -133,17 +130,9 @@ def _sync_send_email(to: str, subject: str, body: str) -> str:
     return f"Email sent to {to} — Subject: {subject}"
 
 
-def create_gmail_agent(settings: dict):
-    tz_name = settings.get("timezone", "UTC") or "UTC"
+def gmail_tools(settings: dict) -> list[dict]:
+    """Return the Gmail tool specs. Requires a valid OAuth token to be useful."""
     _not_auth_msg = "Gmail not authenticated. Send /gmailauth to connect."
-
-    base_prompt = (
-        f"It is {_now_str(tz_name)} ({tz_name}). "
-        "You are an email assistant. Present emails clearly and concisely "
-        "in the same language the user used. Never invent data not present in the results. "
-        "Include the message ID in brackets so the user can reference it. "
-        + settings.get("gmail_instructions", "")
-    )
 
     async def search_emails(query: str, max_results: int = 10) -> str:
         """Search Gmail emails using Gmail query syntax (e.g. 'from:user@example.com subject:invoice').
@@ -186,11 +175,17 @@ def create_gmail_agent(settings: dict):
             return _not_auth_msg
         return raw
 
-    return create_agent(
-        system_prompt=base_prompt,
-        model=settings.get("gmail_model", SETTINGS_DEFAULTS["gmail_model"]),
-        provider=settings.get("gmail_provider", SETTINGS_DEFAULTS["gmail_provider"]),
-        tools=[get_emails, get_unread_emails, search_emails, send_email],
-        name="gmail",
-        tool_call_limit=4,
-    )
+    return [
+        {"name": "get_emails", "fn": get_emails,
+         "description": "Get the latest emails from Gmail inbox. Call this when the user asks to check or list their emails or inbox. Trigger phrases: 'controlla le email', 'check my email', 'show inbox'.",
+         "parameters": {"type": "object", "properties": {"max_results": {"type": "integer", "description": "Max emails to return (default 10)."}}, "required": []}},
+        {"name": "get_unread_emails", "fn": get_unread_emails,
+         "description": "Get unread emails from Gmail. Call this when the user asks specifically about unread messages. Trigger phrases: 'email non lette', 'unread emails', 'nuovi messaggi'.",
+         "parameters": {"type": "object", "properties": {"max_results": {"type": "integer"}}, "required": []}},
+        {"name": "search_emails", "fn": search_emails,
+         "description": "Search Gmail using Gmail query syntax (e.g. 'from:user@example.com subject:invoice'). Call this to find emails from a specific sender, subject, or date. Trigger phrases: 'cerca email da X', 'find emails about Y'.",
+         "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "max_results": {"type": "integer"}}, "required": ["query"]}},
+        {"name": "send_email", "fn": send_email,
+         "description": "Send an email via Gmail. Call this when the user wants to send, compose, or write an email. Never call without first confirming recipient and subject with the user.",
+         "parameters": {"type": "object", "properties": {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to", "subject", "body"]}},
+    ]

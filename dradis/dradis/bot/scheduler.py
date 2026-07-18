@@ -90,23 +90,13 @@ async def run_scheduled_task(task: dict):
     if not instructions:
         return
 
-    settings      = _state.read_settings()
-    system_prompt = _state.build_system_prompt()
-    model         = settings.get("model",    _state.SETTINGS_DEFAULTS["model"])
-    provider      = settings.get("provider", _state.SETTINGS_DEFAULTS["provider"])
+    settings = _state.read_settings()
+    model    = settings.get("model", _state.SETTINGS_DEFAULTS["model"])
 
-    members  = _state._build_members(settings)
-    executor = _state._build_executor(system_prompt, model, provider, members, settings)
-    print(f"[DRADIS] Scheduled task '{task_name}': model={model} members={[m.name for m in members]}")
-
-    response, used_fallback, error = await _state._run_with_fallback(
-        executor         = executor,
-        prompt           = instructions,
-        settings         = settings,
-        system_prompt    = system_prompt,
-        primary_model    = model,
-        primary_provider = provider,
-        context_label    = f"Task '{task_name}'",
+    result, used_fallback, error, fb_reason = await _state.run_dradis(
+        instructions, settings,
+        selected      = _state.task_tool_selection(task),
+        context_label = f"Task '{task_name}'",
     )
 
     if error is not None:
@@ -127,20 +117,19 @@ async def run_scheduled_task(task: dict):
 
     if used_fallback:
         await _state._send_error_telegram(
-            _state._build_fallback_used_msg(settings, model, task_name),
-            bot_id=bot_id,
+            _state._fallback_msg(fb_reason, task_name), bot_id=bot_id,
         )
 
-    member_responses = _state._collect_member_responses(response)
-    text  = (response.content or "").strip()
-    label = _state._agents_label(member_responses) + f" · <i>{html.escape(task_name)}</i>"
+    text   = (result.content or "").strip()
+    footer = _state.token_footer(settings, result)
+    footer = f"\n\n<i>{footer}</i>" if footer else ""
 
     if text:
         bot, chat_id = _state.get_bot_and_chat(bot_id)
         if bot:
             await bot.send_message(
                 chat_id=chat_id,
-                text=_state.md_to_html(text) + f"\n\n{label}",
+                text=_state.md_to_html(text) + footer,
                 parse_mode=ParseMode.HTML,
             )
 
@@ -251,11 +240,7 @@ async def run_scheduled_monitor(monitor: dict):
 
 async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: str,
                            settings: dict, bot_id: str = "default"):
-    sys_prompt = _state.build_system_prompt()
-    model      = settings.get("model",    _state.SETTINGS_DEFAULTS["model"])
-    provider   = settings.get("provider", _state.SETTINGS_DEFAULTS["provider"])
-    members    = _state._build_members(settings)
-    executor   = _state._build_executor(sys_prompt, model, provider, members, settings)
+    model = settings.get("model", _state.SETTINGS_DEFAULTS["model"])
 
     user_instr = instructions.strip() or "Send this report to the user via Telegram."
     prompt = (
@@ -263,16 +248,9 @@ async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: st
         f"{report_text}\n\n"
         f"Instructions: {user_instr}"
     )
-    print(f"[DRADIS] Monitor '{monitor_name}' LLM: model={model} members={[m.name for m in members]}")
-
-    response, used_fallback, error = await _state._run_with_fallback(
-        executor         = executor,
-        prompt           = prompt,
-        settings         = settings,
-        system_prompt    = sys_prompt,
-        primary_model    = model,
-        primary_provider = provider,
-        context_label    = f"Monitor:{monitor_name}",
+    # A monitor LLM run just reformats a ready report — no tools needed.
+    result, used_fallback, error, _ = await _state.run_dradis(
+        prompt, settings, selected=[], context_label=f"Monitor:{monitor_name}",
     )
     if error is not None:
         fb_model_id = _state._apply_fallback_settings(settings).get("model", model) if used_fallback else model
@@ -283,8 +261,8 @@ async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: st
         )
         return
 
-    if response is not None:
-        text = (response.content or "").strip()
+    if result is not None:
+        text = (result.content or "").strip()
         if text:
             try:
                 bot, chat_id = _state.get_bot_and_chat(bot_id)
@@ -372,23 +350,12 @@ def reload_ha_monitors():
         return _send
 
     async def _llm(prompt: str) -> str:
-        s          = _state.read_settings()
-        sys_prompt = _state.build_system_prompt()
-        model      = s.get("model",    _state.SETTINGS_DEFAULTS["model"])
-        provider   = s.get("provider", _state.SETTINGS_DEFAULTS["provider"])
-        members    = _state._build_members(s)
-        executor   = _state._build_executor(sys_prompt, model, provider, members, s)
-        response, _, error = await _state._run_with_fallback(
-            executor         = executor,
-            prompt           = prompt,
-            settings         = s,
-            system_prompt    = sys_prompt,
-            primary_model    = model,
-            primary_provider = provider,
-            context_label    = "HAMonitor",
+        s = _state.read_settings()
+        result, _, error, _ = await _state.run_dradis(
+            prompt, s, selected=[], context_label="HAMonitor",
         )
-        if error or response is None:
+        if error or result is None:
             return ""
-        return (response.content or "").strip()
+        return (result.content or "").strip()
 
     ha_monitor_manager.reload(load_ha_monitors(), _make_send, _llm, mqtt_cfg, tz_name)

@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## [3.0.0] - 2026-07-18
+
+**Major architecture change — DRADIS is now a single agent with a flat tool set, and the `agno` framework has been removed.**
+
+- **Why**: on the Groq free tier, Gmail/Calendar tasks (*spese*, *calendario*, *mail→calendar*) always broke the 8K limit. A probe on the exact same model (`gpt-oss-120b`) settled it: a raw OpenAI-compatible `/chat/completions` request with 8 tool schemas costs **797 prompt tokens**, but the same call through agno cost **8797** — agno added ~8000 tokens of framework overhead per request (baseline with 0 tools: 103 tokens, so the model itself was never the problem). The multi-agent `coordinate` Team made it worse by re-sending that overhead on every delegation round-trip.
+- **New runtime (`core.py`)**: a thin tool-calling loop over the `openai` SDK (any OpenAI-compatible provider via `base_url`). It sends only the system prompt, the conversation and the exact tool schemas selected — nothing else. Removed `agno` from `requirements.txt`.
+- **One agent, flat tools**: no coordinator, no sub-agents, no routing rules. Each capability (Web Search, Weather, Google Calendar, Gmail, Google Tasks, Read URL) contributes plain tool specs (`agents/*.py` now expose `*_tools(settings)`), and DRADIS decides which tool to call. Chat gets all available tools; a **task can select exactly which tools** to attach (fewer tools = smaller prompt).
+- **One model**: the single agent runs on the main model (**Settings → DRADIS**) with the single fallback model on API error. Per-capability model/provider/fallback settings are no longer used (the Web UI hides them with an explanatory notice; capability *Enabled*, connection and *instructions* still apply — instructions are appended to the system prompt when that capability's tools are attached).
+- **`max_tokens` completion cap** (setting, default **2048**) is applied to every request; the exact billed `prompt_tokens` is logged per run. An optional **Log token usage** setting appends `🔢 in N · out N` to every chat and task reply.
+- **Web UI**: Task editor replaces the sub-agent selector with a **per-tool** picker (All available tools / Selected tools, grouped by capability), backed by `GET /api/available-tools`.
+- **Unchanged**: Telegram commands, scheduled/live monitors (lightning, seismic, football, weather charts, HA), OAuth flows, backups, voice transcription (Groq Whisper).
+- **Note on Groq free tier**: the ceiling is **8000 tokens-per-minute**, counted across every request a task makes within a minute. With the agno overhead gone, a lean task fits comfortably; a very heavy multi-step task (many emails → many events) can still approach the limit — keep it lean or point the task's model at a roomier provider.
+
 ## [2.26.0] - 2026-06-26
 
 - **Feat — Lightning live monitor: single location-level threat state machine (replaces per-cluster zone alerts)**: the monitor no longer fires one alert per DBSCAN cell. The old design split a single storm front into several short-lived clusters, each spawning its own "Storm detected — Undetermined" alert with jumping distance/direction, and intermittent strikes triggered repeated all-clear ↔ approaching whiplash. The user could not tell whether a storm was actually coming.

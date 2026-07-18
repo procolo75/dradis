@@ -240,3 +240,4 @@ async def run_speedtest(payload: SpeedtestPayload, provider: str = "openrouter")
 @router.post("/api/openrouter/speedtest")
 async def run_speedtest_legacy(payload: SpeedtestPayload):
     return await run_speedtest(payload, provider="openrouter")
+

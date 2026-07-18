@@ -20,6 +20,10 @@ class TaskPayload(BaseModel):
     cron:            str  = "0 8 * * *"
     instructions:    str  = ""
     telegram_bot_id: str  = "default"
+    # Tools to attach for this task: None or ["*"] = all available tools, or an
+    # explicit list of tool names / capability ids (e.g. ["get_unread_emails",
+    # "create_calendar_event"]). Fewer tools = smaller prompt.
+    tools:           list[str] | None = None
 
 
 class MonitorPayload(BaseModel):
@@ -83,6 +87,8 @@ class SettingsPayload(BaseModel):
     provider:             str  = "openrouter"
     agent_instructions:   str  = "You are DRADIS, a versatile AI assistant."
     model:                str  = "nvidia/nemotron-3-nano-30b-a3b:free"
+    max_tokens:           int  = 2048
+    token_usage_enabled:  bool = False
     history_enabled:      bool = True
     history_depth:        int  = 2
     startup_message:      str  = "✅ DRADIS online and ready."

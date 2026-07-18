@@ -1,21 +1,5 @@
-from core import create_agent, _now_str
-from web.store import SETTINGS_DEFAULTS
-
-
-def create_web_search_agent(settings: dict, tavily_api_key: str):
-    tz_name = settings.get("timezone", "UTC") or "UTC"
-
-    base_prompt = (
-        f"It is {_now_str(tz_name)} ({tz_name}). "
-        "You are a web search assistant. "
-        "When the user asks a question or wants to find information, call search_web with a "
-        "concise, optimised query and synthesise the results into a clear answer. "
-        "Synthesise ONLY the information present in the results. "
-        "If the results do not contain enough information, say so explicitly. "
-        "Never invent or assume facts not present in the results. "
-        + settings.get("ws_instructions", "")
-    )
-
+def web_search_tools(settings: dict, tavily_api_key: str) -> list[dict]:
+    """Return the Web Search (Tavily) tool specs."""
     from tavily import TavilyClient
     tavily_client = TavilyClient(api_key=tavily_api_key)
 
@@ -30,15 +14,12 @@ def create_web_search_agent(settings: dict, tavily_api_key: str):
         if not results:
             return "No web results found for this query. Do not invent information."
         return "\n\n".join(
-            f"Title: {r['title']}\n{r['content']}\nURL: {r['url']}"
+            f"Title: {r['title']}\n{r['content'][:800]}\nURL: {r['url']}"
             for r in results
         )
 
-    return create_agent(
-        system_prompt=base_prompt,
-        model=settings.get("ws_model", SETTINGS_DEFAULTS["ws_model"]),
-        provider=settings.get("ws_provider", SETTINGS_DEFAULTS["ws_provider"]),
-        tools=[search_web],
-        name="web_search",
-        tool_call_limit=3,
-    )
+    return [
+        {"name": "search_web", "fn": search_web,
+         "description": "Search the web and return content from the top results. Call this for current news, prices, stock values, weather, sports fixtures, recent events, or any question needing a web search. Pass a concise, optimised query.",
+         "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    ]

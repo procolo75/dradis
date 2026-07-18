@@ -15,12 +15,21 @@ from web.store import (
     _get_configured_tz,
     _validate_cron_expr,
     _notify_tasks_changed,
+    available_tool_catalogue,
+    load_settings,
     load_tasks,
     save_tasks,
 )
 from web.models import TaskPayload
 
 router = APIRouter()
+
+
+@router.get("/api/available-tools")
+async def get_available_tools():
+    """List the tools currently available (enabled + authenticated), so a task
+    can select which ones to attach. DRADIS runs as one agent on the main model."""
+    return available_tool_catalogue(load_settings())
 
 
 @router.get("/api/tasks/validate-cron")

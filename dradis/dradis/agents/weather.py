@@ -2,9 +2,6 @@ import httpx
 import statistics
 from datetime import date as _date
 
-from core import create_agent, _now_str
-from web.store import SETTINGS_DEFAULTS
-
 
 def _summarise_hourly(hourly: dict, days: int) -> list:
     """Collapse raw hourly arrays into per-day, per-time-band dicts."""
@@ -119,15 +116,8 @@ async def fetch_weather(location: str, days: int = 7) -> str:
     )
 
 
-def create_weather_agent(settings: dict):
-    tz_name = settings.get("timezone", "UTC") or "UTC"
-
-    base_prompt = (
-        f"It is {_now_str(tz_name)} ({tz_name}). "
-        "You are a meteorologist. Summarise the weather data clearly and concisely "
-        "in the same language the user used. Never invent data not present in the results. "
-        + settings.get("weather_instructions", "")
-    )
+def weather_tools(settings: dict) -> list[dict]:
+    """Return the Weather (Open-Meteo) tool specs."""
 
     async def get_weather(location: str, days: int = 7) -> str:
         """Get current weather and multi-day forecast for a location.
@@ -142,11 +132,8 @@ def create_weather_agent(settings: dict):
         """
         return await fetch_weather(location, days=days)
 
-    return create_agent(
-        system_prompt=base_prompt,
-        model=settings.get("weather_model", SETTINGS_DEFAULTS["weather_model"]),
-        provider=settings.get("weather_provider", SETTINGS_DEFAULTS["weather_provider"]),
-        tools=[get_weather],
-        name="weather",
-        tool_call_limit=2,
-    )
+    return [
+        {"name": "get_weather", "fn": get_weather,
+         "description": "Get current weather and multi-day forecast for a location. Call this for weather, forecast, temperature, rain, wind, cloud cover — 'che tempo fa', 'previsioni', 'meteo', 'weather', 'forecast'.",
+         "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "City name or geographic location."}, "days": {"type": "integer", "description": "Forecast days 1-16, default 7."}}, "required": ["location"]}},
+    ]

@@ -69,6 +69,7 @@ GEMINI_MODELS = [
 
 SETTINGS_KEYS = [
     "provider", "agent_instructions", "model", "fallback_provider", "fallback_model",
+    "max_tokens", "token_usage_enabled",
     "history_enabled", "history_depth", "startup_message", "timezone",
     "ws_enabled", "ws_provider", "ws_model", "ws_instructions",
     "ws_fallback_provider", "ws_fallback_model",
@@ -89,6 +90,8 @@ SETTINGS_DEFAULTS: dict = {
     "provider":             "openrouter",
     "agent_instructions":   "You are DRADIS, a versatile AI assistant.",
     "model":                "nvidia/nemotron-3-nano-30b-a3b:free",
+    "max_tokens":           2048,
+    "token_usage_enabled":  False,
     "history_enabled":      True,
     "history_depth":        2,
     "startup_message":      "✅ DRADIS online and ready.",
@@ -419,6 +422,40 @@ def _get_tavily_key() -> str:
         return json.loads(OPTIONS_FILE.read_text()).get("tavily_api_key", "")
     except Exception:
         return ""
+
+
+def available_tool_catalogue(settings: dict) -> list[dict]:
+    """Metadata for every tool currently available (enabled + authenticated).
+    Used by the Web UI so a task can pick individual tools. Imports the tool
+    builders lazily to avoid a hard dependency on the bot runtime."""
+    from agents.gmail   import GMAIL_TOKEN_FILE, gmail_tools
+    from agents.gcal    import GCAL_TOKEN_FILE, gcal_tools
+    from agents.gtasks  import GTASKS_TOKEN_FILE, gtasks_tools
+    from agents.weather    import weather_tools
+    from agents.web_search import web_search_tools
+
+    groups: list[tuple] = []
+    tavily = _get_tavily_key()
+    if settings.get("ws_enabled") and tavily:
+        groups.append(("web_search", "Web Search", web_search_tools(settings, tavily)))
+    if settings.get("weather_enabled"):
+        groups.append(("weather", "Weather", weather_tools(settings)))
+    if settings.get("gcal_enabled") and GCAL_TOKEN_FILE.exists():
+        groups.append(("gcal", "Google Calendar", gcal_tools(settings)))
+    if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists():
+        groups.append(("gmail", "Gmail", gmail_tools(settings)))
+    if settings.get("gtasks_enabled") and GTASKS_TOKEN_FILE.exists():
+        groups.append(("gtasks", "Google Tasks", gtasks_tools(settings)))
+
+    out: list[dict] = []
+    for cid, label, specs in groups:
+        for t in specs:
+            out.append({"capability": cid, "capability_label": label,
+                        "name": t["name"], "description": t["description"]})
+    if settings.get("read_url_enabled"):
+        out.append({"capability": "read_url", "capability_label": "Read URL",
+                    "name": "read_url", "description": "Fetch a web page's text by URL."})
+    return out
 
 
 # ── Cron validation ───────────────────────────────────────────────────────────

@@ -2,9 +2,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from core import create_agent, _now_str
-from web.store import SETTINGS_DEFAULTS
-
 GCAL_TOKEN_FILE   = Path("/data/google_calendar_token.json")
 GCAL_SCOPES       = ["https://www.googleapis.com/auth/calendar"]
 GCAL_REDIRECT_URI = "http://localhost:8099/gcalauth/callback"
@@ -113,17 +110,9 @@ def _sync_create_raw_event(title: str, start_dt: str, end_dt: str, description: 
     return f"Event created: {title} ({start_dt} → {end_dt}). Link: {event.get('htmlLink', '')}"
 
 
-def create_gcal_agent(settings: dict):
-    tz_name = settings.get("timezone", "UTC") or "UTC"
+def gcal_tools(settings: dict) -> list[dict]:
+    """Return the Google Calendar tool specs."""
     _not_auth_msg = "Google Calendar not authenticated. Send /gcalauth to connect."
-
-    base_prompt = (
-        f"It is {_now_str(tz_name)} ({tz_name}). "
-        "You are a Google Calendar assistant. Present calendar data clearly and concisely "
-        "in the same language the user used. Never invent events not present in the data. "
-        "Include the event ID in brackets at the end of each line so the user can reference it. "
-        + settings.get("gcal_instructions", "")
-    )
 
     async def create_calendar_event(
         title: str,
@@ -165,11 +154,14 @@ def create_gcal_agent(settings: dict):
             return _not_auth_msg
         return raw
 
-    return create_agent(
-        system_prompt=base_prompt,
-        model=settings.get("gcal_model", SETTINGS_DEFAULTS["gcal_model"]),
-        provider=settings.get("gcal_provider", SETTINGS_DEFAULTS["gcal_provider"]),
-        tools=[get_calendar_events, create_calendar_event, delete_calendar_event],
-        name="gcal",
-        tool_call_limit=4,
-    )
+    return [
+        {"name": "get_calendar_events", "fn": get_calendar_events,
+         "description": "Get Google Calendar events for the next N days (default 7). Returns event IDs needed for deletion. Call this when the user asks about their schedule, agenda, appointments or upcoming events.",
+         "parameters": {"type": "object", "properties": {"days_ahead": {"type": "integer", "description": "How many days ahead to look (default 7)."}}, "required": []}},
+        {"name": "create_calendar_event", "fn": create_calendar_event,
+         "description": "Create a Google Calendar event. start_datetime and end_datetime must be ISO 8601 with timezone (e.g. 2026-04-20T10:00:00+02:00). Call this to add, create or schedule a meeting, event, appointment or reminder. If duration is unspecified, default to 1 hour.",
+         "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "start_datetime": {"type": "string"}, "end_datetime": {"type": "string"}, "description": {"type": "string"}}, "required": ["title", "start_datetime", "end_datetime"]}},
+        {"name": "delete_calendar_event", "fn": delete_calendar_event,
+         "description": "Delete a Google Calendar event by its ID. First call get_calendar_events to retrieve the event ID, then call this with that ID. Never confirm a deletion without actually calling this tool.",
+         "parameters": {"type": "object", "properties": {"event_id": {"type": "string"}}, "required": ["event_id"]}},
+    ]

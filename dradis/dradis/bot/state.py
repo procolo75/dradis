@@ -26,11 +26,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import core as agent_core
 from web.store import SETTINGS_DEFAULTS, SETTINGS_FILE
-from agents.gcal    import GCAL_TOKEN_FILE, create_gcal_agent
-from agents.gmail   import GMAIL_TOKEN_FILE, create_gmail_agent
-from agents.gtasks  import GTASKS_TOKEN_FILE, create_gtasks_agent
-from agents.weather    import create_weather_agent
-from agents.web_search import create_web_search_agent
+from agents.gcal    import GCAL_TOKEN_FILE, gcal_tools
+from agents.gmail   import GMAIL_TOKEN_FILE, gmail_tools
+from agents.gtasks  import GTASKS_TOKEN_FILE, gtasks_tools
+from agents.weather    import weather_tools
+from agents.web_search import web_search_tools
 
 # ── Startup options ───────────────────────────────────────────────────────────
 
@@ -153,14 +153,9 @@ def save_turn(role: str, text: str, history_depth: int) -> None:
         _history.pop(0)
 
 
-def build_context(question: str) -> str:
-    if not _history:
-        return question
-    history = "\n".join(
-        f"{'User' if m['role'] == 'user' else 'DRADIS'}: {m['content']}"
-        for m in _history
-    )
-    return f"Conversation history:\n{history}\n\nUser: {question}"
+def history_messages() -> list[dict]:
+    """Return prior turns as OpenAI chat messages (role/content) for the runtime."""
+    return [{"role": m["role"], "content": m["content"]} for m in _history]
 
 
 # ── Telegram helpers ──────────────────────────────────────────────────────────
@@ -199,12 +194,14 @@ def md_to_html(text: str) -> str:
     return text
 
 
-# ── read_url tool ─────────────────────────────────────────────────────────────
+# ── Tool registry ─────────────────────────────────────────────────────────────
+#
+# DRADIS is ONE agent that owns a flat set of tools (no coordinator, no
+# sub-agents). Each capability contributes tool specs; which ones are attached
+# depends on: enabled flag + auth (for chat, all available) and, for a task, the
+# explicit per-tool selection. The model decides which tool to call.
 
 async def read_url(url: str) -> str:
-    """Fetch and return the text content of a web page given its URL.
-    Call this when the user explicitly provides a URL starting with http:// or https://.
-    Do NOT call this for questions or search queries."""
     import httpx
     if not url.startswith("http://") and not url.startswith("https://"):
         return "Error: a valid URL starting with http:// or https:// is required."
@@ -217,231 +214,183 @@ async def read_url(url: str) -> str:
     return resp.text[:8000]
 
 
-# ── Fallback logic ────────────────────────────────────────────────────────────
-
-_FALLBACK_MAP = {
-    "model":         ("fallback_model",          "provider",         "fallback_provider"),
-    "ws_model":      ("ws_fallback_model",        "ws_provider",      "ws_fallback_provider"),
-    "weather_model": ("weather_fallback_model",   "weather_provider", "weather_fallback_provider"),
-    "gcal_model":    ("gcal_fallback_model",      "gcal_provider",    "gcal_fallback_provider"),
-    "gmail_model":   ("gmail_fallback_model",     "gmail_provider",   "gmail_fallback_provider"),
-    "gtasks_model":  ("gtasks_fallback_model",    "gtasks_provider",  "gtasks_fallback_provider"),
+READ_URL_TOOL = {
+    "name": "read_url", "fn": read_url, "capability": None,
+    "description": "Fetch and return the text content of a web page. Call this only when the user explicitly provides an http:// or https:// URL. Do NOT call it for questions or search queries.",
+    "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
 }
 
-_AGENT_TO_FB_MODEL_KEY = {
-    "web_search": "ws_fallback_model",
-    "weather":    "weather_fallback_model",
-    "gcal":       "gcal_fallback_model",
-    "gmail":      "gmail_fallback_model",
-    "gtasks":     "gtasks_fallback_model",
-}
+# Capability metadata: id + UI label + settings key holding extra instructions.
+CAPABILITIES = [
+    {"id": "web_search", "label": "Web Search",     "instr": "ws_instructions"},
+    {"id": "weather",    "label": "Weather",         "instr": "weather_instructions"},
+    {"id": "gcal",       "label": "Google Calendar", "instr": "gcal_instructions"},
+    {"id": "gmail",      "label": "Gmail",           "instr": "gmail_instructions"},
+    {"id": "gtasks",     "label": "Google Tasks",    "instr": "gtasks_instructions"},
+]
 
+
+def _capability_tool_groups(settings: dict) -> dict:
+    """Return {capability_id: [tool specs]} for enabled + authenticated capabilities."""
+    groups: dict = {}
+    if settings.get("ws_enabled") and TAVILY_API_KEY:
+        groups["web_search"] = web_search_tools(settings, TAVILY_API_KEY)
+    if settings.get("weather_enabled"):
+        groups["weather"] = weather_tools(settings)
+    if settings.get("gcal_enabled") and GCAL_TOKEN_FILE.exists():
+        groups["gcal"] = gcal_tools(settings)
+    if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists():
+        groups["gmail"] = gmail_tools(settings)
+    if settings.get("gtasks_enabled") and GTASKS_TOKEN_FILE.exists():
+        groups["gtasks"] = gtasks_tools(settings)
+    for cap_id, specs in groups.items():
+        for t in specs:
+            t["capability"] = cap_id
+    return groups
+
+
+def build_tools(settings: dict, selected=None) -> list[dict]:
+    """Return the tool specs to attach.
+
+    selected: None or ["*"] → all available; a list of tool names and/or
+    capability ids → just those; [] → no tools.
+    """
+    groups = _capability_tool_groups(settings)
+    flat: list[dict] = []
+    for specs in groups.values():
+        flat.extend(specs)
+    if settings.get("read_url_enabled"):
+        flat.append(READ_URL_TOOL)
+    if selected is None or (isinstance(selected, list) and "*" in selected):
+        return flat
+    sel = set(selected)
+    return [t for t in flat if t["name"] in sel or (t.get("capability") and t["capability"] in sel)]
+
+
+def available_tools(settings: dict) -> list[dict]:
+    """Flat tool catalogue for the Web UI (only enabled + authenticated tools)."""
+    groups = _capability_tool_groups(settings)
+    out = []
+    for cap in CAPABILITIES:
+        for t in groups.get(cap["id"], []):
+            out.append({"capability": cap["id"], "capability_label": cap["label"],
+                        "name": t["name"], "description": t["description"]})
+    if settings.get("read_url_enabled"):
+        out.append({"capability": "read_url", "capability_label": "Read URL",
+                    "name": "read_url", "description": READ_URL_TOOL["description"]})
+    return out
+
+
+def task_tool_selection(task: dict):
+    """Resolve a task's tool selection. Supports the new `tools` field (list of
+    tool names / capability ids) and the legacy `agents` field. None/["*"] = all."""
+    sel = task.get("tools")
+    if sel is None:
+        sel = task.get("agents")
+    if sel is None or (isinstance(sel, list) and "*" in sel):
+        return None
+    return sel
+
+
+def _system_prompt(settings: dict, tools: list[dict]) -> str:
+    base    = build_system_prompt()  # time + agent_instructions (reads settings itself)
+    caps_in = {t.get("capability") for t in tools if t.get("capability")}
+    extra   = []
+    for cap in CAPABILITIES:
+        if cap["id"] in caps_in:
+            instr = (settings.get(cap["instr"]) or "").strip()
+            if instr:
+                extra.append(instr)
+    if any(t["name"] == "read_url" for t in tools):
+        extra.append("When the user gives an http:// or https:// URL, call read_url to fetch the page and answer from it.")
+    return base + ("\n\n" + "\n".join(extra) if extra else "")
+
+
+# ── Runner (single agent, one model, with fallback) ───────────────────────────
 
 def _apply_fallback_settings(settings: dict) -> dict:
+    """Swap the main model/provider for the configured fallback (used for messaging)."""
     s = dict(settings)
-    for pm_key, (fb_m_key, pv_key, fb_pv_key) in _FALLBACK_MAP.items():
-        fb_model = (s.get(fb_m_key) or "").strip()
-        fb_prov  = (s.get(fb_pv_key) or "").strip()
-        if fb_model:
-            s[pm_key] = fb_model
-            if fb_prov:
-                s[pv_key] = fb_prov
+    fb_model = (s.get("fallback_model") or "").strip()
+    fb_prov  = (s.get("fallback_provider") or "").strip()
+    if fb_model:
+        s["model"] = fb_model
+        if fb_prov:
+            s["provider"] = fb_prov
     return s
 
 
-def _build_members(settings: dict) -> list:
-    members = []
-    if settings.get("ws_enabled") and TAVILY_API_KEY:
-        members.append(create_web_search_agent(settings, TAVILY_API_KEY))
-    if settings.get("weather_enabled"):
-        members.append(create_weather_agent(settings))
-    if settings.get("gcal_enabled") and GCAL_TOKEN_FILE.exists():
-        members.append(create_gcal_agent(settings))
-    if settings.get("gmail_enabled") and GMAIL_TOKEN_FILE.exists():
-        members.append(create_gmail_agent(settings))
-    if settings.get("gtasks_enabled") and GTASKS_TOKEN_FILE.exists():
-        members.append(create_gtasks_agent(settings))
-    return members
-
-
-def _build_executor(system_prompt: str, model: str, provider: str, members: list, settings: dict):
-    tools = [read_url] if settings.get("read_url_enabled") else []
-    if tools:
-        system_prompt = (
-            system_prompt
-            + " When the user provides a URL starting with http:// or https://, "
-            "call read_url to fetch the page content and answer based on it."
-        )
-    if members:
-        member_names = {m.name for m in members}
-        routing_rules = []
-        if tools and "web_search" in member_names:
-            routing_rules.append(
-                "- If the user provides a specific URL starting with http:// or https://, "
-                "call read_url directly. Do NOT delegate to web_search for URLs."
-            )
-        if "web_search" in member_names:
-            routing_rules.append(
-                "- If the user asks a question or wants to search the web without providing a URL, "
-                "delegate ONLY to the web_search member."
-            )
-        if "weather" in member_names and "web_search" in member_names:
-            routing_rules.append(
-                "- If the user asks about weather, forecasts, temperature, rain, wind, "
-                "thunderstorm risk or any meteorological topic, delegate ONLY to the "
-                "Weather member. Do NOT call Web Search for weather questions."
-            )
-        if "gtasks" in member_names:
-            routing_rules.append(
-                "- For task management, to-do lists, or Google Tasks: delegate ONLY to the "
-                "'gtasks' member. Trigger phrases: 'cosa ho da fare', 'todo', 'task', "
-                "'aggiungi task', 'lista attività', 'segna come fatto', 'add task', 'show tasks'."
-            )
-        if routing_rules:
-            system_prompt = (
-                system_prompt
-                + "\n\nROUTING RULES (follow strictly):\n"
-                + "\n".join(routing_rules)
-            )
-        return agent_core.create_team(system_prompt, model, provider, members, tools=tools)
-    return agent_core.create_agent(system_prompt, model, provider, tools=tools)
-
-
-def _collect_member_responses(response) -> list:
-    return getattr(response, "member_responses", [])
-
-
-def _agents_label(member_responses: list) -> str:
-    invoked = {mr.agent_name for mr in member_responses if mr.agent_name}
-    parts = ["DRADIS"]
-    if "web_search" in invoked: parts.append("Web Search")
-    if "weather"    in invoked: parts.append("Weather")
-    if "gcal"       in invoked: parts.append("Google Calendar")
-    if "gmail"      in invoked: parts.append("Gmail")
-    if "gtasks"     in invoked: parts.append("Google Tasks")
-    return "🤖 " + " · ".join(parts)
-
-
-def _is_failed_response(response) -> bool:
-    try:
-        status = getattr(response, "status", None)
-        if status is not None:
-            if status == "ERROR" or getattr(status, "value", None) == "ERROR":
-                return True
-        return not (response.content or "").strip()
-    except Exception:
-        return True
-
-
-def _check_member_failures(response, settings: dict) -> list[str]:
-    recoverable = []
-    for mr in getattr(response, "member_responses", []):
-        status = getattr(mr, "status", None)
-        is_error = status is not None and (
-            status == "ERROR" or getattr(status, "value", None) == "ERROR"
-        )
-        if is_error:
-            name = getattr(mr, "agent_name", "")
-            fb_key = _AGENT_TO_FB_MODEL_KEY.get(name, "")
-            if fb_key and (settings.get(fb_key) or "").strip():
-                recoverable.append(name)
-    return recoverable
-
-
-async def _run_with_fallback(
-    executor,
-    prompt: str,
+async def run_dradis(
+    user_prompt: str,
     settings: dict,
-    system_prompt: str,
-    primary_model: str,
-    primary_provider: str,
+    *,
+    selected=None,
+    history: list[dict] | None = None,
     context_label: str = "DRADIS",
 ) -> tuple:
-    """Run executor with prompt; on exception or empty response retry with the fallback model.
+    """Run DRADIS as ONE agent with the selected tools, retrying once on the
+    fallback model.
 
-    Returns (response, used_fallback: bool, error: Exception|None).
-    error is set only when both primary and fallback fail.
-    """
-    response      = None
-    primary_error = None
-    member_failed = False
+    Returns (AgentResult|None, used_fallback: bool, error|None, fb_reason|None)
+    where fb_reason is the primary error that triggered the fallback (set whenever
+    the fallback ran, whether it then succeeded or not)."""
+    agent_core.set_generation_config(settings.get("max_tokens"))
+    max_tokens = settings.get("max_tokens") or None
+    model      = settings.get("model",    SETTINGS_DEFAULTS["model"])
+    provider   = settings.get("provider", SETTINGS_DEFAULTS["provider"])
+    tools      = build_tools(settings, selected)
+    system     = _system_prompt(settings, tools)
 
-    try:
-        response = await executor.arun(prompt)
-    except Exception as e:
-        primary_error = e
-        print(f"[DRADIS] {context_label} primary arun exception: {e}")
+    tool_names = ", ".join(t["name"] for t in tools) or "none"
+    print(f"[DRADIS] {context_label}: model={model} provider={provider} "
+          f"tools={len(tools)} [{tool_names}] window={agent_core.context_window_for(model)}")
 
-    if response is not None and primary_error is None and _is_failed_response(response):
-        status = getattr(response, "status", None)
-        is_error_status = status is not None and (status == "ERROR" or getattr(status, "value", None) == "ERROR")
-        reason = f"status={getattr(status, 'value', status)}" if is_error_status else "empty content"
-        primary_error = RuntimeError(
-            f"Model {primary_model!r} failed ({reason}): {(response.content or '').strip()[:200]}"
+    async def _attempt(m: str, p: str):
+        return await agent_core.run_agent(
+            system, user_prompt, tools, m, p,
+            max_tokens=max_tokens, history=history,
         )
-        print(f"[DRADIS] {context_label} failed response ({reason}) — triggering fallback")
 
-    if primary_error is None and response is not None:
-        recoverable = _check_member_failures(response, settings)
-        if recoverable:
-            primary_error = RuntimeError(f"Sub-agent(s) failed: {', '.join(recoverable)}")
-            member_failed = True
-            print(f"[DRADIS] {context_label} member failure(s): {recoverable} — triggering fallback")
-
-    if primary_error is None:
-        return response, False, None
+    error = None
+    try:
+        res = await _attempt(model, provider)
+        if not res.failed:
+            print(f"[DRADIS] {context_label} ok · prompt_tokens={res.prompt_tokens} "
+                  f"completion={res.completion_tokens} tools_used={res.tools_used}")
+            return res, False, None, None
+        error = RuntimeError(f"Model {model!r} returned empty content.")
+    except Exception as e:
+        error = e
+        print(f"[DRADIS] {context_label} primary error: {e}")
 
     fb_model = (settings.get("fallback_model") or "").strip()
-    if not fb_model and not member_failed:
-        return None, False, primary_error
-
-    fb_settings = _apply_fallback_settings(settings)
-    fb_model_id = fb_settings.get("model", primary_model)
-    fb_provider = fb_settings.get("provider", primary_provider)
-    fb_members  = _build_members(fb_settings)
-    fb_executor = _build_executor(system_prompt, fb_model_id, fb_provider, fb_members, fb_settings)
-    print(f"[DRADIS] {context_label} fallback: model={fb_model_id} provider={fb_provider}")
-
+    if not fb_model:
+        return None, False, error, None
+    fb_provider = (settings.get("fallback_provider") or "").strip() or provider
+    print(f"[DRADIS] {context_label} fallback → {fb_model} ({fb_provider})")
     try:
-        response = await fb_executor.arun(prompt)
-        if _is_failed_response(response):
-            status = getattr(response, "status", None)
-            is_error_status = status is not None and (status == "ERROR" or getattr(status, "value", None) == "ERROR")
-            reason = f"status={getattr(status, 'value', status)}" if is_error_status else "empty content"
-            raise RuntimeError(
-                f"Fallback model {fb_model_id!r} also failed ({reason}): "
-                f"{(response.content or '').strip()[:200]}"
-            )
-        return response, True, None
+        res = await _attempt(fb_model, fb_provider)
+        if res.failed:
+            raise RuntimeError(f"Fallback model {fb_model!r} returned empty content.")
+        print(f"[DRADIS] {context_label} fallback ok · prompt_tokens={res.prompt_tokens}")
+        return res, True, None, error
     except Exception as e2:
-        print(f"[DRADIS] {context_label} fallback arun exception: {e2}")
-        return None, True, e2
+        print(f"[DRADIS] {context_label} fallback error: {e2}")
+        return None, True, e2, error
 
 
-def _build_fallback_used_msg(settings: dict, primary_model: str, task_name: str | None = None) -> str:
-    fb_settings = _apply_fallback_settings(settings)
-    lines = []
-    fb_main = fb_settings.get("model", primary_model)
-    if fb_main != primary_model:
-        lines.append(
-            f"DRADIS: <code>{html.escape(primary_model)}</code> → <code>{html.escape(fb_main)}</code>"
-        )
-    for agent_name, model_key in [
-        ("web_search", "ws_model"),
-        ("weather",    "weather_model"),
-        ("gcal",       "gcal_model"),
-        ("gmail",      "gmail_model"),
-        ("gtasks",     "gtasks_model"),
-    ]:
-        orig   = (settings.get(model_key) or "").strip()
-        fb_val = (fb_settings.get(model_key) or "").strip()
-        if orig and fb_val and fb_val != orig:
-            lines.append(
-                f"{agent_name}: <code>{html.escape(orig)}</code> → <code>{html.escape(fb_val)}</code>"
-            )
+def token_footer(settings: dict, result) -> str:
+    """Optional per-message token footer, empty unless 'Log token usage' is on."""
+    if not settings.get("token_usage_enabled") or result is None:
+        return ""
+    return f"🔢 in {result.prompt_tokens} · out {result.completion_tokens}"
+
+
+def _fallback_msg(reason, task_name: str | None = None) -> str:
+    """Telegram note when the fallback model was used — just that it triggered and
+    the error that caused it."""
     prefix = f"⚠️ Task <b>{html.escape(task_name)}</b>: " if task_name else "⚠️ "
-    detail = "\n" + "\n".join(f"  • {l}" for l in lines) if lines else ""
-    return f"{prefix}fallback triggered ✅{detail}"
+    return f"{prefix}fallback triggered — {html.escape(str(reason))}"
 
 
 # ── Voice transcription ───────────────────────────────────────────────────────

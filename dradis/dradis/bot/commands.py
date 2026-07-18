@@ -24,8 +24,8 @@ from web.store import (
     set_gtasks_code_event,
     set_gdrive_code_event,
 )
-from agents.gcal    import GCAL_TOKEN_FILE, _build_gcal_flow, create_gcal_agent
-from agents.gmail   import GMAIL_TOKEN_FILE, _build_gmail_flow, create_gmail_agent
+from agents.gcal    import GCAL_TOKEN_FILE, _build_gcal_flow
+from agents.gmail   import GMAIL_TOKEN_FILE, _build_gmail_flow
 from agents.gtasks  import GTASKS_TOKEN_FILE, _build_gtasks_flow
 from backup.gdrive  import GDRIVE_TOKEN_FILE, build_gdrive_flow
 

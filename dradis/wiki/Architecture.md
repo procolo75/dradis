@@ -1,21 +1,25 @@
 # Architecture
 
-## Overview
+## Overview (v3.0)
 
-DRADIS uses an **agno Team** design (`coordinate` mode): a DRADIS leader agent orchestrates a team of specialist member agents. When the user sends a message the leader decides which members to invoke, runs them **in parallel**, and synthesises their responses into a single reply. If no sub-agents are enabled, DRADIS falls back to a single-agent path with no overhead.
+DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-agents, no orchestration framework. On each message the model is called with the system prompt, the conversation and the selected tool schemas; when it requests a tool the runtime runs the function, feeds the result back, and loops until a plain-text answer is produced.
+
+**Why no framework:** v3.0 removed **agno**. A probe on Groq's `gpt-oss-120b` measured a raw `/chat/completions` request with 8 tool schemas at ~800 prompt tokens, versus ~8800 through agno — the framework added ~8000 tokens per request, making the 8K free-tier limit unreachable. The runtime now sends only what's needed.
+
+**Tools & selection:** each capability (Web Search, Weather, Calendar, Gmail, Tasks, Read URL) exposes plain tool specs via `agents/*.py:*_tools(settings)`. Chat gets all available tools; a **task selects exactly which tools** to attach (`build_tools(settings, selected)`). The single agent runs on the main model with one fallback; per-capability model settings are retired. A `max_tokens` cap (default 2048) and a **TPM probe** in the UI keep token usage observable.
 
 ## Source Layout
 
 ```
 dradis/
 ├── main.py                  # Entry point — wires all components together
-├── core.py                  # create_agent(), create_team(), provider helpers
-├── agents/
-│   ├── gcal.py              # Google Calendar sub-agent + OAuth
-│   ├── gmail.py             # Gmail sub-agent + OAuth
-│   ├── gtasks.py            # Google Tasks sub-agent + OAuth
-│   ├── weather.py           # Weather sub-agent (Open-Meteo)
-│   └── web_search.py        # Web Search sub-agent (Tavily + Jina)
+├── core.py                  # run_agent() tool-calling loop over the openai SDK (no agno)
+├── agents/                  # each module exposes *_tools(settings) → tool specs
+│   ├── gcal.py              # Google Calendar tools + OAuth
+│   ├── gmail.py             # Gmail tools + OAuth
+│   ├── gtasks.py            # Google Tasks tools + OAuth
+│   ├── weather.py           # Weather tools (Open-Meteo)
+│   └── web_search.py        # Web Search tools (Tavily + Jina)
 ├── bot/
 │   ├── state.py             # Global state, startup, settings, history, fallback engine
 │   ├── scheduler.py         # Task/monitor cron jobs, live-monitor lifecycle
@@ -63,15 +67,12 @@ Live monitors run as persistent asyncio tasks — no cron, no polling. They conn
 ```
 User (Telegram)
   → handle_message()                  [bot/handlers.py]
-  → _run_with_fallback()              [bot/state.py]
-    → _build_executor()               [bot/state.py]
-      → _build_members()              [bot/state.py]
-        → create_weather_agent()      [agents/weather.py]
-        → create_web_search_agent()   [agents/web_search.py]
-        → create_gcal_agent()         [agents/gcal.py]
-        → ...
-    → Team.arun(message)              [agno]
-  → send_message(result)              [Telegram]
+  → run_dradis(question, settings)    [bot/state.py]
+    → build_tools(settings, None)     [bot/state.py]  # all available tools
+    → run_agent(system, prompt, tools, model, provider)   [core.py]
+        loop: model → tool_calls? → run fn → feed result → repeat → final text
+    → (on error) retry once on the fallback model
+  → send_message(result.content)      [Telegram]
 ```
 
 ## Data Flow — Scheduled Monitor
