@@ -5,7 +5,7 @@ All commands are available only to the user ID configured in `telegram_allowed_c
 | Command | Description |
 |---------|-------------|
 | `/menu` | Show all available commands with descriptions |
-| `/info` | Show current configuration: provider, model, history, and status of each sub-agent |
+| `/info` | Show current configuration: provider, model, history, and which tools are enabled |
 | `/tasks` | List all tasks (✅ enabled / ⏸ disabled) as inline buttons. Tap a button to run the task immediately regardless of its enabled state |
 | `/monitors` | List all scheduled and live monitors as inline buttons. Tap a scheduled monitor to run it; tap a live monitor to see its 🟢/🔴 status |
 | `/hamonitors` | List all HA monitors with 🟢/🔴 running status. Tap one to see its name, mode, cooldown, and entity list |

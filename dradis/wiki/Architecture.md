@@ -47,14 +47,7 @@ dradis/
 
 ## Fallback Model
 
-Each agent (DRADIS, Web Search, Weather, Google Calendar, Gmail, Google Tasks) supports an independent fallback provider and model. When an API call fails, DRADIS:
-
-1. Detects the failure — agno never re-raises model errors; it sets `response.status = "ERROR"` and puts the error message in `response.content`. DRADIS checks both `status == "ERROR"` and empty content to catch all failure modes.
-2. Sends a Telegram warning: *"⚠️ Primary model failed — replied via fallback ✅"* if the fallback succeeds.
-3. Rebuilds the executor (and any sub-agents) using the fallback settings and retries.
-4. If the fallback also fails, sends a `❌ Both primary and fallback models failed` Telegram notification.
-
-The logic is centralised in `_run_with_fallback()` in `bot/state.py`, shared by both `handle_message` and `run_scheduled_task`.
+DRADIS runs on one main model. If a call fails (API error, rate limit) or returns empty content, `run_dradis()` in `bot/state.py` retries once on the configured **fallback** model/provider and posts `⚠️ fallback triggered — <error>` to Telegram. If the fallback also fails, a `❌ Both … failed` notification is sent. Leaving the fallback model blank disables the retry.
 
 ## Scheduling
 

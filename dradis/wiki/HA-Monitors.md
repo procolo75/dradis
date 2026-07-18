@@ -67,7 +67,7 @@ Expand **HA Monitors** → click `+` → configure the monitor fields → click 
 
 ### LLM Mode
 
-The full DRADIS agent (with all enabled sub-agents: Telegram, Gmail, Google Tasks, etc.) receives the entity ID, new state, previous state, timestamp, and your instructions. It executes the instructions directly — there is no SKIP mechanism. Use this when you want smart, context-aware responses (e.g. send an email, create a task, check a calendar).
+The full DRADIS agent (with all enabled tools: Gmail, Google Calendar, Google Tasks, etc.) receives the entity ID, new state, previous state, timestamp, and your instructions. It executes the instructions directly — there is no SKIP mechanism. Use this when you want smart, context-aware responses (e.g. send an email, create a task, check a calendar).
 
 ### Direct Telegram Mode
 

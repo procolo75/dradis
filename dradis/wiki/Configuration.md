@@ -1,6 +1,6 @@
 # Configuration
 
-All API keys and credentials are configured in the add-on **Configuration** tab in Home Assistant. All runtime settings (provider, model, agent options, etc.) are managed from the **Web UI** and do not require a restart.
+All API keys and credentials are configured in the add-on **Configuration** tab in Home Assistant. All runtime settings (provider, model, tools, etc.) are managed from the **Web UI** and do not require a restart.
 
 ## Configuration Tab Fields
 
@@ -12,8 +12,8 @@ All API keys and credentials are configured in the add-on **Configuration** tab 
 | `openai_api_key` | password | *(Optional)* OpenAI API key |
 | `github_token` | password | *(Optional)* GitHub Personal Access Token for GitHub Models |
 | `gemini_api_key` | password | *(Optional)* Google Gemini API key |
-| `groq_api_key` | password | *(Optional)* Groq API key — required for the Voice sub-agent |
-| `tavily_api_key` | password | *(Optional)* Tavily API key — required for the Web Search sub-agent |
+| `groq_api_key` | password | *(Optional)* Groq API key — required for Voice transcription |
+| `tavily_api_key` | password | *(Optional)* Tavily API key — required for the Web Search tool |
 | `google_client_id` | str | *(Optional)* Google OAuth2 client ID — required for Google Calendar, Gmail, and/or Google Tasks |
 | `google_client_secret` | password | *(Optional)* Google OAuth2 client secret |
 | `rapidapi_football_key` | password | *(Optional)* RapidAPI key — required for the Football Betting live monitor |
@@ -65,7 +65,7 @@ All runtime data is stored in `/data/` (inside the add-on container — never ex
 |------|-------------|
 | `/data/options.json` | HA Configuration tab values |
 | `/data/dradis_settings.json` | Web UI settings (provider, model, agent options, etc.) |
-| `/data/agents.json` | Custom sub-agent definitions |
+| `/data/agents.json` | Legacy custom-agent definitions (unused in v3) |
 | `/data/tasks.json` | Scheduled LLM tasks |
 | `/data/monitors.json` | Scheduled monitors (thunderstorm, rain, seismic) |
 | `/data/live_monitors.json` | Live monitors (lightning, seismic live, football betting) |

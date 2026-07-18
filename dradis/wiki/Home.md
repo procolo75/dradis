@@ -9,7 +9,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 | [Installation](Installation) | How to install DRADIS from a custom HA repository |
 | [Configuration](Configuration) | API keys, credentials, and HA tab options |
 | [Architecture](Architecture) | How DRADIS is structured internally |
-| [Agents](Agents) | Web Search, Weather, Voice, Google Calendar, Gmail, Google Tasks |
+| [Tools](Tools) | Web Search, Weather, Google Calendar, Gmail, Google Tasks, URL Fetch, Voice |
 | [Tasks](Tasks) | LLM-powered recurring tasks with cron scheduling |
 | [Monitors](Monitors) | Scheduled monitors: Thunderstorm, Rain, Seismic, Google Drive Backup |
 | [Live-Monitors](Live-Monitors) | Persistent push monitors: Lightning, Seismic live, Football Betting |
@@ -23,5 +23,5 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 1. [Install the add-on](Installation) from the custom repository
 2. Fill in your credentials in the **Configuration** tab
 3. Start the add-on — DRADIS sends a startup message to your Telegram chat
-4. Open the **Web UI** from the HA sidebar to enable sub-agents and create tasks
+4. Open the **Web UI** from the HA sidebar to enable tools and create tasks
 5. Talk to the bot on Telegram
