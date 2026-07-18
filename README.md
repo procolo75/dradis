@@ -2,26 +2,36 @@
 
 DRADIS is a Home Assistant add-on that exposes a conversational AI agent controllable via Telegram. The agent is fully configurable from the built-in Web UI and the HA Configuration tab — no code changes required.
 
+## Architecture (v3.0)
+
+DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-agents, no orchestration framework. On each message the model is called with the system prompt, the conversation and the selected tool schemas; when it requests a tool the runtime runs the function, feeds the result back, and loops until a plain-text answer is produced. This runs on a thin tool-calling loop over the `openai` SDK, pointed at any OpenAI-compatible provider.
+
+> v3.0 removed the **agno** framework. A probe on Groq's `gpt-oss-120b` measured a raw request with 8 tool schemas at ~800 prompt tokens versus ~8800 through agno — the framework added ~8000 tokens per request, making the 8K free-tier limit unreachable. Removing it was the fix.
+
 ## Features
 
 - **Multi-provider LLM**: OpenRouter, OpenAI, GitHub Models, Gemini, Groq — switch provider and model at runtime from the Web UI
-- **Fallback model** — each agent has a configurable fallback provider and model; when any call fails DRADIS retries automatically and notifies which models switched; if both fail, a clear `❌` message is sent
+- **One model + fallback** — the single agent runs on the main model; on an API error or empty reply it retries once on the configured fallback model and posts `⚠️ fallback triggered — <error>`; if both fail, a clear `❌` message is sent
+- **Per-tool selection for tasks** — each task attaches only the tools it needs, keeping the prompt small (key to Groq's 8000 tokens-per-minute limit)
+- **Token budget** — a `max_tokens` completion cap and an optional *Log token usage* toggle that appends `🔢 in N · out N` to every chat and task reply
 - **Conversation history** with configurable depth
 - **Telegram error notifications** — all API failures are reported via Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
 
-### Sub-agents
+### Tools
+
+The single agent calls these tools when relevant; each capability is enabled and authenticated independently:
 
 - **Web Search** — query search via Tavily (optional free API key) + URL reading via Jina Reader (free, no key required)
 - **Weather** — powered by Open-Meteo (free, no API key); current conditions + up to 16-day forecast
-- **Voice** — transcription via Groq Whisper (optional; requires Groq API key)
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
 - **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
+- **Voice** — incoming voice messages are transcribed via Groq Whisper, then handled like text (optional; requires Groq API key)
 
 ### Automation
 
-- **Scheduled Tasks** — cron-based LLM tasks delivered to Telegram; use all enabled sub-agents (Web Search, Weather, Calendar, Gmail, Tasks)
+- **Scheduled Tasks** — cron-based LLM tasks delivered to Telegram; each task selects exactly which tools it may use (all available, or a specific set), so the prompt stays small
 - **Scheduled Monitors** — LLM-free cron-based monitors that fetch data and compute results in Python (zero token cost, deterministic output):
   - ⛈️ **Thunderstorm risk** — multiplicative TRS score (0.0–1.0) from CAPE × LI × CIN via Open-Meteo; auto climate calibration from location country (Mediterranean / Continental / Northern Europe); 5 risk levels per time band
   - 🌧️ **Rain alert** — 15-min precipitation data from Open-Meteo; silent when clear
@@ -38,7 +48,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 ### Web UI
 
-- Vertical left sidebar with eight collapsible sections: Settings, Agents, Tools, Tasks, Scheduled Monitors, Live Monitors, HA Monitors
+- Vertical left sidebar with collapsible sections: Settings, Tools (Web Search, Weather, Calendar, Gmail, Tasks, URL Fetch, Voice), Tasks, Scheduled Monitors, Live Monitors, HA Monitors
 - All settings managed at runtime — no restart required
 - Live cron validation with next-fire preview
 - Live geocoding for monitors (city name → lat/lon)
@@ -59,7 +69,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 **Weather**
 > *"What's the weather in Milan tomorrow?"*
-> → DRADIS calls the Weather sub-agent and replies with current conditions and a multi-day forecast.
+> → DRADIS calls the Weather tool and replies with current conditions and a multi-day forecast.
 
 **Web search**
 > *"What are the latest Home Assistant announcements?"*
@@ -133,7 +143,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 
 | Command | Description |
 |---------|-------------|
-| `/info` | Status and configuration of all agents |
+| `/info` | Status and configuration |
 | `/menu` | List all available commands |
 | `/tasks` | List all tasks (✅ enabled / ⏸ disabled) as inline buttons — tap one to run it immediately |
 | `/monitors` | List all scheduled and live monitors — tap a scheduled one to run it; tap a live one for 🟢/🔴 status |
