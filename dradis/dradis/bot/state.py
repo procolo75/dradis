@@ -395,7 +395,9 @@ def reply_footer(settings: dict, result) -> str:
         lines.append("🔧 " + (", ".join(used) if used else "no tools"))
     if not lines:
         return ""
-    return "\n\n<i>" + "<br>".join(lines) + "</i>"
+    # Telegram HTML parse_mode supports only a small tag set (no <br>); use a real
+    # newline to separate the footer lines inside the italic block.
+    return "\n\n<i>" + "\n".join(lines) + "</i>"
 
 
 def _fallback_msg(reason, task_name: str | None = None) -> str:

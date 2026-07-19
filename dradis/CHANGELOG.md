@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [3.1.1] - 2026-07-19
+
+- **Fix — "Log tools used" crashed the reply when combined with "Log token usage"**: `reply_footer` joined the two footer lines with `<br>`, but Telegram's HTML `parse_mode` supports only a small tag set and rejects `<br>` (`BadRequest: unsupported start tag "br"`), so the whole message failed to send whenever both toggles were on. The lines are now joined with a real newline (`\n`) inside the `<i>…</i>` block. (A single footer line was unaffected, which is why 3.1.0 only broke with both logs enabled.)
+
 ## [3.1.0] - 2026-07-19
 
 - **Feat — Weather Charts: cloud cover as bars + new wind gusts and wind direction charts**:
