@@ -41,7 +41,7 @@ The single agent runs on the main model (**Settings → DRADIS**). On an API err
 
 ### Token budget & observability
 
-`max_tokens` (**Settings → DRADIS → Max completion tokens**, default 2048) caps every reply. Each run logs the exact billed `prompt_tokens`. Enable **Settings → DRADIS → Log token usage** to append `🔢 in N · out N` to every chat and task reply.
+`max_tokens` (**Settings → DRADIS → Max completion tokens**, default 2048) caps every reply. Each run logs the exact billed `prompt_tokens`. Enable **Settings → DRADIS → Log token usage** to append `🔢 in N · out N` to every chat and task reply. Enable **Settings → DRADIS → Log tools used** to append `🔧 tool1, tool2` (the tools DRADIS called that turn) — useful to see which capabilities each chat or task exercised.
 
 **Extensibility**: adding a capability means writing a `X_tools(settings)` builder in `agents/X.py` and registering it in `bot/state.py:_capability_tool_groups()` and `web/store.py:available_tool_catalogue()`.
 
@@ -181,6 +181,7 @@ Lets you edit all non-sensitive DRADIS settings at runtime without restarting th
 | Conversation history depth | `2` | Number of past exchanges kept in context (resets on restart). |
 | Max completion tokens | `2048` | Caps the model's reply length (passed as `max_tokens`) so prompt+reply stay inside the model context window. Keep it at 2048 for the Groq 8K free tier; raise it for larger-context providers. |
 | Log token usage | `off` | When on, appends `🔢 in N · out N` (input/output tokens) to every chat and task reply. |
+| Log tools used | `off` | When on, appends `🔧 tool1, tool2` (the tools DRADIS called that turn, deduped) to every chat and task reply; shows `🔧 no tools` when the reply used none. |
 | Timezone for scheduled tasks | `UTC` | Timezone used to interpret all cron expressions. Select from the dropdown (covers Europe, Americas, Asia, Africa, Pacific). Changes take effect on next save — no restart required. |
 
 **Model selection by provider:**
@@ -450,16 +451,18 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 | Precipitation | mm | Bar | Always sent (shows 0 if no rain expected) |
 | Precipitation Probability | % | Bar | ECMWF IFS + GFS only; always sent |
 | Wind Speed 10m | km/h | Line | All models |
+| Wind Gusts 10m | km/h | Line | All models |
+| Wind Direction 10m | ° | Arrows | One lane per model; arrows point downwind |
 | Humidity 2m | % | Line | All models |
 | Sea Level Pressure | hPa | Line | All models |
-| Cloud Cover | % | Line | All models |
+| Cloud Cover | % | Bar | Always sent (0 if clear sky) |
 | UV Index | — | Bar | GFS only; suppressed if all-zero |
 | Geopotential 500 hPa | m | Line | All models |
 | Temperature 850 hPa | °C | Line | All models |
 
 **Chart appearance:** 16×5 inch figure at 150 dpi, dark theme (#111 background), five high-contrast colours (blue / red / green / amber / magenta), 2-px line width. Each chart title includes the variable name, location, forecast days, and generation timestamp.
 
-**Precipitation and precipitation probability** are sent even when all values are zero, so the absence of bars communicates "no rain expected." All other bar-type variables are suppressed if no model returns any non-zero value.
+**Precipitation, precipitation probability and cloud cover** are sent even when all values are zero, so the absence of bars communicates "no rain / clear sky." All other bar-type variables are suppressed if no model returns any non-zero value. **Wind direction** is drawn as arrow lanes — one horizontal lane per model, with a uniform arrow every 3 hours pointing downwind (the way the wind blows toward). This avoids both the compass wraparound problem (359°→0°) of a line and the unreadable overlapping-point cloud a multi-model 0–360° scatter produces.
 
 **Configuration fields:**
 
@@ -626,6 +629,7 @@ Polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse
 2. Match minute falls inside a configured **minute window** (default: 55′–65′ and/or 75′–81′)
 3. **Goal difference == 1** (exactly one team ahead)
 4. The **losing team's next-goal odds are lower** than the winning team's — a market signal that the losing team is expected to equalise
+5. The **losing team's next-goal odds are below the configured maximum** (default `2.0`) — filters out long-shot signals
 
 **Provider fallback:** the API is queried via `provider1` → `provider2` → `provider3` → `provider4`; the first successful response wins.
 
@@ -643,13 +647,14 @@ Negele Arsi Ketema vs Hawassa Kenema SC
 | Field | Description |
 |-------|-------------|
 | Minute windows | Checkboxes for 55′–65′ and 75′–81′ (both enabled by default). More windows coming in a future release. |
+| Maximum odds | Alert only when the losing team's next-goal odds are below this value (default `2.0`). The 🔍 Test API table honours the same cap. |
 | API pause | Time range during which API calls are suppressed (default 23:00–07:00). Leave blank to disable. |
 
 **🔍 Test API button:** fetches all current live matches and renders them in a table with columns: minute, league, home, away, score, next-goal odds (home / away), and a 🔔 signal flag. Matches that meet all alert conditions are highlighted in green; matches in a window with 1-goal difference but without the odds signal are highlighted in yellow.
 
 **Deduplication:** one alert is sent per match per window. The alert key (`match_id:window`) is pruned automatically when the match leaves the live feed — a new alert fires if the same match re-enters a window.
 
-**More options coming soon:** additional minute windows, configurable goal-difference threshold, minimum-odds filter, and league filtering are planned for upcoming releases.
+**More options coming soon:** additional minute windows, configurable goal-difference threshold, and league filtering are planned for upcoming releases.
 
 **Example configuration:**
 

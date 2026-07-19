@@ -23,27 +23,27 @@ _FOOTBALL_PROVIDERS = {"provider1", "provider2", "provider3", "provider4"}
 
 
 @router.get("/api/football/inplaying")
-async def football_inplaying():
+async def football_inplaying(max_odds: float = 2.0):
     import bot.state as _state
     if not _state.RAPIDAPI_FOOTBALL_KEY:
         raise HTTPException(status_code=400, detail="rapidapi_football_key not configured in add-on settings")
     try:
         from live_monitors.football import fetch_inplaying_data
-        matches = await fetch_inplaying_data()
+        matches = await fetch_inplaying_data(max_odds)
         return {"count": len(matches), "matches": matches}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/api/football/provider/{provider_name}")
-async def football_provider_test(provider_name: str):
+async def football_provider_test(provider_name: str, max_odds: float = 2.0):
     import bot.state as _state
     if provider_name not in _FOOTBALL_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_name}")
     if not _state.RAPIDAPI_FOOTBALL_KEY:
         raise HTTPException(status_code=400, detail="rapidapi_football_key not configured in add-on settings")
     from live_monitors.football import fetch_provider_data
-    return await fetch_provider_data(provider_name)
+    return await fetch_provider_data(provider_name, max_odds)
 
 
 # ── Web Search ────────────────────────────────────────────────────────────────

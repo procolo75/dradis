@@ -379,11 +379,23 @@ async def run_dradis(
         return None, True, e2, error
 
 
-def token_footer(settings: dict, result) -> str:
-    """Optional per-message token footer, empty unless 'Log token usage' is on."""
-    if not settings.get("token_usage_enabled") or result is None:
+def reply_footer(settings: dict, result) -> str:
+    """Optional per-message footer appended to chat & task replies. Each line is
+    gated by its own setting: 'Log token usage' adds input/output token counts,
+    'Log tools used' adds the tools DRADIS called this turn (deduped, in order).
+    Returns a ready-to-append HTML fragment (leading blank line + <i>…</i>), or "".
+    """
+    if result is None:
         return ""
-    return f"🔢 in {result.prompt_tokens} · out {result.completion_tokens}"
+    lines: list[str] = []
+    if settings.get("token_usage_enabled"):
+        lines.append(f"🔢 in {result.prompt_tokens} · out {result.completion_tokens}")
+    if settings.get("tools_usage_enabled"):
+        used = list(dict.fromkeys(result.tools_used or []))
+        lines.append("🔧 " + (", ".join(used) if used else "no tools"))
+    if not lines:
+        return ""
+    return "\n\n<i>" + "<br>".join(lines) + "</i>"
 
 
 def _fallback_msg(reason, task_name: str | None = None) -> str:

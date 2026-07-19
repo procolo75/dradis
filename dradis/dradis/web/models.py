@@ -60,6 +60,7 @@ class LiveMonitorPayload(BaseModel):
     quiet_start:     str       = ""
     quiet_end:       str       = ""
     windows:         list[str] = ["55-65", "75-81"]
+    max_odds:        float     = 2.0
     telegram_bot_id: str       = "default"
 
 
@@ -89,6 +90,7 @@ class SettingsPayload(BaseModel):
     model:                str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     max_tokens:           int  = 2048
     token_usage_enabled:  bool = False
+    tools_usage_enabled:  bool = False
     history_enabled:      bool = True
     history_depth:        int  = 2
     startup_message:      str  = "✅ DRADIS online and ready."

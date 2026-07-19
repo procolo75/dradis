@@ -20,6 +20,7 @@ import asyncio
 import html
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -38,11 +39,15 @@ _ALL_WINDOWS: dict[str, tuple[int, int]] = {
 }
 
 
-def _in_quiet_window(quiet_start: str, quiet_end: str) -> bool:
+def _in_quiet_window(quiet_start: str, quiet_end: str, tz_name: str = "UTC") -> bool:
     if not quiet_start or not quiet_end:
         return False
     try:
-        now = datetime.now().time()
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+        now = datetime.now(tz).time()
         qs  = datetime.strptime(quiet_start, "%H:%M").time()
         qe  = datetime.strptime(quiet_end,   "%H:%M").time()
         if qs <= qe:
@@ -67,11 +72,12 @@ def _build_headers() -> dict:
 
 
 class FootballLiveMonitor:
-    def __init__(self, cfg: dict, send_fn):
+    def __init__(self, cfg: dict, send_fn, tz_name: str = "UTC"):
         self.monitor_id = cfg["id"]
         self.name       = cfg.get("name", "Football Betting")
         self._send      = send_fn
         self._enabled   = bool(cfg.get("enabled", True))
+        self.tz_name    = tz_name
 
         raw_windows = cfg.get("windows") or list(_ALL_WINDOWS.keys())
         self._windows: list[tuple[str, int, int]] = [
@@ -83,9 +89,12 @@ class FootballLiveMonitor:
         self._quiet_start: str = cfg.get("quiet_start") or "23:00"
         self._quiet_end:   str = cfg.get("quiet_end")   or "07:00"
 
+        # Only alert when the losing team's next-goal odds are below this cap.
+        self._max_odds: float = float(cfg.get("max_odds") or 2.0)
+
         self._alerted: set[str] = set()
         self._task: asyncio.Task | None = None
-        print(f"[FootballMonitor] '{self.name}' init — windows: {[w[0] for w in self._windows]} quiet: {self._quiet_start}–{self._quiet_end}")
+        print(f"[FootballMonitor] '{self.name}' init — windows: {[w[0] for w in self._windows]} quiet: {self._quiet_start}–{self._quiet_end} max_odds: {self._max_odds}")
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -122,7 +131,7 @@ class FootballLiveMonitor:
     async def _poll(self) -> None:
         if not self._enabled:
             return
-        if _in_quiet_window(self._quiet_start, self._quiet_end):
+        if _in_quiet_window(self._quiet_start, self._quiet_end, self.tz_name):
             print(f"[FootballMonitor] '{self.name}' quiet window ({self._quiet_start}–{self._quiet_end}), skipping poll")
             return
         if not _state.RAPIDAPI_FOOTBALL_KEY:
@@ -209,6 +218,10 @@ class FootballLiveMonitor:
 
             if losing_odds >= winning_odds:
                 continue
+            # Skip long-shot bets: the losing team's next-goal odds must be below
+            # the configured cap (default 2.0) for the signal to be worth an alert.
+            if losing_odds >= self._max_odds:
+                continue
             n_signal += 1
 
             self._alerted.add(alert_key)
@@ -223,7 +236,8 @@ class FootballLiveMonitor:
             )
             print(
                 f"[FootballMonitor] '{self.name}' ALERT {alert_key} "
-                f"{losing_team} next={losing_odds:.2f} < {winning_team} next={winning_odds:.2f}"
+                f"{losing_team} next={losing_odds:.2f} < {winning_team} next={winning_odds:.2f} "
+                f"(max_odds={self._max_odds})"
             )
             try:
                 await self._send(msg)
@@ -293,7 +307,7 @@ class FootballLiveMonitor:
 
 # ── Standalone test helpers (used by /api/football/…) ────────────────────────
 
-def _normalise_for_ui(match_id: str, obj: dict, provider: str) -> dict:
+def _normalise_for_ui(match_id: str, obj: dict, provider: str, max_odds: float = 2.0) -> dict:
     m    = FootballLiveMonitor._normalise(match_id, obj)
     odds = m["odds"]
     tot  = m["home_score"] + m["away_score"]
@@ -318,9 +332,10 @@ def _normalise_for_ui(match_id: str, obj: dict, provider: str) -> dict:
     in_75_81       = is_second_half and 75 < minute < 81
     signal = False
     if is_second_half and (in_55_65 or in_75_81) and abs(diff) == 1 and ng_home is not None and ng_away is not None:
-        if diff > 0 and ng_away < ng_home:
+        # Losing team's next-goal odds must beat the winning team's AND be below the cap.
+        if diff > 0 and ng_away < ng_home and ng_away < max_odds:
             signal = True
-        elif diff < 0 and ng_home < ng_away:
+        elif diff < 0 and ng_home < ng_away and ng_home < max_odds:
             signal = True
     return {
         "id":         m["id"],
@@ -341,7 +356,7 @@ def _normalise_for_ui(match_id: str, obj: dict, provider: str) -> dict:
     }
 
 
-async def fetch_provider_data(provider_name: str) -> dict:
+async def fetch_provider_data(provider_name: str, max_odds: float = 2.0) -> dict:
     """Fetch from a single named provider. Returns {ok, count, matches, error}."""
     async with httpx.AsyncClient(timeout=30) as client:
         url = f"{_BASE_URL}/{provider_name}/live/inplaying"
@@ -353,15 +368,15 @@ async def fetch_provider_data(provider_name: str) -> dict:
             return {"ok": False, "error": str(e), "count": 0, "matches": []}
         if not isinstance(raw, dict) or not raw:
             return {"ok": False, "error": f"Empty/invalid response ({type(raw).__name__})", "count": 0, "matches": []}
-        matches = [_normalise_for_ui(mid, obj, provider_name) for mid, obj in raw.items()]
+        matches = [_normalise_for_ui(mid, obj, provider_name, max_odds) for mid, obj in raw.items()]
         matches.sort(key=lambda x: x["minutes"], reverse=True)
         return {"ok": True, "error": None, "count": len(matches), "matches": matches}
 
 
-async def fetch_inplaying_data() -> list[dict]:
+async def fetch_inplaying_data(max_odds: float = 2.0) -> list[dict]:
     """Fetch from providers in order; return matches from first successful one."""
     for provider in _PROVIDERS:
-        result = await fetch_provider_data(provider)
+        result = await fetch_provider_data(provider, max_odds)
         if result["ok"]:
             return result["matches"]
     return []
@@ -373,7 +388,7 @@ class FootballMonitorManager:
     def __init__(self):
         self._monitors: dict[str, FootballLiveMonitor] = {}
 
-    def reload(self, configs: list[dict], make_send_fn) -> None:
+    def reload(self, configs: list[dict], make_send_fn, tz_name: str = "UTC") -> None:
         wanted: set[str] = set()
         for cfg in configs:
             if cfg.get("type") != "football_betting":
@@ -382,7 +397,7 @@ class FootballMonitorManager:
             wanted.add(mid)
             if mid in self._monitors:
                 self._monitors[mid].stop()
-            m = FootballLiveMonitor(cfg, make_send_fn(cfg))
+            m = FootballLiveMonitor(cfg, make_send_fn(cfg), tz_name)
             self._monitors[mid] = m
             m.start()
         for mid in list(self._monitors):

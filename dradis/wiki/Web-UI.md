@@ -24,6 +24,7 @@ Runtime settings for the DRADIS agent. Saved to `/data/dradis_settings.json`, ef
 | Conversation history depth | `2` | Past exchanges kept in context (resets on restart). |
 | Max completion tokens | `2048` | Caps the reply (`max_tokens`) so prompt+reply fit the context window. Keep 2048 for Groq 8K. |
 | Log token usage | `off` | When on, appends `🔢 in N · out N` to every chat and task reply. |
+| Log tools used | `off` | When on, appends `🔧 tool1, tool2` (the tools DRADIS called that turn) to every chat and task reply. |
 | Timezone | `UTC` | Timezone for all cron expressions. |
 
 **Model loading by provider:** OpenRouter 🔄 fetches free ≥30B tool-calling models (⚡ speed-tests, keeps top 5); OpenAI fetches the GPT-4o family; GitHub Models / Gemini use fixed presets; Groq 🔄 fetches its LLM models (Whisper excluded).

@@ -472,6 +472,16 @@
         </div>
 
         <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Log tools used <span style="font-weight:400;color:var(--text-muted)">— append the tools DRADIS called to every chat & task reply</span></span>
+            <label class="toggle">
+              <input type="checkbox" id="s-tools-usage">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
           <label for="s-timezone">Timezone for scheduled tasks</label>
           <select id="s-timezone" style="max-width:320px">
             <option value="UTC">UTC</option>
@@ -1375,6 +1385,7 @@ async function loadSettings() {
   document.getElementById("s-history-depth").value   = s.history_depth      ?? 2;
   document.getElementById("s-max-tokens").value      = s.max_tokens         ?? 2048;
   document.getElementById("s-token-usage").checked   = s.token_usage_enabled === true;
+  document.getElementById("s-tools-usage").checked   = s.tools_usage_enabled === true;
   const tzVal = s.timezone || "UTC";
   const tzSel = document.getElementById("s-timezone");
   if (![...tzSel.options].some(o => o.value === tzVal)) {
@@ -1687,6 +1698,7 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     history_depth:      parseInt(document.getElementById("s-history-depth").value, 10) || 2,
     max_tokens:         parseInt(document.getElementById("s-max-tokens").value, 10) || 2048,
     token_usage_enabled: document.getElementById("s-token-usage").checked,
+    tools_usage_enabled: document.getElementById("s-tools-usage").checked,
     timezone:                 document.getElementById("s-timezone").value.trim() || "UTC",
   };
   try {
@@ -3492,6 +3504,8 @@ function renderMonitorForm(monitor) {
             ["precipitation",               "Precipitation (mm)"],
             ["precipitation_probability",   "Precip. Probability (%)"],
             ["wind_speed_10m",              "Wind 10m (km/h)"],
+            ["wind_gusts_10m",              "Wind Gusts 10m (km/h)"],
+            ["wind_direction_10m",          "Wind Direction 10m (°)"],
             ["relative_humidity_2m",        "Humidity 2m (%)"],
             ["pressure_msl",                "Sea Level Pressure (hPa)"],
             ["cloud_cover",                 "Cloud Cover (%)"],
@@ -3795,7 +3809,7 @@ function renderLiveMonitorForm(monitor) {
   const _TYPE_DESCS_LIVE = {
     lightning:        "Persistent MQTT listener on Blitzortung. Strikes within radius buffered 15 min; DBSCAN (eps=8 km) every 2 min finds storm cells, then all activity is reduced to one scalar — the nearest cell's distance — tracked as a 30-min series for trend/ETA. A single threat state machine sends 🟡 WATCH → 🔴 WARNING → ✅ CLEAR: alerts only on level change (+10-min periodic in WARNING), WARNING needs a confirmed approach, CLEAR needs 25 min of silence (hysteresis, no flapping). No LLM, no cron.",
     seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
-    football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
+    football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's AND below the configured maximum odds, in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };
 
   panel.innerHTML = `
@@ -3876,7 +3890,12 @@ function renderLiveMonitorForm(monitor) {
           <label><input type="checkbox" class="lm-window" value="55-65" ${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "checked" : ""}> 55'–65'</label>
           <label><input type="checkbox" class="lm-window" value="75-81" ${(monitor.windows||["55-65","75-81"]).includes("75-81") ? "checked" : ""}> 75'–81'</label>
         </div>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Alert when losing team's next-goal odds &lt; winning team's next-goal odds. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Alert when losing team's next-goal odds &lt; winning team's next-goal odds AND below the maximum odds below. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
+
+        <div class="form-group" style="margin-top:12px">
+          <label for="lm-max-odds">Maximum odds <span style="font-weight:400;color:var(--text-muted)">— alert only if the losing team's next-goal odds are under this value</span></label>
+          <input type="number" id="lm-max-odds" min="1" step="0.1" value="${monitor.max_odds ?? 2.0}" style="width:100px">
+        </div>
 
         <div style="margin-top:12px">
           <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -3966,7 +3985,8 @@ function renderLiveMonitorForm(monitor) {
       statusEl.style.color = "var(--text-muted)";
       resultsEl.style.display = "none";
       try {
-        const data = await api("GET", `/api/football/provider/${provider}`);
+        const maxOdds = parseFloat(document.getElementById("lm-max-odds")?.value) || 2.0;
+        const data = await api("GET", `/api/football/provider/${provider}?max_odds=${encodeURIComponent(maxOdds)}`);
         if (!data.ok) {
           statusEl.textContent = `❌ ${data.error}`;
           statusEl.style.color = "var(--danger)";
@@ -4047,6 +4067,7 @@ function renderLiveMonitorForm(monitor) {
       radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 100,
       areas:        Array.from(document.querySelectorAll(".lm-area:checked")).map(c => c.value),
       windows:      Array.from(document.querySelectorAll(".lm-window:checked")).map(c => c.value),
+      max_odds:     parseFloat(document.getElementById("lm-max-odds")?.value) || 2.0,
       language:     document.getElementById("lm-language").value,
       quiet_start:     document.getElementById("lm-quiet-start")?.value || "",
       quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
@@ -4093,6 +4114,7 @@ function renderLiveMonitorForm(monitor) {
         language:        src.language,
         areas:           src.areas   || [],
         windows:         src.windows || ["55-65", "75-81"],
+        max_odds:        src.max_odds ?? 2.0,
         telegram_bot_id: src.telegram_bot_id || "default",
       });
       liveMonitors.push(copy);

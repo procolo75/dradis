@@ -14,6 +14,7 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 - **One model + fallback** — the single agent runs on the main model; on an API error or empty reply it retries once on the configured fallback model and posts `⚠️ fallback triggered — <error>`; if both fail, a clear `❌` message is sent
 - **Per-tool selection for tasks** — each task attaches only the tools it needs, keeping the prompt small (key to Groq's 8000 tokens-per-minute limit)
 - **Token budget** — a `max_tokens` completion cap and an optional *Log token usage* toggle that appends `🔢 in N · out N` to every chat and task reply
+- **Tool visibility** — an optional *Log tools used* toggle that appends `🔧 tool1, tool2` (the tools DRADIS called that turn) to every chat and task reply
 - **Conversation history** with configurable depth
 - **Telegram error notifications** — all API failures are reported via Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
@@ -36,10 +37,12 @@ The single agent calls these tools when relevant; each capability is enabled and
   - ⛈️ **Thunderstorm risk** — multiplicative TRS score (0.0–1.0) from CAPE × LI × CIN via Open-Meteo; auto climate calibration from location country (Mediterranean / Continental / Northern Europe); 5 risk levels per time band
   - 🌧️ **Rain alert** — 15-min precipitation data from Open-Meteo; silent when clear
   - 🌍 **Seismic report** — event statistics from INGV GOSSIP JSON API (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli)
+  - 📊 **Weather Charts** — LLM-free multi-model Open-Meteo forecast charts (temperature, precipitation, wind speed/gusts/direction, cloud cover, pressure, humidity, geopotential, …); one PNG per variable sent to Telegram — cloud cover as bars, wind direction as per-model arrow lanes
   - ☁️ **Google Drive Backup** — uploads all sensitive DRADIS config files to a dedicated "DRADIS Backup" Drive folder; `drive.file` scope only (no full Drive access)
 - **Live Monitors** — persistent push-based monitors that react to external events in real time:
   - ⚡ **Lightning alert** — persistent MQTT listener; pure-Python DBSCAN clustering on a 15-min sliding window classifies each storm cell as APPROACHING/RETREATING/STATIONARY; zone-based alerts (initial detection, zone crossing, periodic re-alert every 10 min, all-clear after 15 min of silence); multi-storm support; no cron, no LLM
   - 🌍 **Seismic live** — polls INGV GOSSIP JSON API every 60 s; alerts on new events and Automatic→Revised promotions; quiet-hours support
+  - ⚽ **Football Betting** — polls a live-odds API every 5 min; alerts when a losing team's next-goal odds beat the winning team's and are below a configurable maximum, inside configurable 2nd-half minute windows; provider fallback; timezone-aware quiet hours; no cron, no LLM
 - **HA Monitors** — monitor any Home Assistant entity via MQTT statestream; two alert modes:
   - **LLM**: DRADIS processes the state change with your binding instructions (can send Telegram, email, create tasks, etc.)
   - **Direct Telegram**: fixed-format message, zero LLM cost

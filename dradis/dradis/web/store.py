@@ -69,7 +69,7 @@ GEMINI_MODELS = [
 
 SETTINGS_KEYS = [
     "provider", "agent_instructions", "model", "fallback_provider", "fallback_model",
-    "max_tokens", "token_usage_enabled",
+    "max_tokens", "token_usage_enabled", "tools_usage_enabled",
     "history_enabled", "history_depth", "startup_message", "timezone",
     "ws_enabled", "ws_provider", "ws_model", "ws_instructions",
     "ws_fallback_provider", "ws_fallback_model",
@@ -92,6 +92,7 @@ SETTINGS_DEFAULTS: dict = {
     "model":                "nvidia/nemotron-3-nano-30b-a3b:free",
     "max_tokens":           2048,
     "token_usage_enabled":  False,
+    "tools_usage_enabled":  False,
     "history_enabled":      True,
     "history_depth":        2,
     "startup_message":      "✅ DRADIS online and ready.",

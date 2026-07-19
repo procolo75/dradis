@@ -87,8 +87,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _state._send_error_telegram(_state._fallback_msg(fb_reason))
 
     text   = (result.content or "").strip()
-    footer = _state.token_footer(settings, result)
-    footer = f"\n\n<i>{footer}</i>" if footer else ""
+    footer = _state.reply_footer(settings, result)
 
     if history_enabled:
         _state.save_turn("user", question, history_depth)

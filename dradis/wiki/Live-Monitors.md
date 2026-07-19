@@ -134,6 +134,7 @@ Polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse
 2. Match minute falls inside a configured **minute window** (e.g. 55′–65′ or 75′–81′)
 3. **Goal difference == 1** (one team leads by exactly one goal)
 4. The **losing team's next-goal odds are lower** than the winning team's — the market expects the trailing team to score next
+5. The **losing team's next-goal odds are below the configured maximum** (default `2.0`) — filters out long-shot signals
 
 This combination identifies matches where the statistics and betting market both suggest the losing team has the momentum to equalise — a classically exploitable live-betting signal.
 
@@ -144,7 +145,8 @@ This combination identifies matches where the statistics and betting market both
 | Field | Description |
 |-------|-------------|
 | Minute windows | Select one or both: **55′–65′** and **75′–81′**. Both are enabled by default. Additional windows are planned for a future release. |
-| API pause | Time range during which API calls are suppressed (default 23:00–07:00). Avoids unnecessary API usage overnight. Leave blank to disable. |
+| Maximum odds | Alert only when the losing team's next-goal odds are below this value (default `2.0`). The 🔍 Test API table honours the same cap. |
+| API pause | Time range during which API calls are suppressed (default 23:00–07:00, evaluated in the configured timezone). Avoids unnecessary API usage overnight. Leave blank to disable. |
 
 ### Provider Fallback
 
@@ -183,7 +185,6 @@ One alert is sent per **match × window**. The alert key is pruned as soon as th
 
 The following options are planned for upcoming releases:
 - Additional configurable minute windows
-- Minimum next-goal odds threshold (filter out very short-priced favourites)
 - Goal-difference threshold (e.g. allow alerts when difference == 2)
 - League or competition filter
 
@@ -193,6 +194,7 @@ The following options are planned for upcoming releases:
 Name:          Football Betting
 Type:          ⚽ Football Betting (RapidAPI)
 Minute windows: 55′–65′ ✅  75′–81′ ✅
+Maximum odds:  2.0
 API pause:     23:00 – 07:00
 Telegram bot:  default
 ```

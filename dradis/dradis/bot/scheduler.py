@@ -121,8 +121,7 @@ async def run_scheduled_task(task: dict):
         )
 
     text   = (result.content or "").strip()
-    footer = _state.token_footer(settings, result)
-    footer = f"\n\n<i>{footer}</i>" if footer else ""
+    footer = _state.reply_footer(settings, result)
 
     if text:
         bot, chat_id = _state.get_bot_and_chat(bot_id)
@@ -322,7 +321,7 @@ def reload_live_monitors():
     configs = load_live_monitors()
     live_monitor_manager.reload(configs, _make_send, tz_name)
     seismic_monitor_manager.reload(configs, _make_send, tz_name)
-    football_monitor_manager.reload(configs, _make_send)
+    football_monitor_manager.reload(configs, _make_send, tz_name)
 
 
 def _live_status_dispatcher(monitor_id: str) -> str:

@@ -15,12 +15,15 @@ Supported variables (chart_variables config param):
   temperature_2m              Temperature 2 m
   precipitation               Precipitation
   wind_speed_10m              Wind speed 10 m
+  wind_gusts_10m              Wind gusts 10 m
+  wind_direction_10m          Wind direction 10 m (compass scatter)
   relative_humidity_2m        Relative humidity 2 m
   geopotential_height_500hPa  Geopotential 500 hPa
   temperature_850hPa          Temperature 850 hPa
 """
 
 import io
+import math
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -83,6 +86,17 @@ VARIABLES = {
         "unit":  "km/h",
         "bar":   False,
     },
+    "wind_gusts_10m": {
+        "label": "Wind Gusts 10m",
+        "unit":  "km/h",
+        "bar":   False,
+    },
+    "wind_direction_10m": {
+        "label":   "Wind Direction 10m",
+        "unit":    "°",
+        "bar":     False,
+        "compass": True,   # rendered as per-model arrow lanes (see _plot_wind_arrows)
+    },
     "relative_humidity_2m": {
         "label": "Humidity 2m",
         "unit":  "%",
@@ -116,7 +130,7 @@ VARIABLES = {
     "cloud_cover": {
         "label": "Cloud Cover",
         "unit":  "%",
-        "bar":   False,
+        "bar":   True,
     },
     "uv_index": {
         "label": "UV Index",
@@ -185,8 +199,51 @@ def _parse_times(data: dict, tz: ZoneInfo) -> list[datetime]:
     return result
 
 
-# Variables always sent even if all values are zero (to convey "no rain expected")
-_ALWAYS_SEND = {"precipitation", "precipitation_probability"}
+# Variables always sent even if all values are zero. precipitation/probability
+# convey "no rain expected"; cloud_cover (a bar var) must render even for a fully
+# clear forecast so a user-selected chart never silently disappears.
+_ALWAYS_SEND = {"precipitation", "precipitation_probability", "cloud_cover"}
+
+
+# ── Wind-direction arrows (compass) ──────────────────────────────────────────
+
+def _plot_wind_arrows(ax, var_id: str, model_ids: list, model_data: dict) -> None:
+    """Render wind direction as one horizontal lane per model. Every few hours a
+    uniform-length arrow points downwind (the way the wind blows *toward*). This
+    replaces the multi-model 0–360° scatter, which was an unreadable cloud of
+    overlapping points once more than one model was plotted."""
+    step = 3  # hours between arrows, to keep each lane uncluttered
+    n = len(model_ids)
+    for lane, model_id in enumerate(model_ids):
+        times, hourly = model_data[model_id]
+        raw = hourly.get(var_id, [])
+        if not raw:
+            continue
+        xs, us, vs = [], [], []
+        for i in range(0, min(len(times), len(raw)), step):
+            d = raw[i]
+            if d is None:
+                continue
+            rad = math.radians(d)
+            # Meteorological bearing is the direction the wind blows *from*; point
+            # the arrow downwind (θ+180). In the screen frame (angles="uv", N up /
+            # E right) a "from" bearing θ is (sinθ, cosθ), so downwind is negated.
+            us.append(-math.sin(rad))
+            vs.append(-math.cos(rad))
+            xs.append(mdates.date2num(times[i]))
+        if not xs:
+            continue
+        color = _COLORS[lane % len(_COLORS)]
+        ax.quiver(xs, [lane] * len(xs), us, vs,
+                  color=color, angles="uv", pivot="mid",
+                  scale=34, scale_units="width", width=0.0028,
+                  headwidth=4, headlength=5, headaxislength=4.5)
+    ax.xaxis_date()
+    ax.set_yticks(range(n))
+    ax.set_yticklabels([MODELS.get(m, {}).get("label", m) for m in model_ids])
+    ax.set_ylim(-0.6, n - 0.4)
+    ax.text(0.004, 1.015, "arrows point downwind", transform=ax.transAxes,
+            fontsize=8, color="#9e9e9e", ha="left", va="bottom")
 
 
 # ── Single-variable chart ────────────────────────────────────────────────────
@@ -211,38 +268,45 @@ def _generate_single_chart(
 
     model_ids = list(model_data.keys())
 
-    for mi, model_id in enumerate(model_ids):
-        times, hourly = model_data[model_id]
-        raw_vals = hourly.get(var_id, [])
-        if not raw_vals or all(v is None for v in raw_vals):
-            continue
-        # for bar vars not in _ALWAYS_SEND, skip models with all-zero data
-        if vinfo.get("bar") and var_id not in _ALWAYS_SEND:
-            if not any(v is not None and v > 0 for v in raw_vals):
+    if vinfo.get("compass"):
+        # Wind direction: per-model arrow lanes (unreadable as a multi-model scatter).
+        _plot_wind_arrows(ax, var_id, model_ids, model_data)
+    else:
+        for mi, model_id in enumerate(model_ids):
+            times, hourly = model_data[model_id]
+            raw_vals = hourly.get(var_id, [])
+            if not raw_vals or all(v is None for v in raw_vals):
                 continue
-        vals  = [float(v) if v is not None else float("nan") for v in raw_vals]
-        color = _COLORS[mi % len(_COLORS)]
-        mlabel = MODELS.get(model_id, {}).get("label", model_id)
+            # for bar vars not in _ALWAYS_SEND, skip models with all-zero data
+            if vinfo.get("bar") and var_id not in _ALWAYS_SEND:
+                if not any(v is not None and v > 0 for v in raw_vals):
+                    continue
+            vals  = [float(v) if v is not None else float("nan") for v in raw_vals]
+            color = _COLORS[mi % len(_COLORS)]
+            mlabel = MODELS.get(model_id, {}).get("label", model_id)
 
-        if vinfo.get("bar"):
-            width = 1 / 24 * 0.8  # bar width = 1 hour in matplotlib date units
-            ax.bar(times, vals, width=width, color=color, alpha=0.6, label=mlabel)
-        else:
-            ax.plot(times, vals, color=color, linewidth=2.2, label=mlabel, alpha=0.95)
+            if vinfo.get("bar"):
+                width = 1 / 24 * 0.8  # bar width = 1 hour in matplotlib date units
+                ax.bar(times, vals, width=width, color=color, alpha=0.6, label=mlabel)
+            else:
+                ax.plot(times, vals, color=color, linewidth=2.2, label=mlabel, alpha=0.95)
 
-    # Percentage variables are bounded 0–100; pin the axis so bars are not
-    # auto-scaled to the data max (which would exaggerate low probabilities).
-    if unit == "%":
-        ax.set_ylim(0, 100)
+        # Percentage variables are bounded 0–100; pin the axis so bars are not
+        # auto-scaled to the data max (which would exaggerate low probabilities).
+        if unit == "%":
+            ax.set_ylim(0, 100)
 
-    ylabel = f"{label} ({unit})" if unit else label
-    ax.set_ylabel(ylabel, color="#9e9e9e", fontsize=10)
+    # Value charts get a y-axis label + model legend; the compass chart instead
+    # labels its y-ticks with model names (set in _plot_wind_arrows) and needs neither.
+    if not vinfo.get("compass"):
+        ylabel = f"{label} ({unit})" if unit else label
+        ax.set_ylabel(ylabel, color="#9e9e9e", fontsize=10)
 
-    handles, hlabels = ax.get_legend_handles_labels()
-    if handles:
-        ax.legend(handles, hlabels, loc="upper right", fontsize=9,
-                  facecolor="#1e1e1e", edgecolor="#444",
-                  labelcolor="#e1e1e1", framealpha=0.85)
+        handles, hlabels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(handles, hlabels, loc="upper right", fontsize=9,
+                      facecolor="#1e1e1e", edgecolor="#444",
+                      labelcolor="#e1e1e1", framealpha=0.85)
 
     ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18]))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m\n%H:%M"))
