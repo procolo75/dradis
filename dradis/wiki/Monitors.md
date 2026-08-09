@@ -19,7 +19,7 @@ Click `+` in the **Scheduled Monitors** sidebar header.
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Green dot in sidebar when active. |
-| Monitor type | **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **🌍 Seismic report**, or **☁️ Google Drive Backup**. |
+| Monitor type | **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts**, **🌍 Seismic report**, or **☁️ Google Drive Backup**. |
 | Response language | 🇮🇹 Italiano (default) or 🇬🇧 English. |
 | Location | City name — resolved to coordinates via Open-Meteo geocoding. Live hint shows coordinates as you type. Not used for seismic type (uses area checkboxes instead). |
 | Cron expression | 5-part cron with live validation and next-fire preview. |
@@ -116,6 +116,62 @@ Type:        🌧️ Rain alert
 Location:    Bacoli
 Hours ahead: 2
 Cron:        0 * * * *
+```
+
+---
+
+## 📊 Weather Charts Monitor
+
+Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 5 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM used.
+
+**Supported models:**
+
+| Model | Coverage | Horizon | Notes |
+|-------|----------|---------|-------|
+| ECMWF IFS 9km | Global | ~10 days | No UV index |
+| ICON EU 7km | Europe | 5 days | No precipitation probability, no UV index |
+| Météo-France ARPEGE | Europe | 4 days | No precipitation probability, no UV index |
+| GFS Global | Global | 16 days | Supports all variables |
+| ItaliaMeteo ARPAE | Italy | 48h | ICON 2i, 2 km resolution; no precipitation probability, no UV index |
+
+**Supported variables:**
+
+| Variable | Unit | Chart | Notes |
+|----------|------|-------|-------|
+| Temperature 2m | °C | line | All models |
+| Apparent Temperature | °C | line | All models |
+| Temperature 850 hPa | °C | line | All models |
+| Precipitation | mm | bars | Always sent, even at zero |
+| Precipitation Probability | % | bars | ECMWF IFS + GFS only; always sent |
+| Wind Speed 10m | km/h | line | All models |
+| Wind Gusts 10m | km/h | line | All models |
+| Wind Direction 10m | ° | arrows | One horizontal lane per model, an arrow every 3 h pointing downwind |
+| Humidity 2m | % | line | All models |
+| Sea Level Pressure | hPa | line | All models |
+| Cloud Cover | % | bars | Always sent, even at zero |
+| UV Index | — | bars | GFS only; suppressed if all-zero |
+| Geopotential 500 hPa | m | line | All models |
+
+**Additional fields:**
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Forecast days | 3 | Number of days to fetch (1–7). |
+| Weather models | ECMWF IFS 9km | Select one or more models (checkboxes with description). |
+| Variables to plot | Temperature, Precipitation, Wind | Each selected variable generates one chart image. |
+
+**Precipitation, precipitation probability and cloud cover** are always sent even when all values are zero — so a clear forecast reads as "no rain expected" instead of a chart silently disappearing. UV index is suppressed when all-zero (night or overcast periods).
+
+**Example configuration:**
+
+```
+Name:             Morning Weather Charts
+Type:             📊 Weather Charts (Open-Meteo)
+Location:         Naples
+Forecast days:    3
+Weather models:   ECMWF IFS 9km ✅  ICON EU 7km ✅  GFS Global ✅
+Variables:        Temperature 2m ✅  Precipitation ✅  Wind Speed ✅  Wind Gusts ✅
+Cron:             0 7 * * *
 ```
 
 ---
