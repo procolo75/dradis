@@ -393,6 +393,10 @@ class FootballMonitorManager:
         for cfg in configs:
             if cfg.get("type") != "football_betting":
                 continue
+            # Disabled monitors are not started; the cleanup loop below stops and
+            # removes any that were previously running so status reports "stopped".
+            if not cfg.get("enabled"):
+                continue
             mid = cfg["id"]
             wanted.add(mid)
             if mid in self._monitors:

@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [3.2.1] - 2026-08-09
+
+- **Fix — Football Betting monitor kept running after being disabled**: unchecking *Enabled* and saving still left the monitor reported as **running** (green task, red dot in the sidebar, `started (poll=300s)` in the log). `FootballMonitorManager.reload` created and `start()`ed **every** football monitor regardless of the `enabled` flag; only the per-poll `_enabled` guard stopped it from actually hitting the API, so no API quota was burned, but the background task ran to no purpose and the status was misleading. `reload` now skips disabled monitors (matching `LightningMonitorManager`), so the cleanup pass stops and removes them and status correctly reports **stopped**. (Seismic monitors intentionally keep running when disabled — "logging only" mode — and are unchanged.)
+
 ## [3.2.0] - 2026-08-09
 
 - **Fix — HA monitor (LLM mode) claimed actions it never performed**: when an HA monitor fired in LLM mode, DRADIS would report it had done something (e.g. *"I added a task to check the sensor"*) but the task never appeared in Google Tasks. Root cause: the monitor's LLM callback ran DRADIS with `selected=[]` (`bot/scheduler.py`), which `build_tools` resolves to **no tools at all** — so DRADIS had no way to act and simply hallucinated success. The UI, meanwhile, promised "full capabilities (Telegram, email, tasks…)".
