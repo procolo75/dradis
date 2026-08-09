@@ -66,7 +66,9 @@ The single agent runs on the main model (**Settings → DRADIS**). On an API err
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
 | `monitors/weather_chart.py` | Weather Charts monitor — LLM-free, fetches hourly Open-Meteo forecasts for up to 5 models, generates one PNG chart per variable and returns `list[bytes]` |
-| `live_monitors/lightning.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `LightningLiveMonitor` + `LiveMonitorManager` singleton |
+| `live_monitors/lightning.py` | Lightning live monitor — LLM-free, persistent MQTT listener; `Origin`/`StaticOrigin`, `LightningLiveMonitor` + `LiveMonitorManager` singleton |
+| `live_monitors/lightning_core.py` | Pure decision core of the lightning monitor — observables, sensitivity presets, threat state machine. No I/O, fully unit-tested |
+| `live_monitors/replay.py` | Offline replay of a recorded storm through the decision core — used to tune sensitivity on real data |
 | `live_monitors/ha.py` | HA Monitor — persistent MQTT listener for Home Assistant entity state changes; `HaLiveMonitor` + `HaMonitorManager` singleton |
 | `live_monitors/seismic.py` | Seismic live monitor — polls INGV GOSSIP JSON API every 60 s, alerts on new events and state promotions |
 | `live_monitors/football.py` | Football Betting live monitor — polls RapidAPI every 5 min (clock-aligned); `FootballLiveMonitor` + `FootballMonitorManager` singleton |
@@ -541,7 +543,7 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 
 | Type | Required fields |
 |------|----------------|
-| ⚡ Lightning alert | Location, Radius (km), Language |
+| ⚡ Lightning alert | Location, Radius (km), Sensitivity, Language, Quiet hours *(optional)* |
 | 🌍 Seismic live | Areas, Quiet hours |
 | ⚽ Football Betting | Minute windows, Quiet hours (API pause) |
 
@@ -549,36 +551,64 @@ There is no cron field and no "run now" action — the monitor is always-on when
 
 #### Lightning alert
 
-Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. All incoming strikes within `radius_km` are collected in a **15-minute sliding window buffer**. Every 2 minutes a polling task runs **pure-Python DBSCAN** (eps = 8 km, min_samples = 2) to identify storm cells, then reduces all activity to a **single scalar** — the distance of the *nearest significant cell* — appended to a **30-minute series**. That series (not per-cell centroids) is the single source of truth for the approach trend, velocity and ETA, so it does not reset when DBSCAN re-labels cells. A single **threat state machine** per monitor turns that into one coherent thread per storm episode.
+Subscribes to the geohash-based MQTT topics covering the configured location; the subscribed area widens automatically with `radius_km`. Incoming strikes are buffered for **15 minutes** as `(time, lat, lon)` — deliberately **without** their distance, which is derived at evaluation time against the current origin.
 
-**Threat levels:**
+Every 2 minutes the buffer is reduced to **three observables**, all continuous and physically interpretable:
 
-| Level | Meaning |
-|-------|---------|
-| 🟢 CLEAR | No significant activity, or quiet for ≥ 25 min |
-| 🟡 WATCH | Significant activity within 50 km, approach not yet confirmed |
-| 🔴 WARNING | Confirmed approach (≥ 2 approaching polls, ≥ 3 strikes) and close (≤ 15 km) or short ETA (≤ 30 min) |
+| Observable | Definition | Why |
+|------------|-----------|-----|
+| **d10** | 10th percentile of the individual strike distances | A percentile, not a minimum: one stray strike cannot move it, and there is no `min_samples` cliff to fall off |
+| **r_near** | Strikes/min within `d10 + 15 km` | The activity of the relevant storm body, self-scaling with its distance |
+| **v_c** | Closing speed, from the shift of the strike-field centroid between the older and newer half of the window | The motion of a *mass* of strikes, so it cannot jump when individual cells come and go |
 
-Trend over the series is classified as APPROACHING / RETREATING / STATIONARY / UNKNOWN (last 3 samples, > 0.5 km/sample threshold) and shown in the WATCH message.
+`d10` and `v_c` are EMA-smoothed, so a single noisy poll cannot trigger a transition. An **ETA** is only computed once the field has been closing for 3 consecutive polls.
 
-**Alert triggers (level-based):**
+**Threat levels** (thresholds shown for the default *Medium* sensitivity):
+
+| Level | Enter | Exit |
+|-------|-------|------|
+| 🟡 WATCH | `d10 ≤ 40 km` and `r_near ≥ 0.20/min` | `d10 ≥ 55 km` or `r_near < 0.07/min`, held 20 min → ✅ |
+| 🔴 WARNING | `r_near ≥ 0.50/min` **and** (`d10 ≤ 15 km` or confirmed ETA ≤ 25 min within 45 km), held 2 polls | `d10 ≥ 22 km` and `v_c ≤ 3 km/h`, held 10 min → 🟡 |
+
+Enter and exit conditions are expressed on the **same** variables with strictly separated thresholds (a Schmitt trigger) and every transition carries a dwell time. This is what makes ✅ always reachable — a storm simply moving away is enough, total absence of activity in the whole radius is not required — and what keeps 🔴 from firing on activity that is not actually approaching.
+
+**Sensitivity** selects a coherent set of these thresholds:
+
+| | Bassa | Media *(default)* | Alta |
+|---|---|---|---|
+| WATCH enter / exit | 30 / 45 km | 40 / 55 km | 55 / 70 km |
+| WARNING enter / exit | 10 / 16 km | 15 / 22 km | 22 / 30 km |
+| WARNING min. activity | 0.80/min | 0.50/min | 0.30/min |
+| Max ETA | 20 min | 25 min | 35 min |
+| All-clear dwell | 25 min | 20 min | 15 min |
+
+**Alert triggers:**
 
 | Event | Trigger | Icon |
 |-------|---------|------|
-| Watch | First significant activity within 50 km | 🟡 |
-| Warning | Approach confirmed and close / short-ETA | 🔴 |
+| Watch | Activity enters the WATCH range | 🟡 |
+| Warning | Storm already close, or a confirmed approach with a short ETA | 🔴 |
 | Periodic re-alert | Every 10 min while in WARNING | 🔴 |
-| De-escalation | Storm weakens (12-min gap) → drops WARNING to WATCH | 🟡 |
-| All clear | No significant activity for 25 consecutive minutes | ✅ |
+| De-escalation | Storm pulls away past the exit threshold | 🟡 |
+| All clear | Exit condition held for the all-clear dwell | ✅ |
 
-Alerts fire **only on level change** (plus the periodic WARNING re-alert). Hysteresis on both escalation (confirmation polls) and de-escalation (quiet gap) prevents the old clear ↔ approaching flapping.
+Alerts fire **only on level change**, plus the periodic WARNING re-alert.
 
 **Behaviour:**
-1. On app startup (or save), if the monitor is enabled: a persistent MQTT task and a 2-minute polling task are created.
-2. The MQTT task connects to the broker, subscribes to geohash topics, and fills the strike buffer.
-3. Every 2 minutes: `_evaluate` runs DBSCAN, refreshes the nearest-activity series, computes the target threat level, and fires an alert on any level change.
+1. On app startup (or a config change), if the monitor is enabled: a persistent MQTT task and a polling task are created, and any saved threat state less than an hour old is restored from `/data/lightning_state.json`.
+2. The MQTT task connects, subscribes, and fills the strike buffer. Blitzortung's own strike timestamp is used when present, so a reconnect backlog is aged out instead of being counted as current.
+3. Every 2 minutes the observables are recomputed and the state machine decides whether to alert. A diagnostic line is logged each poll: `[Lightning] name | d10=… Rnear=… vc=… eta=… lvl=… strikes=…`.
 4. The state machine advances **only on a confirmed Telegram send**; a dropped alert is retried on the next poll.
-5. On disconnect, waits 15 seconds and reconnects automatically.
+5. On disconnect, waits 15 seconds and reconnects automatically. If the feed stays silent for 15 minutes, or reconnection keeps failing, the monitor reports **🟠 Degraded** instead of Running.
+
+**Quiet hours** silence 🟡 WATCH and ✅ CLEAR only — a 🔴 WARNING is always delivered. The state machine still advances, so the level never desyncs.
+
+**Tuning on real storms:** enable **Record strikes** and every received strike is appended to `/data/lightning_rec/<id>-<date>.ndjson`. Replay a recording through the exact same decision code, and compare all three presets on it:
+
+```
+cd /app/dradis && python3 -m live_monitors.replay \
+    /data/lightning_rec/abc-2026-08-09.ndjson --monitor abc --compare
+```
 
 **Alert format — watch:**
 
@@ -600,11 +630,11 @@ Alerts fire **only on level change** (plus the periodic WARNING re-alert). Hyste
 🕐 14:32
 ```
 
-**Alert format — all clear:**
+**Alert format — all clear:** the message states *why* it cleared, since a storm can either move off or die out.
 
 ```
 ✅ Storm threat cleared — Bacoli
-🔇 No lightning for 25 min
+🔇 Remaining activity 62 km away, moving off
 🕐 15:10
 ```
 
@@ -616,6 +646,7 @@ Alerts fire **only on level change** (plus the periodic WARNING re-alert). Hyste
 | Type | ⚡ Lightning alert |
 | Location | Bacoli (auto-resolves to 40.7961, 14.0820) |
 | Radius | 50 km |
+| Sensitivity | 🟠 Media |
 | Language | 🇮🇹 Italiano |
 
 **Duplicating a live monitor:** click **⎘ Copy** to create a copy named `Copy of <name>`. The duplicate is disabled by default, with all fields copied. Useful for monitoring multiple locations.
@@ -751,28 +782,31 @@ DRADIS routes the request to the Web Search sub-agent, which calls `read_url` vi
 
 ### Lightning alert *(live monitor)*
 
-DRADIS opens a persistent MQTT connection and listens for lightning strike data in real time. Strikes within the configured radius are collected in a 15-minute sliding window; a DBSCAN clustering task fires every 2 minutes to identify storm cells and track each one's approach trajectory. Alerts are zone-based (initial detection, zone crossing, periodic re-alert every 10 min if approaching, all-clear after 15 min of silence) — no manual cooldown, no polling, no LLM.
+DRADIS opens a persistent MQTT connection and listens for lightning strike data in real time. Every 2 minutes the strikes of the last 15 minutes are reduced to three stable observables — proximity, activity and closing speed of the strike field — which drive a three-level threat state machine: 🟡 WATCH → 🔴 WARNING → ✅ CLEAR. Alerts fire only on level change, plus a 10-minute re-alert while the warning is active. No polling of an API, no cooldown to configure, no LLM.
+
+See [Lightning alert](#lightning-alert) under Live Monitors for the full algorithm and the sensitivity presets.
 
 | Field | Value |
 |-------|-------|
 | Type | ⚡ Lightning alert |
 | Location | Bacoli (auto-resolves to lat/lon) |
 | Radius | 50 km |
+| Sensitivity | 🟠 Media |
 | Language | 🇮🇹 Italiano |
 
-Sample alert (zone approaching):
+Sample alert (warning):
 ```
-🔴 Temporale in avvicinamento — Bacoli
-📍 Distanza: 28.3 km a NO (315°)
-🏷 Zona: Zona vicina (15–30 km)
-🚀 ~42 km/h — arrivo stimato: 40 min
+🔴 ALLERTA temporale — Bacoli
+📍 In avvicinamento: 12.4 km a NO (315°)
+🚀 ~42 km/h — arrivo stimato: 18 min
+🔢 Fulmini ultimi 15 min: 76
 🕐 14:32
 ```
 
 Sample alert (all clear):
 ```
-✅ Temporale dissolto — Bacoli
-🔇 Nessun fulmine negli ultimi 15 min
+✅ Cessato allarme temporale — Bacoli
+🔇 Attività residua a 62 km, in allontanamento
 🕐 15:10
 ```
 
@@ -911,7 +945,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/info` | Show status and configuration of all agents (provider, model, history, sub-agents) |
 | `/menu` | List all available commands |
 | `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
-| `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see 🟢 Running / 🔴 Stopped status). |
+| `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see 🟢 Running / 🟠 Degraded / 🔴 Stopped status). |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
 | `/gmailauth` | Start Gmail OAuth2 authorization. Same flow as `/gcalauth` but authorizes Gmail read and send scopes. Send `/gmailauth <url>` as fallback if the automatic redirect fails. |
 | `/gtasksauth` | Start Google Tasks OAuth2 authorization. Same flow as `/gcalauth`. Send `/gtasksauth <url>` as fallback if the automatic redirect fails. |
@@ -955,6 +989,8 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/tasks.json` | Scheduled task configuration (managed from Web UI) |
 | `/data/monitors.json` | Scheduled monitor configuration (managed from Web UI) |
 | `/data/live_monitors.json` | Live monitor configuration (managed from Web UI) |
+| `/data/lightning_state.json` | Lightning monitor threat state — restored on startup so a storm in progress is not lost on restart |
+| `/data/lightning_rec/` | Raw strike recordings, only when **Record strikes** is enabled (daily rotation, 7-day retention) |
 | `/data/ha_monitors.json` | HA monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |

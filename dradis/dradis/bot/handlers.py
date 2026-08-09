@@ -348,7 +348,12 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
         return
     mtype  = monitor.get("type", "lightning")
     status = _live_status_dispatcher(item_id)
-    badge  = "🟢 Running" if status == "running" else "🔴 Stopped"
+    # "degraded" = the task is alive but the feed is not delivering. Without it a
+    # broken monitor and a quiet sky looked identical from here.
+    badge  = {
+        "running":  "🟢 Running",
+        "degraded": "🟠 Degraded (no data from the feed)",
+    }.get(status, "🔴 Stopped")
     if mtype == "seismic":
         areas = ", ".join(monitor.get("areas", [])) or "—"
         msg = (f"🌍 <b>{html.escape(monitor['name'])}</b>\n"
@@ -363,10 +368,13 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Status: {badge}\n"
                f"Polling: 300s")
     else:
+        sensitivity = monitor.get("sensitivity", "medium")
         msg = (f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
                f"📍 {html.escape(monitor.get('location', '?'))}\n"
                f"Status: {badge}\n"
-               f"Radius: {monitor.get('radius_km', '?')} km — Cooldown: automatic (5/15/30 min)")
+               f"Radius: {monitor.get('radius_km', '?')} km — "
+               f"Sensitivity: {html.escape(sensitivity)}\n"
+               f"Levels: 🟡 WATCH → 🔴 WARNING → ✅ CLEAR — Polling: 120s")
     await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 

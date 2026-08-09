@@ -8,7 +8,7 @@ Click `+` in the **Live Monitors** sidebar header. Select a **Type** to reveal t
 
 | Type | Description |
 |------|-------------|
-| ⚡ Lightning alert | Persistent MQTT listener on Blitzortung; DBSCAN cells reduced to one nearest-threat track; single 🟡/🔴/✅ state machine |
+| ⚡ Lightning alert | Persistent MQTT listener on Blitzortung; strikes reduced to proximity / activity / closing-speed observables driving a 🟡/🔴/✅ state machine with hysteresis |
 | 🌍 Seismic live | Polls INGV GOSSIP every 60 s; alerts on new events and state promotions |
 | ⚽ Football Betting | Polls RapidAPI every 5 min (clock-aligned); alerts on statistically favourable live-match conditions |
 
@@ -20,31 +20,65 @@ There is no cron field and no "run now" action — the monitor is always-on when
 
 ## ⚡ Lightning Alert
 
-Subscribes to geohash-based MQTT topics covering the configured location and its 8 neighbouring cells. Incoming strikes within `radius_km` are collected in a **15-minute sliding window**. Every 2 minutes a polling task runs **pure-Python DBSCAN** (eps = 8 km, min_samples = 2) to identify storm cells, then reduces all activity to a **single scalar** — the distance of the *nearest significant cell* — appended to a **30-minute series**. That series (not per-cell centroids) drives the approach trend, velocity and ETA, so it does not reset when DBSCAN re-labels cells. A single **threat state machine** per monitor produces one coherent thread per storm episode instead of one alert per cell.
+Subscribes to the geohash-based MQTT topics covering the configured location; the subscribed area widens automatically with `radius_km`. Incoming strikes are buffered for **15 minutes** as `(time, lat, lon)` — without their distance, which is derived at evaluation time against the current origin.
 
-> **Why the change (v2.26.0):** the previous per-cell zone alerts split one storm front into several clusters, each firing its own "Storm detected — Undetermined" with jumping distance/direction, and intermittent strikes caused clear ↔ approaching flapping. It was impossible to tell whether a storm was actually coming.
+Every 2 minutes the buffer is reduced to **three observables**:
+
+| Observable | Definition | Why |
+|------------|-----------|-----|
+| **d10** | 10th percentile of the individual strike distances | A percentile, not a minimum: one stray strike cannot move it |
+| **r_near** | Strikes/min within `d10 + 15 km` | The activity of the relevant storm body, self-scaling with distance |
+| **v_c** | Closing speed, from the shift of the strike-field centroid between the older and newer half of the window | The motion of a *mass* of strikes, immune to individual cells appearing and disappearing |
+
+`d10` and `v_c` are EMA-smoothed; an **ETA** is only computed once the field has been closing for 3 consecutive polls.
+
+> **Why the change (v3.3.0):** the previous design drove the state machine with the distance of the nearest DBSCAN cluster centroid — a minimum over an unstable set, recomputed from scratch every poll with `min_samples=2`. Two stray strikes forming closer than the current storm made that scalar jump (e.g. 60 → 20 km) in one step, which read as a fast approach and fired a **WARNING for a storm that did not exist**. And de-escalation required *zero* clusters anywhere in the radius, so activity 70 km away kept the **all-clear from ever being sent**. Both symptoms came from the same design error: escalation and de-escalation were evaluated on different variables, so they were not complements and the machine had states it could not leave. No threshold tuning could fix that.
 
 ### Threat Levels
 
-| Level | Meaning |
-|-------|---------|
-| 🟢 CLEAR | No significant activity, or quiet for ≥ 25 min |
-| 🟡 WATCH | Significant activity within 50 km, approach not yet confirmed |
-| 🔴 WARNING | Confirmed approach (≥ 2 approaching polls, ≥ 3 strikes) and close (≤ 15 km) or short ETA (≤ 30 min) |
+Thresholds shown for the default *Medium* sensitivity.
 
-Trend over the series — APPROACHING / RETREATING / STATIONARY / UNKNOWN (last 3 samples, > 0.5 km/sample) — is shown in the WATCH message.
+| Level | Enter | Exit |
+|-------|-------|------|
+| 🟡 WATCH | `d10 ≤ 40 km` and `r_near ≥ 0.20/min` | `d10 ≥ 55 km` or `r_near < 0.07/min`, held 20 min → ✅ |
+| 🔴 WARNING | `r_near ≥ 0.50/min` **and** (`d10 ≤ 15 km` or confirmed ETA ≤ 25 min within 45 km), held 2 polls | `d10 ≥ 22 km` and `v_c ≤ 3 km/h`, held 10 min → 🟡 |
+
+Enter and exit conditions use the **same** variables with strictly separated thresholds (a Schmitt trigger), and every transition carries a dwell time. That is what makes ✅ always reachable — a storm simply moving away is enough — and what keeps 🔴 from firing on activity that is not actually approaching.
+
+### Sensitivity
+
+| | Bassa | Media *(default)* | Alta |
+|---|---|---|---|
+| WATCH enter / exit | 30 / 45 km | 40 / 55 km | 55 / 70 km |
+| WARNING enter / exit | 10 / 16 km | 15 / 22 km | 22 / 30 km |
+| WARNING min. activity | 0.80/min | 0.50/min | 0.30/min |
+| Max ETA | 20 min | 25 min | 35 min |
+| All-clear dwell | 25 min | 20 min | 15 min |
 
 ### Alert Triggers (level-based)
 
 | Event | Trigger | Icon |
 |-------|---------|------|
-| Watch | First significant activity within 50 km | 🟡 |
-| Warning | Approach confirmed and close / short-ETA | 🔴 |
+| Watch | Activity enters the WATCH range | 🟡 |
+| Warning | Storm already close, or a confirmed approach with a short ETA | 🔴 |
 | Periodic re-alert | Every 10 min while in WARNING | 🔴 |
-| De-escalation | 12-min gap → drops WARNING to WATCH | 🟡 |
-| All clear | No significant activity for 25 consecutive minutes | ✅ |
+| De-escalation | Storm pulls away past the exit threshold | 🟡 |
+| All clear | Exit condition held for the all-clear dwell | ✅ |
 
-Alerts fire **only on level change** (plus the periodic WARNING re-alert). Confirmation polls (escalation) and a quiet gap (de-escalation) provide hysteresis, so brief strike gaps no longer cause flapping. The state machine advances only on a confirmed Telegram send.
+Alerts fire **only on level change** (plus the periodic WARNING re-alert). The state machine advances only on a confirmed Telegram send, so a dropped message is retried rather than lost.
+
+**Quiet hours** silence 🟡 WATCH and ✅ CLEAR only — a 🔴 WARNING is always delivered.
+
+**State survives restarts.** The threat level is persisted to `/data/lightning_state.json` and restored on startup (if less than an hour old), so a storm in progress does not lose its all-clear when the add-on restarts. Saving an unrelated live monitor no longer restarts the lightning monitor either — only a change to its own configuration does.
+
+### Tuning on Real Storms
+
+Enable **Record strikes** and every received strike is appended to `/data/lightning_rec/<id>-<date>.ndjson` (daily rotation, 7-day retention). Replay a recording through the exact same decision code, and compare all three presets on it:
+
+```
+cd /app/dradis && python3 -m live_monitors.replay \
+    /data/lightning_rec/abc-2026-08-09.ndjson --monitor abc --compare
+```
 
 ### Alert Examples
 
@@ -66,21 +100,22 @@ Alerts fire **only on level change** (plus the periodic WARNING re-alert). Confi
 🕐 14:32
 ```
 
-**All clear:**
+**All clear:** the message states *why* it cleared, since a storm can either move off or die out.
 ```
 ✅ Storm threat cleared — Bacoli
-🔇 No lightning for 25 min
+🔇 Remaining activity 62 km away, moving off
 🕐 15:10
 ```
 
 ### Example Configuration
 
 ```
-Name:     Bacoli Lightning
-Type:     ⚡ Lightning alert
-Location: Bacoli
-Radius:   50 km
-Language: 🇮🇹 Italiano
+Name:        Bacoli Lightning
+Type:        ⚡ Lightning alert
+Location:    Bacoli
+Radius:      50 km
+Sensitivity: 🟠 Media
+Language:    🇮🇹 Italiano
 ```
 
 ---

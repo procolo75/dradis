@@ -30,7 +30,9 @@ dradis/
 │   ├── rain.py              # Rain alert monitor (Open-Meteo, no LLM)
 │   └── seismic.py           # Seismic report monitor (INGV GOSSIP, no LLM)
 ├── live_monitors/
-│   ├── lightning.py         # Lightning live monitor (MQTT + DBSCAN)
+│   ├── lightning.py         # Lightning live monitor — MQTT ingest, origin, persistence
+│   ├── lightning_core.py    # Pure decision core: observables + threat state machine (no I/O)
+│   ├── replay.py            # Offline replay of recorded storms through the core
 │   ├── ha.py                # HA entity monitor (MQTT statestream)
 │   └── seismic.py           # Seismic live monitor (INGV GOSSIP polling)
 └── web/

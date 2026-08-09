@@ -62,6 +62,12 @@ class LiveMonitorPayload(BaseModel):
     windows:         list[str] = ["55-65", "75-81"]
     max_odds:        float     = 2.0
     telegram_bot_id: str       = "default"
+    # Lightning only — "low" | "medium" | "high". Selects a coherent set of
+    # distance/rate/ETA thresholds in live_monitors/lightning_core.py.
+    sensitivity:     str       = "medium"
+    # Lightning only — append every received strike to /data/lightning_rec so a
+    # real storm can be replayed offline (python -m live_monitors.replay).
+    record_strikes:  bool      = False
 
 
 class HaMonitorPayload(BaseModel):

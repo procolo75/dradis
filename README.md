@@ -40,7 +40,7 @@ The single agent calls these tools when relevant; each capability is enabled and
   - 📊 **Weather Charts** — LLM-free multi-model Open-Meteo forecast charts (temperature, precipitation, wind speed/gusts/direction, cloud cover, pressure, humidity, geopotential, …); one PNG per variable sent to Telegram — cloud cover as bars, wind direction as per-model arrow lanes
   - ☁️ **Google Drive Backup** — uploads all sensitive DRADIS config files to a dedicated "DRADIS Backup" Drive folder; `drive.file` scope only (no full Drive access)
 - **Live Monitors** — persistent push-based monitors that react to external events in real time:
-  - ⚡ **Lightning alert** — persistent MQTT listener; pure-Python DBSCAN clustering on a 15-min sliding window classifies each storm cell as APPROACHING/RETREATING/STATIONARY; zone-based alerts (initial detection, zone crossing, periodic re-alert every 10 min, all-clear after 15 min of silence); multi-storm support; no cron, no LLM
+  - ⚡ **Lightning alert** — persistent Blitzortung MQTT listener; every 2 min a 15-min strike window is reduced to three stable observables (proximity, activity, closing speed of the strike field) driving a 🟡 WATCH → 🔴 WARNING → ✅ CLEAR state machine with hysteresis and dwell times; three sensitivity presets; state survives restarts; offline replay for tuning on real storms; no cron, no LLM
   - 🌍 **Seismic live** — polls INGV GOSSIP JSON API every 60 s; alerts on new events and Automatic→Revised promotions; quiet-hours support
   - ⚽ **Football Betting** — polls a live-odds API every 5 min; alerts when a losing team's next-goal odds beat the winning team's and are below a configurable maximum, inside configurable 2nd-half minute windows; provider fallback; timezone-aware quiet hours; no cron, no LLM
 - **HA Monitors** — monitor any Home Assistant entity via MQTT statestream; two alert modes:
@@ -83,13 +83,13 @@ The single agent calls these tools when relevant; each capability is enabled and
 > → DRADIS fetches the page via Jina Reader and analyses the content. No API key required.
 
 **Lightning alert** *(live monitor — no cron, no LLM, no token cost)*
-> DRADIS opens a persistent MQTT connection and runs DBSCAN clustering every 2 minutes on a 15-min sliding window buffer. Zone-based alerts fire on initial detection, zone crossings, and periodic re-alerts while approaching.
+> DRADIS keeps a persistent MQTT connection to Blitzortung. Every 2 minutes the last 15 minutes of strikes are reduced to three stable observables — how close the storm body is, how active it is, and how fast the strike field is closing in — which drive a three-level threat state machine. Alerts fire only on level change, plus a 10-minute re-alert while the warning is active.
 >
 > ```
-> 🔴 Storm approaching — Bacoli
-> 📍 Distance: 28.3 km to NW (315°)
-> 🏷 Zone: Near zone (15–30 km)
-> 🚀 ~42 km/h — estimated arrival: 40 min
+> 🔴 Storm WARNING — Bacoli
+> 📍 Approaching: 12.4 km to NW (315°)
+> 🚀 ~42 km/h — estimated arrival: 18 min
+> 🔢 Strikes (last 15 min): 76
 > 🕐 14:32
 > ```
 >

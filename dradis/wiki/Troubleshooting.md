@@ -44,6 +44,30 @@
 
 ---
 
+## Live monitor shows 🟠 Degraded
+
+The task is alive but the feed is not delivering: either no message has arrived for 15 minutes, or reconnection keeps failing. Previously this state was indistinguishable from a quiet sky — the monitor reported 🟢 Running while silently receiving nothing.
+
+- Check the log for repeated `disconnected: … retry in 15s` lines with a rising `failures=` count.
+- The Blitzortung broker (`blitzortung.ha.sed.pl:1883`) is a public service; an outage there shows up exactly this way.
+- Note that Degraded during genuinely calm weather is still meaningful — it means no strike data at all is arriving, not that there are no storms nearby.
+
+---
+
+## Lightning monitor never sends a 🔴 ALLERTA, or never sends ✅
+
+Both were real defects before **v3.3.0** and are fixed there — upgrade first. If you are on 3.3.0 or later:
+
+- Read the per-poll diagnostic line in the log:
+  `[Lightning] name | d10=12.4(s11.8) Rnear=0.73/min vc=+18.2 eta=39 lvl=WATCH pend=- strikes=142`
+  `d10` is how close the storm body really is, `Rnear` how active it is, `vc` its closing speed. Compare them against the thresholds for your sensitivity preset.
+- If 🔴 never fires on storms you consider close, raise **Sensitivity** to *Alta*.
+- If ✅ takes too long, note that the all-clear needs the exit condition to hold for the full dwell (20 min on *Media*) — this is deliberate, storms do come back.
+- To tune properly, enable **Record strikes**, wait for a real storm, then replay it against all three presets:
+  `cd /app/dradis && python3 -m live_monitors.replay /data/lightning_rec/<id>-<date>.ndjson --monitor <id> --compare`
+
+---
+
 ## Google Calendar / Gmail / Tasks OAuth
 
 **"Authorization failed" on token fetch:**
@@ -92,7 +116,7 @@ View the add-on log in **Home Assistant → Settings → Add-ons → DRADIS → 
 | Log prefix | Meaning |
 |------------|---------|
 | `[DRADIS]` | General agent activity |
-| `[Trajectory]` | Lightning monitor DBSCAN analysis result |
+| `[Lightning]` | Lightning monitor observables and level, one line per poll |
 | `[Monitor]` | Scheduled monitor execution |
 | `WARNING` | Non-fatal issue (MQTT disconnect, etc.) |
 | `ERROR` | Requires attention |

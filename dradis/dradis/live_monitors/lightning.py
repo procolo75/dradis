@@ -2,40 +2,51 @@
 live_monitors/lightning.py
 ───────────────────────────
 LLM-free live monitor: persistent MQTT listener on the Blitzortung public broker.
-Sends Telegram alerts driven by a single location-level threat state machine.
+Sends Telegram alerts driven by the threat state machine in `lightning_core`.
 
-Algorithm
-─────────
-- Connects once to blitzortung.ha.sed.pl:1883 and stays connected.
-- Subscribes to geohash-based topics covering the configured area.
-- Buffers all incoming strikes within radius_km in a 15-minute sliding window.
-- Every 2 minutes a polling task runs pure-Python DBSCAN (eps=8 km, min_samples=2)
-  to identify storm cells. Instead of alerting per cell, it reduces all activity to
-  ONE scalar: the distance of the nearest significant cell to the configured point.
-  That scalar is tracked as a 30-minute series — the single source of truth for the
-  approach trend, velocity and ETA (it does not reset when DBSCAN re-labels cells).
-- A single threat state machine per monitor decides one of three levels:
-  🟢 CLEAR · 🟡 WATCH · 🔴 WARNING. Alerts fire only on level changes (plus a
-  periodic re-alert while in WARNING). Going up to WARNING needs a confirmed approach
-  trend; coming down to CLEAR needs a quiet period — both with hysteresis so the user
-  sees one coherent thread per storm episode instead of contradictory micro-updates.
+This module is the I/O half — MQTT ingest, origin, persistence, formatting and
+lifecycle. Every decision lives in `lightning_core`, which is pure and testable
+(see tests/test_lightning_core.py) and replayable offline (see replay.py).
 
-One LightningLiveMonitor instance per enabled live monitor entry.
-All instances are owned by LiveMonitorManager (singleton live_monitor_manager).
-Called by main.py on startup and on config changes — NOT via the APScheduler cron.
+Pipeline
+────────
+  1. One persistent MQTT connection to the Blitzortung broker, subscribed to the
+     geohash cells covering `radius_km` around the origin.
+  2. Every strike is buffered as (t, lat, lon) — WITHOUT its distance. Distances
+     are derived at evaluation time against the CURRENT origin, which is what
+     makes a moving origin possible later without touching the ingest path.
+  3. Every poll, lightning_core turns the buffer into three stable observables
+     (d10, r_near, v_c) and the state machine maps them to 🟢 CLEAR · 🟡 WATCH ·
+     🔴 WARNING, with separated enter/exit thresholds and dwell times.
+  4. Alerts go straight to Telegram (no LLM). The committed level advances ONLY
+     on a confirmed send, so a dropped message is retried rather than lost.
+
+State survives a restart via /data/lightning_state.json, so a storm in progress
+does not silently lose its all-clear when the add-on restarts.
+
+One LightningLiveMonitor instance per enabled live monitor entry of type
+'lightning'. All instances are owned by LiveMonitorManager (singleton
+live_monitor_manager). Called by main.py on startup and on config changes —
+NOT via the APScheduler cron.
 """
 
 import asyncio
 import html
 import json
-import math
-import time
 import logging
-from collections import namedtuple
-from datetime import datetime
+import os
+import time
+from datetime import datetime, time as time_t
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiomqtt
+
+from .lightning_core import (
+    LEVEL_CLEAR, LEVEL_WATCH, LEVEL_WARNING, LEVEL_NAMES,
+    ObservableTracker, ThreatStateMachine, Observables,
+    get_preset, direction_label, topics_for_area,
+    WINDOW_MIN, POLL_INTERVAL_STATIC, POLL_INTERVAL_MOVING,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,211 +54,94 @@ MQTT_HOST       = "blitzortung.ha.sed.pl"
 MQTT_PORT       = 1883
 RECONNECT_DELAY = 15
 
-# ── DBSCAN & strike buffer ─────────────────────────────────────────────────────
-DBSCAN_EPS_KM       = 8.0
-DBSCAN_MIN_SAMPLES  = 2
-STRIKE_BUFFER_MIN   = 15
-MIN_CLUSTER_STRIKES = 2     # strikes for a DBSCAN cell to count as significant activity
+STATE_PATH  = "/data/lightning_state.json"
+RECORD_DIR  = "/data/lightning_rec"
+RECORD_RETENTION_DAYS = 7
 
-# ── Threat-distance series (location level) ────────────────────────────────────
-THREAT_SERIES_MIN = 30      # rolling window for the nearest-threat distance track
-TREND_SAMPLES     = 3       # samples used to classify the approach trend
-APPROACH_SLOPE_KM = -0.5    # per-step distance delta (km) considered "approaching"
-RETREAT_SLOPE_KM  =  0.5
-
-# ── Threat levels ──────────────────────────────────────────────────────────────
-LEVEL_CLEAR   = 0
-LEVEL_WATCH   = 1
-LEVEL_WARNING = 2
-
-# ── Level thresholds & hysteresis ──────────────────────────────────────────────
-WATCH_DIST_KM         = 50    # significant activity within this range → at least WATCH
-WARNING_DIST_KM       = 15    # active activity this close → WARNING
-WARNING_ETA_MIN       = 30    # confirmed approach reaching us within this ETA → WARNING
-WARNING_MIN_STRIKES   = 3     # min strikes in the buffer for a WARNING
-WARNING_CONFIRM_POLLS = 2     # consecutive approaching polls required before WARNING
-WARNING_HOLD_KM       = 5     # must move beyond WARNING_DIST + this to drop WARNING→WATCH
-
-# ── Alert timing ──────────────────────────────────────────────────────────────
-POLL_INTERVAL_SEC  = 120
-PERIODIC_ALERT_MIN = 10     # re-alert cadence while in WARNING
-DEESCALATE_MIN     = 12     # quiet gap before WARNING de-escalates to WATCH
-CLEAR_QUIET_MIN    = 25     # no significant activity this long → all-clear
+# A restored state older than this is discarded — the weather has moved on.
+STATE_MAX_AGE_SEC = 3600
+# Connected but silent for this long → the monitor reports "degraded" instead of
+# pretending everything is fine. A broken monitor and a clear sky used to look
+# identical from the outside.
+DEGRADED_SILENCE_SEC = 900
+# Hard cap so a burst between polls cannot grow the buffer without bound.
+MAX_BUFFER_STRIKES = 20000
 
 
-# ── Geo helpers ───────────────────────────────────────────────────────────────
+# ── Persistent state ──────────────────────────────────────────────────────────
 
-def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    dy = (lat2 - lat1) * math.pi / 180
-    dx = (lon2 - lon1) * math.pi / 180 * math.cos(lat1 * math.pi / 180)
-    return round(math.sqrt(dx * dx + dy * dy) * 6371, 1)
-
-
-def _azimuth_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    dlon = math.radians(lon2 - lon1)
-    x = math.sin(dlon) * math.cos(math.radians(lat2))
-    y = (math.cos(math.radians(lat1)) * math.sin(math.radians(lat2))
-         - math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.cos(dlon))
-    return (math.degrees(math.atan2(x, y)) + 360) % 360
+def _load_state_file() -> dict:
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    except OSError as e:
+        _LOGGER.warning("[Lightning] cannot read %s: %s", STATE_PATH, e)
+        return {}
 
 
-_DIR_IT = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
-_DIR_EN = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+def _save_state_entry(monitor_id: str, entry: dict) -> None:
+    """Read-modify-write of the shared state file. Safe without a lock: the whole
+    operation is synchronous, so it cannot interleave on the event loop."""
+    data = _load_state_file()
+    data[monitor_id] = entry
+    tmp = f"{STATE_PATH}.tmp"
+    try:
+        os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, STATE_PATH)
+    except OSError as e:
+        _LOGGER.warning("[Lightning] cannot write %s: %s", STATE_PATH, e)
 
 
-def _direction(azimuth: float, lang: str) -> str:
-    labels = _DIR_IT if lang == "it" else _DIR_EN
-    return labels[round(azimuth / 45) % 8]
+# ── Origin ────────────────────────────────────────────────────────────────────
+
+class Origin:
+    """Where distances are measured from.
+
+    Deliberately an abstraction from day one: the monitor never assumes the point
+    is fixed. A future TrackedOrigin backed by a Home Assistant device_tracker
+    only has to implement this interface — the ingest path, the observables and
+    the state machine all work against `position()` evaluated at poll time.
+    """
+
+    def position(self) -> tuple[float, float] | None:
+        raise NotImplementedError
+
+    def velocity(self) -> tuple[float, float] | None:
+        """(speed_kmh, bearing_deg) of the origin itself, or None if not moving."""
+        return None
+
+    def is_moving(self) -> bool:
+        return False
+
+    def coverage_center(self) -> tuple[float, float] | None:
+        """Point the MQTT topic set is derived from."""
+        return self.position()
+
+    def poll_interval(self) -> float:
+        return POLL_INTERVAL_MOVING if self.is_moving() else POLL_INTERVAL_STATIC
+
+    def describe(self) -> str:
+        pos = self.position()
+        return "unknown" if pos is None else f"{pos[0]:.4f},{pos[1]:.4f}"
 
 
-# ── Geohash helpers ───────────────────────────────────────────────────────────
+class StaticOrigin(Origin):
+    """A fixed point, from the monitor's latitude/longitude."""
 
-_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+    def __init__(self, lat: float, lon: float):
+        self.lat = lat
+        self.lon = lon
 
-
-def _geohash_encode(lat: float, lon: float, precision: int = 3) -> str:
-    min_lat, max_lat = -90.0, 90.0
-    min_lon, max_lon = -180.0, 180.0
-    chars, bits, is_lon, char_bits = [], 0, True, 0
-    for _ in range(precision * 5):
-        if is_lon:
-            mid = (min_lon + max_lon) / 2
-            if lon >= mid:
-                bits = (bits << 1) | 1; min_lon = mid
-            else:
-                bits <<= 1; max_lon = mid
-        else:
-            mid = (min_lat + max_lat) / 2
-            if lat >= mid:
-                bits = (bits << 1) | 1; min_lat = mid
-            else:
-                bits <<= 1; max_lat = mid
-        is_lon = not is_lon
-        char_bits += 1
-        if char_bits == 5:
-            chars.append(_BASE32[bits & 0x1F]); bits = 0; char_bits = 0
-    return "".join(chars)
+    def position(self) -> tuple[float, float]:
+        return self.lat, self.lon
 
 
-def _geohash_decode(gh: str) -> tuple[float, float]:
-    min_lat, max_lat = -90.0, 90.0
-    min_lon, max_lon = -180.0, 180.0
-    is_lon = True
-    for char in gh:
-        bits = _BASE32.index(char)
-        for i in range(4, -1, -1):
-            bit = (bits >> i) & 1
-            if is_lon:
-                mid = (min_lon + max_lon) / 2
-                if bit: min_lon = mid
-                else:   max_lon = mid
-            else:
-                mid = (min_lat + max_lat) / 2
-                if bit: min_lat = mid
-                else:   max_lat = mid
-            is_lon = not is_lon
-    return (min_lat + max_lat) / 2, (min_lon + max_lon) / 2
-
-
-def _geohash_neighbors(gh: str) -> list[str]:
-    lat, lon = _geohash_decode(gh)
-    step = 180.0 / (2 ** (2.5 * len(gh)))
-    neighbors: set[str] = set()
-    for dlat in (-1, 0, 1):
-        for dlon in (-1, 0, 1):
-            if dlat == 0 and dlon == 0:
-                continue
-            nlat = max(-90.0, min(90.0, lat + dlat * step))
-            nlon = ((lon + dlon * step + 180) % 360) - 180
-            neighbors.add(_geohash_encode(nlat, nlon, len(gh)))
-    return list(neighbors)
-
-
-def _topics_for_area(lat: float, lon: float) -> list[str]:
-    gh = _geohash_encode(lat, lon, precision=3)
-    cells = [gh] + _geohash_neighbors(gh)
-    return [f"blitzortung/1.1/{c[0]}/{c[1]}/{c[2]}/#" for c in cells]
-
-
-# ── DBSCAN (pure Python, O(n²)) ───────────────────────────────────────────────
-
-def _dbscan(points: list, eps_km: float, min_samples: int) -> list:
-    """Return cluster labels for each point; -1 = noise."""
-    n = len(points)
-    labels = [-1] * n
-    visited = [False] * n
-
-    def neighbours(i: int) -> list:
-        return [j for j in range(n)
-                if j != i and _distance_km(points[i][0], points[i][1],
-                                           points[j][0], points[j][1]) <= eps_km]
-
-    cluster_id = 0
-    for i in range(n):
-        if visited[i]:
-            continue
-        visited[i] = True
-        nbrs = neighbours(i)
-        if len(nbrs) < min_samples - 1:
-            continue
-        labels[i] = cluster_id
-        seed_set = list(nbrs)
-        k = 0
-        while k < len(seed_set):
-            j = seed_set[k]
-            if not visited[j]:
-                visited[j] = True
-                nbrs_j = neighbours(j)
-                if len(nbrs_j) >= min_samples - 1:
-                    for nb in nbrs_j:
-                        if nb not in seed_set:
-                            seed_set.append(nb)
-            if labels[j] == -1:
-                labels[j] = cluster_id
-            k += 1
-        cluster_id += 1
-    return labels
-
-
-# ── Trend / velocity over the threat-distance series ──────────────────────────
-# A "series" is a list of (ts, lat, lon, dist_km) samples of the nearest significant
-# activity, oldest first. Trend, velocity and ETA are all derived from it.
-
-def _classify_trend(series: list) -> str:
-    if len(series) < TREND_SAMPLES:
-        return "UNKNOWN"
-    dists = [s[3] for s in series[-TREND_SAMPLES:]]
-    diffs = [dists[i + 1] - dists[i] for i in range(len(dists) - 1)]
-    if all(d < APPROACH_SLOPE_KM for d in diffs):
-        return "APPROACHING"
-    if all(d > RETREAT_SLOPE_KM for d in diffs):
-        return "RETREATING"
-    return "STATIONARY"
-
-
-def _velocity_eta(series: list) -> tuple:
-    """Return (velocity_kmh, eta_min) — either may be None."""
-    if len(series) < 2:
-        return None, None
-    first, last = series[0], series[-1]
-    time_h = (last[0] - first[0]) / 3600.0
-    if time_h <= 0:
-        return None, None
-    displacement_km = _distance_km(first[1], first[2], last[1], last[2])
-    velocity = round(displacement_km / time_h, 1) if displacement_km > 0 else None
-    approach_rate_kmh = -(last[3] - first[3]) / time_h   # positive = approaching
-    eta_min = None
-    if approach_rate_kmh > 0 and last[3] > 0:
-        eta_min = int(last[3] / (approach_rate_kmh / 60.0))
-    return velocity, eta_min
-
-
-# ── Pending alert ─────────────────────────────────────────────────────────────
-
-Alert = namedtuple("Alert", ["level", "text", "periodic"])
-
-
-# ── Monitor class ─────────────────────────────────────────────────────────────
+# ── Monitor ───────────────────────────────────────────────────────────────────
 
 class LightningLiveMonitor:
     """Persistent MQTT listener for one live monitor entry of type 'lightning'."""
@@ -256,34 +150,58 @@ class LightningLiveMonitor:
         self.monitor_id = cfg["id"]
         self.name       = cfg.get("name", "Lightning")
         self.location   = cfg.get("location", "")
-        self.lat        = float(cfg.get("latitude", 0))
-        self.lon        = float(cfg.get("longitude", 0))
         self.radius_km  = float(cfg.get("radius_km", 100))
         self.language   = cfg.get("language", "it")
         self.tz_name    = tz_name
         self._send      = telegram_send_fn
-        # Perception layer
-        self._strike_buffer: list = []   # [(ts, lat, lon, dist_km), ...]
-        self._series: list = []          # [(ts, lat, lon, dist_km), ...] nearest activity
-        # Threat state machine
-        self._level             = LEVEL_CLEAR
-        self._approach_streak   = 0
-        self._last_significant_ts = 0.0
-        self._last_periodic_ts    = 0.0
-        # Tasks
+
+        self.origin  = StaticOrigin(float(cfg.get("latitude", 0)),
+                                    float(cfg.get("longitude", 0)))
+        self.preset  = get_preset(cfg.get("sensitivity", ""))
+        self._quiet_start = (cfg.get("quiet_start") or "").strip()
+        self._quiet_end   = (cfg.get("quiet_end") or "").strip()
+        self._recording   = bool(cfg.get("record_strikes", False))
+
+        # Perception + decision
+        self._buffer: list = []            # [(t, lat, lon), ...] — no distance
+        self._tracker = ObservableTracker()
+        self._machine = ThreatStateMachine(self.preset)
+
+        # Diagnostics
+        self._messages     = 0
+        self._parse_errors = 0
+        self._dropped_stale = 0
+        self._last_msg_ts  = 0.0
+        self._connected    = False
+        self._connect_failures = 0
+
+        # Recording buffer, flushed on the poll task so ingest never blocks
+        self._pending_record: list = []
+
+        self._subscribed: set[str] = set()
+        self._client = None
+        self._sub_lock = asyncio.Lock()
         self._task: asyncio.Task | None      = None
         self._poll_task: asyncio.Task | None = None
 
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
     def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(
-                self._run(), name=f"live_lightning:{self.monitor_id}"
-            )
-            self._poll_task = asyncio.create_task(
-                self._poll_loop(), name=f"lightning_poll:{self.monitor_id}"
-            )
-            print(f"[LiveMonitor] '{self.name}' started "
-                  f"(radius={self.radius_km:.0f}km, threat state machine)")
+        running = [t for t in (self._task, self._poll_task) if t and not t.done()]
+        if running:
+            return
+        self._restore_state()
+        if self._recording:
+            self._prune_recordings()
+        self._task = asyncio.create_task(
+            self._run(), name=f"live_lightning:{self.monitor_id}"
+        )
+        self._poll_task = asyncio.create_task(
+            self._poll_loop(), name=f"lightning_poll:{self.monitor_id}"
+        )
+        print(f"[LiveMonitor] '{self.name}' started "
+              f"(radius={self.radius_km:.0f}km, sensitivity={self.preset.name}, "
+              f"level={LEVEL_NAMES[self._machine.level]})")
 
     def stop(self) -> None:
         for task in (self._poll_task, self._task):
@@ -291,296 +209,442 @@ class LightningLiveMonitor:
                 task.cancel()
         print(f"[LiveMonitor] '{self.name}' stopped")
 
+    async def aclose(self) -> None:
+        """Cancel and wait. Used on restart so the old MQTT client is fully
+        disconnected before its replacement connects."""
+        tasks = [t for t in (self._poll_task, self._task) if t and not t.done()]
+        self.stop()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    # ── MQTT loop ─────────────────────────────────────────────────────────────
+    def status(self) -> str:
+        if not self.is_running():
+            return "stopped"
+        if self._connect_failures >= 3:
+            return "degraded"
+        if self._last_msg_ts and time.time() - self._last_msg_ts > DEGRADED_SILENCE_SEC:
+            return "degraded"
+        if not self._connected:
+            return "degraded"
+        return "running"
+
+    # ── State persistence ─────────────────────────────────────────────────────
+
+    def _restore_state(self) -> None:
+        entry = _load_state_file().get(self.monitor_id)
+        if not entry:
+            return
+        updated = float(entry.get("updated_at", 0))
+        if time.time() - updated > STATE_MAX_AGE_SEC:
+            _LOGGER.info("[Lightning] '%s' saved state too old — starting clean", self.name)
+            return
+        self._machine = ThreatStateMachine.from_dict(self.preset, entry.get("machine"))
+        self._tracker = ObservableTracker.from_dict(entry.get("tracker"))
+
+    def _save_state(self) -> None:
+        _save_state_entry(self.monitor_id, {
+            "updated_at": time.time(),
+            "machine": self._machine.to_dict(),
+            "tracker": self._tracker.to_dict(),
+        })
+
+    # ── MQTT ingest ───────────────────────────────────────────────────────────
 
     async def _run(self) -> None:
-        topics = _topics_for_area(self.lat, self.lon)
         while True:
             try:
                 print(f"[LiveMonitor] '{self.name}' connecting to {MQTT_HOST}:{MQTT_PORT}")
                 async with aiomqtt.Client(MQTT_HOST, MQTT_PORT) as client:
-                    for topic in topics:
-                        await client.subscribe(topic)
-                    print(f"[LiveMonitor] '{self.name}' subscribed ({len(topics)} topics)")
+                    self._client = client
+                    self._subscribed = set()
+                    await self._sync_subscriptions()
+                    self._connected = True
+                    self._connect_failures = 0
                     async for message in client.messages:
-                        await self._on_message(message)
+                        self._on_message(message)
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                print(f"[LiveMonitor] '{self.name}' disconnected: {e} — retry in {RECONNECT_DELAY}s")
+                self._connected = False
+                self._connect_failures += 1
+                self._client = None
+                print(f"[LiveMonitor] '{self.name}' disconnected: {e} "
+                      f"— retry in {RECONNECT_DELAY}s (failures={self._connect_failures})")
                 await asyncio.sleep(RECONNECT_DELAY)
 
-    async def _on_message(self, message) -> None:
+    async def _sync_subscriptions(self) -> None:
+        """Bring the subscribed topic set in line with the current origin.
+
+        For a static origin this runs once and never changes anything. It exists
+        so a moving origin can cross geohash cells without dropping the
+        connection.
+        """
+        client = self._client
+        center = self.origin.coverage_center()
+        if client is None or center is None:
+            return
+        wanted = set(topics_for_area(center[0], center[1], self.radius_km))
+        if wanted == self._subscribed:
+            return
+        async with self._sub_lock:
+            for topic in sorted(wanted - self._subscribed):
+                await client.subscribe(topic)
+            for topic in sorted(self._subscribed - wanted):
+                await client.unsubscribe(topic)
+            added, removed = len(wanted - self._subscribed), len(self._subscribed - wanted)
+            self._subscribed = wanted
+        _LOGGER.info("[Lightning] '%s' topics synced (+%d/-%d, total %d)",
+                     self.name, added, removed, len(wanted))
+
+    def _on_message(self, message) -> None:
+        """Ingest is deliberately geometry-free: the subscribed geohash box is the
+        only filter here. The radius is applied at evaluation time, because with a
+        moving origin a strike outside the radius now may well be inside it in
+        five minutes."""
+        self._messages += 1
+        now = time.time()
+        self._last_msg_ts = now
         try:
             data = json.loads(message.payload)
-        except Exception:
+        except (ValueError, TypeError):
+            self._parse_errors += 1
             return
-        s_lat = data.get("lat")
-        s_lon = data.get("lon")
-        if s_lat is None or s_lon is None:
+        lat = data.get("lat")
+        lon = data.get("lon")
+        if lat is None or lon is None:
+            self._parse_errors += 1
             return
-        dist = _distance_km(self.lat, self.lon, float(s_lat), float(s_lon))
-        if dist > self.radius_km:
-            return
-        self._strike_buffer.append((time.time(), float(s_lat), float(s_lon), dist))
 
-    # ── Polling task ──────────────────────────────────────────────────────────
+        # Prefer the broker's own strike time (nanoseconds) over arrival time, so
+        # a reconnect backlog is aged out correctly instead of being stamped
+        # "now" and inflating the window.
+        t = now
+        raw_ts = data.get("time")
+        if isinstance(raw_ts, (int, float)) and raw_ts > 0:
+            candidate = raw_ts / 1e9
+            if candidate > now + 60:
+                candidate = now
+            if candidate < now - WINDOW_MIN * 60:
+                self._dropped_stale += 1
+                return
+            t = candidate
+
+        try:
+            strike = (t, float(lat), float(lon))
+        except (TypeError, ValueError):
+            self._parse_errors += 1
+            return
+
+        self._buffer.append(strike)
+        if len(self._buffer) > MAX_BUFFER_STRIKES:
+            del self._buffer[:len(self._buffer) - MAX_BUFFER_STRIKES]
+        if self._recording:
+            self._pending_record.append(strike)
+
+    # ── Recording (for offline replay and threshold tuning) ───────────────────
+
+    def _record_path(self) -> str:
+        day = datetime.now(self._tz()).strftime("%Y-%m-%d")
+        return os.path.join(RECORD_DIR, f"{self.monitor_id}-{day}.ndjson")
+
+    def _flush_recorder(self) -> None:
+        if not self._recording or not self._pending_record:
+            return
+        pending, self._pending_record = self._pending_record, []
+        try:
+            os.makedirs(RECORD_DIR, exist_ok=True)
+            with open(self._record_path(), "a", encoding="utf-8") as fh:
+                for t, la, lo in pending:
+                    fh.write(json.dumps({"t": round(t, 3), "lat": la, "lon": lo}) + "\n")
+        except OSError as e:
+            _LOGGER.warning("[Lightning] '%s' cannot write recording: %s", self.name, e)
+
+    def _prune_recordings(self) -> None:
+        cutoff = time.time() - RECORD_RETENTION_DAYS * 86400
+        try:
+            for fname in os.listdir(RECORD_DIR):
+                if not fname.startswith(f"{self.monitor_id}-"):
+                    continue
+                path = os.path.join(RECORD_DIR, fname)
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+        except OSError:
+            pass
+
+    # ── Poll loop ─────────────────────────────────────────────────────────────
 
     async def _poll_loop(self) -> None:
+        # Evaluate immediately so the monitor reports its state right away instead
+        # of staying blind for the first poll interval. No alerts on this pass:
+        # any decision it produces is simply re-offered on the next poll.
+        try:
+            await self._tick(notify=False)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            _LOGGER.error("[Lightning] '%s' first tick failed: %s", self.name, e)
+
         while True:
             try:
-                await asyncio.sleep(POLL_INTERVAL_SEC)
-                now = time.time()
-                for alert in self._evaluate(now):
-                    await self._dispatch(alert, now)
+                await asyncio.sleep(self.origin.poll_interval())
+                await self._tick(notify=True)
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                _LOGGER.error("[LiveMonitor] '%s' poll error: %s", self.name, e)
+                _LOGGER.error("[Lightning] '%s' poll error: %s", self.name, e)
 
-    # ── Perception: nearest significant activity ──────────────────────────────
+    async def _tick(self, notify: bool) -> None:
+        now = time.time()
+        position = self.origin.position()
+        if position is None:
+            _LOGGER.warning("[Lightning] '%s' no origin fix — skipping poll", self.name)
+            return
 
-    def _nearest_activity(self) -> tuple | None:
-        """Return (lat, lon, dist_km) of the nearest significant DBSCAN cell, or None."""
-        if len(self._strike_buffer) < DBSCAN_MIN_SAMPLES:
-            return None
-        points = [(la, lo) for _, la, lo, _ in self._strike_buffer]
-        labels = _dbscan(points, DBSCAN_EPS_KM, DBSCAN_MIN_SAMPLES)
-        groups: dict[int, list] = {}
-        for idx, label in enumerate(labels):
-            if label != -1:
-                groups.setdefault(label, []).append(self._strike_buffer[idx])
-        best = None
-        for entries in groups.values():
-            if len(entries) < MIN_CLUSTER_STRIKES:
-                continue
-            clat = sum(e[1] for e in entries) / len(entries)
-            clon = sum(e[2] for e in entries) / len(entries)
-            dist = _distance_km(self.lat, self.lon, clat, clon)
-            if best is None or dist < best[2]:
-                best = (clat, clon, dist)
-        return best
+        await self._sync_subscriptions()
+        self._buffer = [s for s in self._buffer if s[0] >= now - WINDOW_MIN * 60]
+        self._flush_recorder()
 
-    # ── Decision: threat state machine ────────────────────────────────────────
+        obs = self._tracker.observe(self._buffer, position, now, self.radius_km)
+        decision = self._machine.evaluate(obs, now)
+        self._log_observables(obs)
 
-    def _evaluate(self, now: float) -> list:
-        # 1. Age out the strike buffer and refresh the nearest-activity sample.
-        self._strike_buffer = [s for s in self._strike_buffer
-                               if s[0] >= now - STRIKE_BUFFER_MIN * 60]
-        nearest = self._nearest_activity()
-        if nearest:
-            self._series.append((now, nearest[0], nearest[1], nearest[2]))
-            self._last_significant_ts = now
-        self._series = [s for s in self._series if s[0] >= now - THREAT_SERIES_MIN * 60]
+        if decision is not None and notify:
+            await self._dispatch(decision, obs, now)
 
-        # 2. Trend + approach confirmation streak.
-        trend = _classify_trend(self._series)
-        if nearest and trend == "APPROACHING":
-            self._approach_streak += 1
-        else:
-            self._approach_streak = 0
-
-        _, eta = _velocity_eta(self._series)
-        strikes = len(self._strike_buffer)
-        target = self._target_level(now, nearest, trend, eta, strikes)
-
-        # 3. Emit on level change, or periodic re-alert while in WARNING.
-        if target != self._level:
-            return [self._make_alert(target, trend)]
-        if (target == LEVEL_WARNING
-                and (now - self._last_periodic_ts) >= PERIODIC_ALERT_MIN * 60):
-            return [self._make_alert(target, trend, periodic=True)]
-        return []
-
-    def _target_level(self, now, nearest, trend, eta, strikes) -> int:
-        cur = self._level
-        if nearest is None:
-            # No current activity — de-escalate only with hysteresis on the quiet gap.
-            gap = now - self._last_significant_ts
-            if gap >= CLEAR_QUIET_MIN * 60:
-                return LEVEL_CLEAR
-            if cur == LEVEL_WARNING and gap >= DEESCALATE_MIN * 60:
-                return LEVEL_WATCH
-            return cur
-
-        dist = nearest[2]
-        confirmed_warning = (
-            self._approach_streak >= WARNING_CONFIRM_POLLS
-            and strikes >= WARNING_MIN_STRIKES
-            and (dist <= WARNING_DIST_KM or (eta is not None and 0 < eta <= WARNING_ETA_MIN))
+    def _log_observables(self, obs: Observables) -> None:
+        def num(v, fmt="{:.1f}"):
+            return "—" if v is None else fmt.format(v)
+        _LOGGER.info(
+            "[Lightning] %s | d10=%s(s%s) Rnear=%.2f/min vc=%s eta=%s "
+            "lvl=%s pend=%s strikes=%d msgs=%d",
+            self.name, num(obs.d10), num(obs.d10_s), obs.r_near,
+            num(obs.v_c_s, "{:+.1f}"), num(obs.eta_min, "{:.0f}"),
+            LEVEL_NAMES[self._machine.level], self._machine.pending_label,
+            obs.strikes_total, self._messages,
         )
-        if confirmed_warning:
-            return LEVEL_WARNING
-        if cur == LEVEL_WARNING:
-            # Hold WARNING until the cell clearly pulls away (distance + hysteresis).
-            if dist > WARNING_DIST_KM + WARNING_HOLD_KM and trend != "APPROACHING":
-                return LEVEL_WATCH
-            return LEVEL_WARNING
-        if dist <= WATCH_DIST_KM:
-            return LEVEL_WATCH
-        return cur
-
-    def _make_alert(self, level: int, trend: str, periodic: bool = False) -> Alert:
-        if level == LEVEL_CLEAR:
-            text = self._fmt_clear()
-        elif level == LEVEL_WATCH:
-            text = self._fmt_watch(trend)
-        else:
-            text = self._fmt_warning(trend)
-        return Alert(level, text, periodic)
 
     # ── Alert dispatch ────────────────────────────────────────────────────────
 
-    async def _dispatch(self, alert: Alert, now: float) -> None:
-        _LOGGER.info(
-            "[LiveMonitor] %s | level→%d periodic=%s streak=%d strikes=%d",
-            self.name, alert.level, alert.periodic,
-            self._approach_streak, len(self._strike_buffer),
-        )
-        # send_telegram swallows its own exceptions and returns False on failure, so
-        # the state machine is advanced ONLY on confirmed delivery — a dropped alert
-        # is retried on the next poll instead of leaving the user out of sync.
+    async def _dispatch(self, decision, obs: Observables, now: float) -> None:
+        # WARNING is never silenced — quiet hours suppress only 🟡 and ✅.
+        if decision.level != LEVEL_WARNING and self._in_quiet_hours():
+            _LOGGER.info("[Lightning] '%s' %s suppressed by quiet hours",
+                         self.name, LEVEL_NAMES[decision.level])
+            # Commit anyway: silencing delivery must not desync the level, or the
+            # monitor would keep retrying this alert until quiet hours end.
+            self._machine.commit(decision, now)
+            self._save_state()
+            return
+
+        text = self._format(decision, obs)
+        # send_telegram swallows its own exceptions and returns False on failure,
+        # so the state machine advances ONLY on confirmed delivery — a dropped
+        # alert is retried on the next poll instead of leaving the user out of sync.
         try:
-            ok = await self._send(alert.text)
+            ok = await self._send(text)
         except Exception as e:
-            _LOGGER.error("[LiveMonitor] '%s' send error: %s", self.name, e)
+            _LOGGER.error("[Lightning] '%s' send error: %s", self.name, e)
             return
         if not ok:
-            _LOGGER.warning(
-                "[LiveMonitor] '%s' alert NOT delivered — state held, retry next poll",
-                self.name,
-            )
+            _LOGGER.warning("[Lightning] '%s' alert NOT delivered — state held, "
+                            "retry next poll", self.name)
             return
-        if alert.periodic:
-            self._last_periodic_ts = now
-            return
-        self._level = alert.level
-        if alert.level == LEVEL_WARNING:
-            self._last_periodic_ts = now
-        elif alert.level == LEVEL_CLEAR:
-            self._series.clear()
-            self._approach_streak = 0
+        self._machine.commit(decision, now)
+        self._save_state()
+        _LOGGER.info("[Lightning] %s | committed level=%s periodic=%s",
+                     self.name, LEVEL_NAMES[decision.level], decision.periodic)
 
-    # ── Message formatters ────────────────────────────────────────────────────
+    def _in_quiet_hours(self) -> bool:
+        if not self._quiet_start or not self._quiet_end:
+            return False
+        try:
+            sh, sm = map(int, self._quiet_start.split(":"))
+            eh, em = map(int, self._quiet_end.split(":"))
+            s, e = time_t(sh, sm), time_t(eh, em)
+            t = datetime.now(self._tz()).time().replace(second=0, microsecond=0)
+            if s <= e:
+                return s <= t < e
+            return t >= s or t < e
+        except (ValueError, AttributeError):
+            return False
 
-    def _threat_dir(self) -> tuple:
-        """Return (dist_km, azimuth, direction_label) of the latest threat sample."""
-        if not self._series:
-            return 0.0, 0.0, _direction(0.0, self.language)
-        last = self._series[-1]
-        az = _azimuth_deg(self.lat, self.lon, last[1], last[2])
-        return last[3], az, _direction(az, self.language)
+    # ── Formatters ────────────────────────────────────────────────────────────
 
-    def _trend_phrase(self, trend: str) -> str:
-        if self.language == "it":
-            return {"APPROACHING": "In avvicinamento", "RETREATING": "In allontanamento",
-                    "STATIONARY": "Stazionario", "UNKNOWN": "In osservazione"}.get(trend, "")
-        return {"APPROACHING": "Approaching", "RETREATING": "Moving away",
-                "STATIONARY": "Stationary", "UNKNOWN": "Watching"}.get(trend, "")
+    def _format(self, decision, obs: Observables) -> str:
+        if decision.level == LEVEL_CLEAR:
+            return self._fmt_clear(obs)
+        if decision.level == LEVEL_WATCH:
+            return self._fmt_watch(obs)
+        return self._fmt_warning(obs)
 
-    def _fmt_warning(self, trend: str) -> str:
-        dist, az, dir_lbl = self._threat_dir()
-        vel, eta = _velocity_eta(self._series)
-        loc = html.escape(self.location or self.name)
-        strikes = len(self._strike_buffer)
-        approaching = trend == "APPROACHING"
-        if self.language == "it":
-            lines = [f"🔴 <b>ALLERTA temporale — {loc}</b>"]
-            lead = "In avvicinamento" if approaching else "Nelle immediate vicinanze"
-            lines.append(f"📍 {lead}: <b>{dist:.1f} km</b> a {dir_lbl} ({az:.0f}°)")
-            if vel and approaching and eta:
-                lines.append(f"🚀 ~{vel:.0f} km/h — arrivo stimato: {eta} min")
-            elif vel:
-                lines.append(f"🚀 ~{vel:.0f} km/h")
-            lines.append(f"🔢 Fulmini ultimi {STRIKE_BUFFER_MIN} min: {strikes}")
-        else:
-            lines = [f"🔴 <b>Storm WARNING — {loc}</b>"]
-            lead = "Approaching" if approaching else "In the immediate area"
-            lines.append(f"📍 {lead}: <b>{dist:.1f} km</b> to {dir_lbl} ({az:.0f}°)")
-            if vel and approaching and eta:
-                lines.append(f"🚀 ~{vel:.0f} km/h — estimated arrival: {eta} min")
-            elif vel:
-                lines.append(f"🚀 ~{vel:.0f} km/h")
-            lines.append(f"🔢 Strikes (last {STRIKE_BUFFER_MIN} min): {strikes}")
+    def _bearing_text(self, obs: Observables) -> str:
+        if obs.bearing is None:
+            return ""
+        return f" a {direction_label(obs.bearing, self.language)} ({obs.bearing:.0f}°)" \
+            if self.language == "it" else \
+            f" to {direction_label(obs.bearing, self.language)} ({obs.bearing:.0f}°)"
+
+    def _trend_phrase(self, obs: Observables) -> str:
+        v = obs.v_c_s
+        if v is None:
+            return "In osservazione" if self.language == "it" else "Watching"
+        if v >= 5:
+            return "In avvicinamento" if self.language == "it" else "Approaching"
+        if v <= -5:
+            return "In allontanamento" if self.language == "it" else "Moving away"
+        return "Stazionario" if self.language == "it" else "Stationary"
+
+    def _loc(self) -> str:
+        return html.escape(self.location or self.name)
+
+    def _warning_lead(self, obs: Observables) -> str:
+        """A WARNING is held through the exit dwell, so it can still be active
+        while the storm is already pulling away — say so rather than claiming it
+        is overhead."""
+        it = self.language == "it"
+        v = obs.v_c_s
+        if v is not None and v >= 5:
+            return "In avvicinamento" if it else "Approaching"
+        if v is not None and v <= -5:
+            return "In allontanamento" if it else "Moving away"
+        return "Nelle immediate vicinanze" if it else "In the immediate area"
+
+    def _fmt_warning(self, obs: Observables) -> str:
+        dist = obs.d10_s or 0.0
+        approaching = obs.v_c_s is not None and obs.v_c_s >= 5
+        it = self.language == "it"
+        lines = [f"🔴 <b>ALLERTA temporale — {self._loc()}</b>" if it
+                 else f"🔴 <b>Storm WARNING — {self._loc()}</b>"]
+        lines.append(f"📍 {self._warning_lead(obs)}: "
+                     f"<b>{dist:.1f} km</b>{self._bearing_text(obs)}")
+        if obs.speed_kmh and approaching and obs.eta_min:
+            lines.append(f"🚀 ~{obs.speed_kmh:.0f} km/h — "
+                         + (f"arrivo stimato: {obs.eta_min:.0f} min" if it
+                            else f"estimated arrival: {obs.eta_min:.0f} min"))
+        elif obs.speed_kmh:
+            lines.append(f"🚀 ~{obs.speed_kmh:.0f} km/h")
+        lines.append((f"🔢 Fulmini ultimi {WINDOW_MIN} min: {obs.strikes_total}" if it
+                      else f"🔢 Strikes (last {WINDOW_MIN} min): {obs.strikes_total}"))
         lines.append(f"🕐 {self._now_str()}")
         return "\n".join(lines)
 
-    def _fmt_watch(self, trend: str) -> str:
-        dist, az, dir_lbl = self._threat_dir()
-        loc = html.escape(self.location or self.name)
-        strikes = len(self._strike_buffer)
-        phrase = self._trend_phrase(trend)
-        if self.language == "it":
-            lines = [f"🟡 <b>Temporale in zona — {loc}</b>",
-                     f"📍 Attività a <b>{dist:.1f} km</b> a {dir_lbl} ({az:.0f}°)",
-                     f"📊 {phrase}",
-                     f"🔢 Fulmini ultimi {STRIKE_BUFFER_MIN} min: {strikes}"]
-        else:
-            lines = [f"🟡 <b>Storm in the area — {loc}</b>",
-                     f"📍 Activity at <b>{dist:.1f} km</b> to {dir_lbl} ({az:.0f}°)",
-                     f"📊 {phrase}",
-                     f"🔢 Strikes (last {STRIKE_BUFFER_MIN} min): {strikes}"]
-        lines.append(f"🕐 {self._now_str()}")
-        return "\n".join(lines)
+    def _fmt_watch(self, obs: Observables) -> str:
+        dist = obs.d10_s or 0.0
+        it = self.language == "it"
+        head = (f"🟡 <b>Temporale in zona — {self._loc()}</b>" if it
+                else f"🟡 <b>Storm in the area — {self._loc()}</b>")
+        activity = (f"📍 Attività a <b>{dist:.1f} km</b>{self._bearing_text(obs)}" if it
+                    else f"📍 Activity at <b>{dist:.1f} km</b>{self._bearing_text(obs)}")
+        strikes = (f"🔢 Fulmini ultimi {WINDOW_MIN} min: {obs.strikes_total}" if it
+                   else f"🔢 Strikes (last {WINDOW_MIN} min): {obs.strikes_total}")
+        return "\n".join([head, activity, f"📊 {self._trend_phrase(obs)}",
+                          strikes, f"🕐 {self._now_str()}"])
 
-    def _fmt_clear(self) -> str:
-        loc = html.escape(self.location or self.name)
-        if self.language == "it":
-            return (f"✅ <b>Cessato allarme temporale — {loc}</b>\n"
-                    f"🔇 Nessun fulmine da {CLEAR_QUIET_MIN} min\n"
-                    f"🕐 {self._now_str()}")
-        return (f"✅ <b>Storm threat cleared — {loc}</b>\n"
-                f"🔇 No lightning for {CLEAR_QUIET_MIN} min\n"
-                f"🕐 {self._now_str()}")
+    def _fmt_clear(self, obs: Observables) -> str:
+        it = self.language == "it"
+        head = (f"✅ <b>Cessato allarme temporale — {self._loc()}</b>" if it
+                else f"✅ <b>Storm threat cleared — {self._loc()}</b>")
+        # CLEAR is now reachable two ways — the storm left, or it died out — and
+        # the message says which, instead of always claiming silence.
+        if obs.has_data and obs.d10_s is not None:
+            reason = (f"🔇 Attività residua a {obs.d10_s:.0f} km, in allontanamento" if it
+                      else f"🔇 Remaining activity {obs.d10_s:.0f} km away, moving off")
+        else:
+            reason = ("🔇 Nessuna attività significativa" if it
+                      else "🔇 No significant activity")
+        return "\n".join([head, reason, f"🕐 {self._now_str()}"])
+
+    def _tz(self) -> ZoneInfo:
+        try:
+            return ZoneInfo(self.tz_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            return ZoneInfo("UTC")
 
     def _now_str(self) -> str:
-        try:
-            tz = ZoneInfo(self.tz_name)
-        except ZoneInfoNotFoundError:
-            tz = ZoneInfo("UTC")
-        return datetime.now(tz).strftime("%H:%M")
+        return datetime.now(self._tz()).strftime("%H:%M")
 
 
 # ── Manager ───────────────────────────────────────────────────────────────────
 
+# Only these fields affect how the monitor behaves. Anything else changing in
+# live_monitors.json must NOT restart a running monitor — that used to wipe the
+# buffer, the level and the in-flight storm every time an unrelated monitor
+# (football, seismic) was saved.
+_FINGERPRINT_FIELDS = (
+    "name", "location", "latitude", "longitude", "radius_km", "language",
+    "sensitivity", "quiet_start", "quiet_end", "record_strikes", "telegram_bot_id",
+)
+
+
+def _fingerprint(cfg: dict, tz_name: str) -> str:
+    return json.dumps([cfg.get(k) for k in _FINGERPRINT_FIELDS] + [tz_name],
+                      sort_keys=True, default=str)
+
+
 class LiveMonitorManager:
-    """Owns all live monitor instances. Called by main.py on startup and config changes."""
+    """Owns all lightning monitor instances. Called by main.py on startup and on
+    config changes."""
 
     def __init__(self):
         self._monitors: dict[str, LightningLiveMonitor] = {}
+        self._fingerprints: dict[str, str] = {}
 
     def reload(self, configs: list[dict], make_send_fn, tz_name: str):
         wanted: set[str] = set()
         for cfg in configs:
-            if cfg.get("type") != "lightning":
-                continue
-            if not cfg.get("enabled"):
+            if cfg.get("type") != "lightning" or not cfg.get("enabled"):
                 continue
             mid = cfg["id"]
             wanted.add(mid)
-            if mid in self._monitors:
-                self._monitors[mid].stop()
-            m = LightningLiveMonitor(cfg, make_send_fn(cfg), tz_name)
-            self._monitors[mid] = m
-            m.start()
+            fingerprint = _fingerprint(cfg, tz_name)
+            existing = self._monitors.get(mid)
+            if existing and self._fingerprints.get(mid) == fingerprint and existing.is_running():
+                continue                      # unchanged — leave the storm alone
+            self._fingerprints[mid] = fingerprint
+            replacement = LightningLiveMonitor(cfg, make_send_fn(cfg), tz_name)
+            self._monitors[mid] = replacement
+            self._swap(existing, replacement)
+
         for mid in list(self._monitors):
             if mid not in wanted:
-                self._monitors[mid].stop()
-                del self._monitors[mid]
+                self._swap(self._monitors.pop(mid), None)
+                self._fingerprints.pop(mid, None)
+
+    @staticmethod
+    def _swap(old: LightningLiveMonitor | None, new: LightningLiveMonitor | None):
+        """Retire `old` and start `new`, waiting for the old MQTT client to close
+        first when an event loop is available."""
+        if old is None:
+            if new is not None:
+                new.start()
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            old.stop()
+            if new is not None:
+                new.start()
+            return
+
+        async def _handover():
+            await old.aclose()
+            if new is not None:
+                new.start()
+
+        loop.create_task(_handover())
 
     def stop_all(self):
         for m in self._monitors.values():
             m.stop()
         self._monitors.clear()
+        self._fingerprints.clear()
 
     def status(self, monitor_id: str) -> str:
         m = self._monitors.get(monitor_id)
-        if m and m.is_running():
-            return "running"
-        return "stopped"
+        return m.status() if m else "stopped"
 
 
 live_monitor_manager = LiveMonitorManager()

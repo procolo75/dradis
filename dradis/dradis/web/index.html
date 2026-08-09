@@ -3840,7 +3840,7 @@ function renderLiveMonitorForm(monitor) {
   }
 
   const _TYPE_DESCS_LIVE = {
-    lightning:        "Persistent MQTT listener on Blitzortung. Strikes within radius buffered 15 min; DBSCAN (eps=8 km) every 2 min finds storm cells, then all activity is reduced to one scalar — the nearest cell's distance — tracked as a 30-min series for trend/ETA. A single threat state machine sends 🟡 WATCH → 🔴 WARNING → ✅ CLEAR: alerts only on level change (+10-min periodic in WARNING), WARNING needs a confirmed approach, CLEAR needs 25 min of silence (hysteresis, no flapping). No LLM, no cron.",
+    lightning:        "Persistent MQTT listener on Blitzortung. Strikes are buffered 15 min and reduced every 2 min to three stable observables: d10 (10th-percentile strike distance), r_near (strikes/min around the storm body) and v_c (closing speed of the strike field, from the shift of its centroid between the two halves of the window). A threat state machine sends 🟡 WATCH → 🔴 WARNING → ✅ CLEAR: alerts only on level change (+10-min periodic in WARNING), with separated enter/exit thresholds and dwell times, so escalation and de-escalation act on the same quantities and no level can latch. No clustering, no LLM, no cron.",
     seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
     football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's AND below the configured maximum odds, in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };
@@ -3910,11 +3910,30 @@ function renderLiveMonitorForm(monitor) {
 
       <div class="form-group" id="lm-radius-block">
         <label for="lm-radius">Radius (km)</label>
-        <input type="number" id="lm-radius" min="1" max="500" value="${monitor.radius_km || 100}" style="width:80px">
+        <input type="number" id="lm-radius" min="1" max="200" value="${monitor.radius_km || 100}" style="width:80px">
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Strikes farther than this are ignored. The subscribed Blitzortung area widens automatically to cover it.</small>
+      </div>
+
+      <div class="form-group" id="lm-sensitivity-block">
+        <label for="lm-sensitivity">Sensibilità</label>
+        <select id="lm-sensitivity" style="width:200px">
+          <option value="low"    ${monitor.sensitivity === "low"    ? "selected" : ""}>🟢 Bassa — solo temporali vicini</option>
+          <option value="medium" ${(monitor.sensitivity || "medium") === "medium" ? "selected" : ""}>🟠 Media — consigliata</option>
+          <option value="high"   ${monitor.sensitivity === "high"   ? "selected" : ""}>🔴 Alta — avvisa prima</option>
+        </select>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Sceglie un set coerente di soglie di distanza, attività e ETA. Alta anticipa gli avvisi ma ne produce di più.</small>
       </div>
 
       <div class="form-group" id="lm-lightning-hint">
-        <small style="color:var(--text-muted)">Zone-based alerts: <b>initial detection</b> when a storm enters the radius · <b>zone crossing</b> (&lt;15 / 15–30 / 30–50 km) · <b>periodic re-alert every 10 min</b> if approaching · <b>✅ all clear</b> after 15 min of silence.</small>
+        <small style="color:var(--text-muted)">Tre livelli con isteresi: <b>🟡 WATCH</b> quando l'attività entra in zona · <b>🔴 ALLERTA</b> solo con avvicinamento confermato del fronte o temporale già vicino · <b>re-invio ogni 10 min</b> finché l'allerta è attiva · <b>✅ cessato allarme</b> quando il temporale si allontana o si esaurisce. Salita e discesa usano le stesse grandezze, quindi il livello non resta mai bloccato.</small>
+      </div>
+
+      <div class="form-group" id="lm-record-block">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="lm-record-strikes" ${monitor.record_strikes ? "checked" : ""}>
+          Registra i fulmini per l'analisi offline
+        </label>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Scrive ogni fulmine ricevuto in <code>/data/lightning_rec/</code> (rotazione giornaliera, 7 giorni). Serve a rigiocare un temporale vero con <code>python -m live_monitors.replay</code> e tarare la sensibilità.</small>
       </div>
 
       <div class="form-group" id="lm-windows-block">
@@ -3984,12 +4003,14 @@ function renderLiveMonitorForm(monitor) {
     const isFootball  = type === "football_betting";
     const isLightning = !isSeismic && !isFootball;
     document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[type] || "";
-    document.getElementById("lm-location-block").style.display  = isLightning          ? "" : "none";
-    document.getElementById("lm-radius-block").style.display    = isLightning          ? "" : "none";
-    document.getElementById("lm-lightning-hint").style.display  = isLightning          ? "" : "none";
-    document.getElementById("lm-areas-block").style.display     = isSeismic            ? "" : "none";
-    document.getElementById("lm-quiet-block").style.display     = (isSeismic||isFootball) ? "" : "none";
-    document.getElementById("lm-windows-block").style.display   = isFootball           ? "" : "none";
+    document.getElementById("lm-location-block").style.display    = isLightning ? "" : "none";
+    document.getElementById("lm-radius-block").style.display      = isLightning ? "" : "none";
+    document.getElementById("lm-sensitivity-block").style.display = isLightning ? "" : "none";
+    document.getElementById("lm-lightning-hint").style.display    = isLightning ? "" : "none";
+    document.getElementById("lm-record-block").style.display      = isLightning ? "" : "none";
+    document.getElementById("lm-areas-block").style.display       = isSeismic   ? "" : "none";
+    document.getElementById("lm-quiet-block").style.display       = "";
+    document.getElementById("lm-windows-block").style.display     = isFootball  ? "" : "none";
     const quietDesc  = document.getElementById("lm-quiet-desc");
     const quietLabel = document.getElementById("lm-quiet-label");
     if (isFootball) {
@@ -3999,6 +4020,9 @@ function renderLiveMonitorForm(monitor) {
       if (!qe.value) qe.value = "07:00";
       quietLabel.textContent = "🔕 Pausa chiamate API";
       quietDesc.textContent  = "In questo intervallo le chiamate all'API non vengono eseguite. Lascia vuoto per disabilitare.";
+    } else if (isLightning) {
+      quietLabel.textContent = "🔕 Silenzio notifiche";
+      quietDesc.textContent  = "Lascia vuoto per disabilitare. Silenzia 🟡 WATCH e ✅ cessato allarme; l'allerta 🔴 viene sempre inviata.";
     } else {
       quietLabel.textContent = "🔕 Silenzio notifiche";
       quietDesc.textContent  = "Lascia vuoto per disabilitare. Gli eventi avvenuti durante il silenzio vengono inviati tutti insieme al risveglio.";
@@ -4085,7 +4109,12 @@ function renderLiveMonitorForm(monitor) {
     sg.style.display = "";
     api("GET", `/api/live-monitors/${monitor.id}/status`).then(data => {
       const badge = document.getElementById("lm-status-badge");
-      badge.textContent = data.status === "running" ? "🟢 Running" : "🔴 Stopped";
+      // "degraded" = task alive but the feed is silent — a broken monitor used to
+      // be indistinguishable from a quiet sky.
+      badge.textContent = {
+        running:  "🟢 Running",
+        degraded: "🟠 Degraded — nessun dato dal feed",
+      }[data.status] || "🔴 Stopped";
     }).catch(() => {});
   }
 
@@ -4104,6 +4133,8 @@ function renderLiveMonitorForm(monitor) {
       language:     document.getElementById("lm-language").value,
       quiet_start:     document.getElementById("lm-quiet-start")?.value || "",
       quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
+      sensitivity:     document.getElementById("lm-sensitivity")?.value || "medium",
+      record_strikes:  document.getElementById("lm-record-strikes")?.checked || false,
       telegram_bot_id: document.getElementById("lm-bot-id").value,
     };
     try {
