@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [3.2.0] - 2026-08-09
+
+- **Fix — HA monitor (LLM mode) claimed actions it never performed**: when an HA monitor fired in LLM mode, DRADIS would report it had done something (e.g. *"I added a task to check the sensor"*) but the task never appeared in Google Tasks. Root cause: the monitor's LLM callback ran DRADIS with `selected=[]` (`bot/scheduler.py`), which `build_tools` resolves to **no tools at all** — so DRADIS had no way to act and simply hallucinated success. The UI, meanwhile, promised "full capabilities (Telegram, email, tasks…)".
+- **Feat — per-HA-monitor tool selection**: each HA monitor now carries its own `tools` list, threaded end-to-end (`HaMonitorPayload.tools` → `HaLiveMonitor.tools` → `_llm(prompt, selected)` → `run_dradis`). The LLM section of the HA monitor panel gains a **Tools** picker mirroring the task editor: *No tools — text alert only* (default), *Selected tools…* (grouped by capability, e.g. only `create_task`), or *All available tools*. Semantics follow `build_tools`: `[]` = none, `["*"]` = all, a list = only those. Default is **no tools** so nothing is added to the prompt unless you opt in — tool schemas cost input tokens on every alert, so selecting only what a monitor needs keeps usage minimal. The alert message is always sent to Telegram regardless of tool selection.
+
 ## [3.1.1] - 2026-07-19
 
 - **Fix — "Log tools used" crashed the reply when combined with "Log token usage"**: `reply_footer` joined the two footer lines with `<br>`, but Telegram's HTML `parse_mode` supports only a small tag set and rejects `<br>` (`BadRequest: unsupported start tag "br"`), so the whole message failed to send whenever both toggles were on. The lines are now joined with a real newline (`\n`) inside the `<i>…</i>` block. (A single footer line was unaffected, which is why 3.1.0 only broke with both logs enabled.)

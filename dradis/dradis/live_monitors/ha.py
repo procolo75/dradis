@@ -19,6 +19,11 @@ Pipeline per state change:
   3. State filter — skip if filter_states non-empty and state not in set
   4. Cooldown check — skip if within cooldown window
   5. Alert: LLM mode (call model, fallback to direct on empty) or Direct mode
+
+LLM mode tools: each monitor carries its own `tools` selection (empty = no tools,
+smallest prompt; ["*"] = all; a list = only those). It is passed through to the
+DRADIS runner so the model can actually perform actions (e.g. create a task)
+instead of only claiming to.
 """
 
 import asyncio
@@ -49,6 +54,8 @@ class HaLiveMonitor:
         self.alert_mode      = cfg.get("alert_mode", "llm")
         self.filter_states   = {s.strip().lower() for s in cfg.get("filter_states", []) if s.strip()}
         self.direct_template = cfg.get("direct_template", "").strip()
+        # Tool selection for LLM mode: [] = none, ["*"] = all, list = specific.
+        self.tools           = cfg.get("tools", [])
         # Per-monitor MQTT prefix override — empty means use the global mqtt_statestream_prefix
         self._prefix_override = cfg.get("mqtt_prefix", "").strip().rstrip("/")
 
@@ -150,7 +157,7 @@ class HaLiveMonitor:
                 await self._send(self._build_direct_message(entity_id, state))
             else:
                 prompt = self._build_prompt(entity_id, state)
-                alert_text = await self._llm(prompt)
+                alert_text = await self._llm(prompt, self.tools)
                 self._cooldowns[entity_id] = now
                 if alert_text and alert_text.strip():
                     await self._send(alert_text.strip())

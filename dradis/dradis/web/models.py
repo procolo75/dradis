@@ -76,6 +76,10 @@ class HaMonitorPayload(BaseModel):
     direct_template: str   = ""
     mqtt_prefix:     str   = ""
     telegram_bot_id: str   = "default"
+    # Tools DRADIS may use when reacting to a state change in LLM mode:
+    # [] = no tools (default — smallest prompt), ["*"] = all available, or an
+    # explicit list of tool names / capability ids (e.g. ["create_task"]).
+    tools:           list[str] = []
 
 
 class BotPayload(BaseModel):

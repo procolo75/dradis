@@ -348,10 +348,12 @@ def reload_ha_monitors():
             await _state.send_telegram(text, bot_id=bid)
         return _send
 
-    async def _llm(prompt: str) -> str:
+    async def _llm(prompt: str, selected) -> str:
+        # `selected` is the monitor's own tool selection: [] = no tools,
+        # ["*"] = all available, or a list of tool names / capability ids.
         s = _state.read_settings()
         result, _, error, _ = await _state.run_dradis(
-            prompt, s, selected=[], context_label="HAMonitor",
+            prompt, s, selected=selected, context_label="HAMonitor",
         )
         if error or result is None:
             return ""

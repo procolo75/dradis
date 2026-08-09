@@ -33,7 +33,7 @@ Each capability contributes tool specs (`agents/*.py` → `*_tools(settings)`):
 | Google Tasks | `list_tasks`, `create_task`, `complete_task`, `delete_task`, `update_task` |
 | Read URL | `read_url` |
 
-A capability's tools are available when it is **Enabled** and authenticated. **Chat** gets all available tools; a **task** can select exactly which tools to attach (fewer tools = smaller prompt). `bot/state.py:build_tools(settings, selected)` assembles the list. A capability's *Additional instructions* are appended to the system prompt when any of its tools are attached.
+A capability's tools are available when it is **Enabled** and authenticated. **Chat** gets all available tools; a **task** and an **HA monitor (LLM mode)** each select exactly which tools to attach (fewer tools = smaller prompt; HA monitors default to *none*). `bot/state.py:build_tools(settings, selected)` assembles the list — `[]` = no tools, `["*"]` = all, a list = only those. A capability's *Additional instructions* are appended to the system prompt when any of its tools are attached.
 
 ### One model + fallback
 

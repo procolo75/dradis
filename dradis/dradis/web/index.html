@@ -2969,6 +2969,39 @@ function readTaskTools() {
     .map(t => t.name);
 }
 
+// HA monitor tool selector — same catalogue as tasks, own DOM ids.
+async function populateHaTools(selected) {
+  const box = document.getElementById("ha-tools-custom");
+  if (!box) return;
+  const tools = await loadAvailableTools();
+  if (!tools.length) {
+    box.innerHTML = '<div style="color:var(--text-muted);font-size:0.82rem">No tools available — enable and authenticate capabilities first.</div>';
+    return;
+  }
+  const groups = {};
+  for (const t of tools) { (groups[t.capability_label] ||= []).push(t); }
+  let html = "";
+  for (const [label, list] of Object.entries(groups)) {
+    html += `<div style="font-weight:600;margin:8px 0 2px;font-size:0.82rem">${label}</div>`;
+    for (const t of list) {
+      const checked = (selected.includes(t.name) || selected.includes(t.capability)) ? "checked" : "";
+      html += `<label style="display:flex;gap:8px;align-items:flex-start;margin:3px 0;font-weight:400;text-transform:none;letter-spacing:0;">
+        <input type="checkbox" id="ha-tool-${t.name}" ${checked} style="width:auto;margin:3px 0 0;">
+        <span><code>${t.name}</code> <span style="color:var(--text-muted)">— ${t.description}</span></span></label>`;
+    }
+  }
+  box.innerHTML = html;
+}
+
+function readHaTools() {
+  const mode = document.getElementById("ha-tools-mode").value;
+  if (mode === "all")  return ["*"];
+  if (mode === "none") return [];
+  return availableTools
+    .filter(t => { const el = document.getElementById("ha-tool-" + t.name); return el && el.checked; })
+    .map(t => t.name);
+}
+
 function renderTaskForm(task) {
   const presetOptions = CRON_PRESETS.map(p =>
     `<option value="${p.cron}" ${task.cron === p.cron ? "selected" : ""}>${p.label} (${p.cron})</option>`
@@ -4236,6 +4269,13 @@ function renderSidebarHaMonitors() {
 }
 
 function renderHaMonitorForm(monitor) {
+  // Tool selection: [] / missing → "none"; ["*"] → "all"; list → "custom".
+  const _haTools     = monitor.tools;
+  const _haToolMode  = (Array.isArray(_haTools) && _haTools.includes("*")) ? "all"
+                     : (Array.isArray(_haTools) && _haTools.length)        ? "custom"
+                     : "none";
+  const _haSelTools  = (Array.isArray(_haTools) && !_haTools.includes("*")) ? _haTools : [];
+
   let panel = document.getElementById("panel-ha-monitor");
   if (!panel) {
     panel = document.createElement("div");
@@ -4305,7 +4345,24 @@ function renderHaMonitorForm(monitor) {
         <div class="form-group">
           <label for="ha-instructions">DRADIS Instructions</label>
           <textarea id="ha-instructions" rows="4" style="width:100%;resize:vertical" placeholder="Examples:&#10;• Send me a Telegram message to warn me the switch is off.&#10;• Send an email to me with subject &quot;Sensor alert&quot;.&#10;• Create a Google Task called &quot;Check sensor&quot;.">${monitor.instructions || ""}</textarea>
-          <small style="color:var(--text-muted)">DRADIS receives the entity state change and executes these instructions using its full capabilities (Telegram, email, tasks…). If empty, DRADIS decides autonomously what to do.</small>
+          <small style="color:var(--text-muted)">DRADIS receives the entity state change and runs these instructions. The alert message is always sent to Telegram; to also perform actions (create a task, send an email…) you must enable the matching tools below. If empty, DRADIS decides autonomously what to do.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="ha-tools-mode">Tools <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">(fewer = smaller prompt)</span></label>
+          <select id="ha-tools-mode">
+            <option value="none"   ${_haToolMode === "none"   ? "selected" : ""}>No tools — text alert only</option>
+            <option value="custom" ${_haToolMode === "custom" ? "selected" : ""}>Selected tools…</option>
+            <option value="all"    ${_haToolMode === "all"    ? "selected" : ""}>All available tools</option>
+          </select>
+          <div id="ha-tools-custom" style="margin-top:8px; display:${_haToolMode === "custom" ? "block" : "none"};">
+            <div style="color:var(--text-muted);font-size:0.82rem">Loading tools…</div>
+          </div>
+          <small style="margin-top:6px;display:block;color:var(--text-muted)">
+            Without tools DRADIS can only write the alert message — it cannot create tasks or send
+            email. Tool schemas are added to the prompt on every alert, so select only what this
+            monitor needs (e.g. only <code>create_task</code>) to keep token usage low.
+          </small>
         </div>
 
         <div class="form-group">
@@ -4385,6 +4442,13 @@ function renderHaMonitorForm(monitor) {
     document.getElementById("ha-direct-section").style.display = isLlm ? "none" : "";
   });
 
+  document.getElementById("ha-tools-mode").addEventListener("change", function () {
+    const box = document.getElementById("ha-tools-custom");
+    if (this.value === "custom") { box.style.display = "block"; populateHaTools(_haSelTools); }
+    else                         { box.style.display = "none"; }
+  });
+  if (_haToolMode === "custom") populateHaTools(_haSelTools);
+
   document.getElementById("btn-ha-discover").addEventListener("click", async () => {
     const btn = document.getElementById("btn-ha-discover");
     btn.disabled = true;
@@ -4454,6 +4518,7 @@ function renderHaMonitorForm(monitor) {
       mqtt_prefix:     document.getElementById("ha-monitor-prefix").value.trim(),
       entities,
       instructions:    alertMode === "llm" ? document.getElementById("ha-instructions").value.trim() : "",
+      tools:           alertMode === "llm" ? readHaTools() : [],
       cooldown_min:    parseFloat(document.getElementById("ha-cooldown").value) || 60,
       language:        alertMode === "llm" ? document.getElementById("ha-language").value : "it",
       filter_states:   filterStates,

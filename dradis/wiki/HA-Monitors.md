@@ -1,6 +1,6 @@
 # HA Monitors
 
-Monitor any Home Assistant entity via MQTT and receive a Telegram alert whenever its state changes. Each monitor supports two alert modes: **LLM** (DRADIS writes the message using your instructions and its full capabilities) or **Direct Telegram** (immediate fixed-format message, zero LLM cost). HA monitors are stored in `/data/ha_monitors.json`.
+Monitor any Home Assistant entity via MQTT and receive a Telegram alert whenever its state changes. Each monitor supports two alert modes: **LLM** (DRADIS writes the message using your instructions, and — if you enable tools for that monitor — can also act on it) or **Direct Telegram** (immediate fixed-format message, zero LLM cost). HA monitors are stored in `/data/ha_monitors.json`.
 
 ## Prerequisites
 
@@ -58,6 +58,7 @@ Expand **HA Monitors** → click `+` → configure the monitor fields → click 
 | State filter | Optional comma-separated list of states that trigger an alert (e.g. `on, off`). Leave blank to alert on any state change. States not in the list are silently discarded before any LLM call or Telegram send. |
 | Alert mode | **LLM** — DRADIS processes the state change using your instructions. **Direct Telegram** — sends a fixed-format message immediately, no LLM call. |
 | DRADIS Instructions | *(LLM mode only)* What DRADIS should do when the state changes. Examples: *"Send a Telegram message warning the switch turned off."* / *"Send an email with subject 'Sensor alert'."* Instructions are binding — the LLM always follows them. If empty, DRADIS sends a default Telegram alert. |
+| Tools | *(LLM mode only)* Which tools DRADIS may call for this monitor: **No tools — text alert only** (default), **Selected tools…** (grouped by capability, e.g. only `create_task`), or **All available tools**. The alert message is always sent to Telegram regardless; to *act* (create a task, send an email…) you must enable the matching tool. Tool schemas are added to the prompt on every alert, so pick only what the monitor needs to keep token usage low. |
 | Message template | *(Direct mode only)* Fixed Telegram message. Supports `{entity}`, `{state}`, `{previous_state}`, `{time}`. Default: `⚡ {entity}: {state} — {time}`. |
 | Alert language | Language of the alert: 🇮🇹 Italiano or 🇬🇧 English. |
 | Cooldown per entity (min) | Minimum time between alerts for the same entity (1–1440 min, default 60). Cooldown is only consumed when an alert is actually sent (SKIP responses do not consume cooldown). |
@@ -67,7 +68,7 @@ Expand **HA Monitors** → click `+` → configure the monitor fields → click 
 
 ### LLM Mode
 
-The full DRADIS agent (with all enabled tools: Gmail, Google Calendar, Google Tasks, etc.) receives the entity ID, new state, previous state, timestamp, and your instructions. It executes the instructions directly — there is no SKIP mechanism. Use this when you want smart, context-aware responses (e.g. send an email, create a task, check a calendar).
+The DRADIS agent receives the entity ID, new state, previous state, timestamp, and your instructions, then executes them directly — there is no SKIP mechanism. Which tools it can call is controlled per monitor by the **Tools** field (default: none). The alert message is always written and sent to Telegram; to perform actions such as sending an email, creating a task, or checking a calendar you must enable the matching tool. Keeping the selection minimal (only the tools a monitor actually needs) keeps the prompt — and token cost — small on every alert.
 
 ### Direct Telegram Mode
 
