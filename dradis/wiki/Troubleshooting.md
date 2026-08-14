@@ -39,7 +39,7 @@
 
 - Check the add-on log for MQTT connection errors.
 - Verify the MQTT broker is running (Mosquitto add-on in HA).
-- For Lightning monitor: verify the geohash topics are being published by the upstream data source.
+- For the Storm front monitor: verify the geohash topics are being published by the upstream data source.
 - Try disabling and re-enabling the monitor to force a reconnect.
 
 ---
@@ -54,17 +54,25 @@ The task is alive but the feed is not delivering: either no message has arrived 
 
 ---
 
-## Lightning monitor never sends a 🔴 ALLERTA, or never sends ✅
+## Storm front monitor says too much, too little, or the wrong thing
 
-Both were real defects before **v3.3.0** and are fixed there — upgrade first. If you are on 3.3.0 or later:
+**Too many messages** is no longer possible: a ring is announced at most once per event, so a storm can produce at most `ring_count` messages plus one all-clear, whatever it does. If you are seeing more than that, you are seeing *separate events* — check the log for the all-clear between them.
 
-- Read the per-poll diagnostic line in the log:
-  `[Lightning] name | d10=12.4(s11.8) Rnear=0.73/min vc=+18.2 eta=39 lvl=WATCH pend=- strikes=142`
-  `d10` is how close the storm body really is, `Rnear` how active it is, `vc` its closing speed. Compare them against the thresholds for your sensitivity preset.
-- If 🔴 never fires on storms you consider close, raise **Sensitivity** to *Alta*.
-- If ✅ takes too long, note that the all-clear needs the exit condition to hold for the full dwell (20 min on *Media*) — this is deliberate, storms do come back.
-- To tune properly, enable **Record strikes**, wait for a real storm, then replay it against all three presets:
-  `cd /app/dradis && python3 -m live_monitors.replay /data/lightning_rec/<id>-<date>.ndjson --monitor <id> --compare`
+**Too few messages.** Read the per-poll diagnostic line:
+
+```
+[StormFront] name | ring=2/4 notified=2 front=18.3km sec=10 act=3 n=22 evt=ACTIVE pend=-/0
+```
+
+- `front` is how close the leading edge of the nearest cell really is, `act` how many sectors are active, `n` how many strikes are inside the radius.
+- A sector needs **4 strikes in 10 minutes** to count at all, and the front is never placed nearer than the 3rd-nearest strike of its sector. Isolated discharges are deliberately invisible.
+- If `evt=IDLE` while you can see lightning, the activity is outside your radius — the monitor observes to 1.6 × the radius but only alerts inside it.
+
+**It said "track not yet determinable".** That is the honest answer, not a bug. Far out, geometry makes every storm look head-on, and a bearing derived from a handful of discharges jitters by several degrees. The monitor declares the ambiguity rather than guessing, and the next ring usually settles it.
+
+**It said "ti sfiora" and then it hit me.** Report this — it is the error the design works hardest to avoid, and it did not occur once in 100 simulated head-on storms. Include the log lines for the whole event.
+
+**No radar image.** The chart is rendered on a worker thread and any failure degrades to text-only, by design. Look for `chart failed (…) — sending text only` in the log.
 
 ---
 
@@ -116,7 +124,7 @@ View the add-on log in **Home Assistant → Settings → Add-ons → DRADIS → 
 | Log prefix | Meaning |
 |------------|---------|
 | `[DRADIS]` | General agent activity |
-| `[Lightning]` | Lightning monitor observables and level, one line per poll |
+| `[StormFront]` | Storm front ring, front distance and event state, one line per poll |
 | `[Monitor]` | Scheduled monitor execution |
 | `WARNING` | Non-fatal issue (MQTT disconnect, etc.) |
 | `ERROR` | Requires attention |

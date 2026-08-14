@@ -30,9 +30,11 @@ dradis/
 │   ├── rain.py              # Rain alert monitor (Open-Meteo, no LLM)
 │   └── seismic.py           # Seismic report monitor (INGV GOSSIP, no LLM)
 ├── live_monitors/
-│   ├── lightning.py         # Lightning live monitor — MQTT ingest, origin, persistence
-│   ├── lightning_core.py    # Pure decision core: observables + threat state machine (no I/O)
-│   ├── replay.py            # Offline replay of recorded storms through the core
+│   ├── storm_front.py       # Storm front live monitor — lifecycle, persistence, formatting
+│   ├── storm_front_core.py  # Pure decision core: ring/sector grid, front, CBDR, event machine (no I/O)
+│   ├── storm_front_chart.py # Polar radar attached to ring messages (matplotlib, off the event loop)
+│   ├── blitzortung.py       # Blitzortung MQTT feed: connection, strike buffer, health
+│   ├── geo.py               # Pure geo maths: Haversine, bearings, geohash topics
 │   ├── ha.py                # HA entity monitor (MQTT statestream)
 │   └── seismic.py           # Seismic live monitor (INGV GOSSIP polling)
 └── web/

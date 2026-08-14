@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## [4.0.0] - 2026-08-14
+
+**Breaking — the `lightning` live monitor is replaced by `storm_front`.** Existing monitors are migrated automatically on first start (type converted, radius clamped into the new range, `sensitivity` and `record_strikes` dropped); `/data/lightning_state.json` and `/data/lightning_rec/` are removed. Nothing to reconfigure.
+
+### Why it was replaced rather than fixed
+
+Six generations of storm monitor failed, and the last one failed in the field with two complaints that were really one bug: *you could never tell whether a storm was coming*, and *the alerts would not stop*.
+
+- **`d10` was not a geometric quantity.** The 10th percentile of the distances of ALL strikes in the radius depends on the count RATIO between cells, not on where anything is. A very active storm 80 km away dominates the percentile; when it dies, `d10` collapses to 20 km although nothing moved. That is the v2.26 "minimum over an unstable set" error in statistical clothing.
+- **The ETA was a ratio of two noisy quantities.** `v_c` was a derivative of an already noisy estimator, and the displayed ETA was `d10 / v_c` — hence numbers that jumped around between messages.
+- **WARNING latched.** Leaving it required `d10 >= warn_exit_km` AND `v_c <= 3 km/h`, with no condition on activity at all. A weak but persistent cell parked between the enter and exit thresholds stayed in WARNING for hours, re-alerting every 10 minutes. The v3.3.0 release notes claimed this class of error was fixed on the *distance* axis; it survived untouched on the *activity* axis.
+- **No generation ever computed whether the storm would hit or miss.** Distance and bearing are numerically identical for a storm heading at you and one passing 25 km to the north.
+
+### The new design
+
+- **Geometric binning, never labelling.** A fixed grid of concentric rings × 12 sectors of 30°. `(lat, lon) → (sector, distance)` is a pure function of the strike and the origin: no assignment step, no `min_samples`, no neighbour search, so nothing can be RE-labelled between two polls. This is the property both the DBSCAN generations and the global-percentile generation lacked. It is also O(n) — the old DBSCAN was an O(n²) synchronous call that blocked the event loop for seconds during severe storms.
+- **The front, per sector.** Each sector's front is its leading edge: a low quantile floored at the 3rd-nearest strike of that sector, so one or two mislocated strikes (Blitzortung does this routinely) can never pull the front inward, however busy the sector. A very active cell to the north now contributes no term whatsoever to the south-west measurement.
+- **CBDR — constant bearing, decreasing range.** The mariner's collision rule. The discriminant is sideways travel in KILOMETRES, not bearing rotation in degrees: the same 25° swing means 12 km of sideways travel at 28 km out and only 2 km at 5 km out, so a degree threshold labels an incoming storm "a glancing pass" precisely when it is closest. Calibrated over 175 seeded scenarios: **zero** head-on storms mislabelled as grazing, 73 of 75 grazing storms correctly identified.
+- **No ETA, ever.** The only temporal figure in a message is the measured wall-clock time between two confirmed ring crossings ("from 27 to 18 km in 9 min") — an observation, not an extrapolation. When the evidence is inconclusive the monitor says so rather than producing a number.
+
+### Two invariants replace threshold tuning
+
+- **A · Bounded messages.** A ring is announced at most once per event, so one storm emits at most `ring_count` ring messages plus one all-clear — for *any* input, including an oscillating front, several simultaneous cells, or a storm circling for a day. The v3.3.0 field failure is not unlikely under this design, it is **arithmetically impossible**: a cell parked at 25 km for four hours now produces one or two messages and then silence.
+- **B · Every state has a reachable exit.** The only thing holding an event open is activity inside the radius, computed over a sliding window with unconditional expiry. No exit condition mentions speed, ring, bearing, track verdict or ETA. Escalation reads the front, de-escalation reads activity in the same window and the same radius — one variable holds the event open and it decays to zero on its own.
+
+Both invariants are enforced by tests, including an exhaustive sweep proving no combination of state variables is a trap.
+
+### Also
+
+- **Feat — polar radar attached to every ring message.** Rings and sectors *are* the model, so the plot is a literal photograph of the monitor's state: strikes coloured and sized by age, the dominant sector highlighted, the front marked. Rendered off the event loop via `asyncio.to_thread` (~45 ms) and degraded to text-only on any failure — a picture must never be able to stop an alert. Matplotlib was already a dependency.
+- **Feat — image and text arrive as ONE Telegram message.** The live-monitor send closure now accepts a photo and passes the text as its caption, so a ring alert buzzes the phone once, not twice.
+- **Feat — observation radius.** The feed watches out to 1.6 × the alert radius. Those strikes never trigger anything; they exist so the bearing history is already populated when the front crosses the alert radius, which is what lets the very first message carry a track verdict.
+- **Feat — `ring_count` (2/3/4) replaces the sensitivity presets.** It caps how many updates a storm may produce, not when the algorithm believes something. Presets were the tuning-as-a-fix reflex of the last three generations; with a structural anti-spam bound there is nothing left for them to trade off.
+- **Fix — the Copy button silently dropped fields.** Duplicating a live monitor lost its quiet hours (and now ring count and chart setting), producing a twin that behaved differently from its original.
+- **Removed — strike recording and the offline replay tool.** They existed to tune thresholds; the design no longer has thresholds worth tuning.
+- **Radius is clamped to 10–60 km** in the UI and again in the monitor: the shared payload still defaults to 100 km, which this algorithm is not designed for.
+- **Tests — 70, up from 22.** Split across the pure core, the chart and the monitor lifecycle, driven by a storm simulator that runs whole synthetic storms through the real pipeline.
+
 ## [3.3.0] - 2026-08-09
 
 - **Fix — Lightning monitor fired WARNINGs for storms that never arrived, and never sent the all-clear.** Both symptoms had the same root cause. The state machine was driven by a single scalar — the distance of the centroid of the *nearest DBSCAN cluster* — which is not the physical quantity of any object: it is a **minimum over an unstable set**, recomputed from scratch every poll with `min_samples=2`.

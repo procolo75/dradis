@@ -9,6 +9,8 @@ orchestration.
 """
 
 import asyncio
+import os
+import shutil
 
 import uvicorn
 from telegram import Update
@@ -21,6 +23,7 @@ from telegram.ext import (
 )
 
 import bot.state as _state
+from live_monitors.storm_front import migrate_lightning_configs
 from bot.scheduler import (
     reload_task_jobs,
     reload_monitor_jobs,
@@ -54,6 +57,8 @@ from bot.commands import (
 )
 from web.server import app as web_app
 from web.store import (
+    load_live_monitors,
+    save_live_monitors,
     register_tasks_changed_callback,
     register_run_task_callback,
     register_monitors_changed_callback,
@@ -98,6 +103,28 @@ async def _register_commands(bot):
         print(f"[DRADIS] WARNING: could not register commands: {e}")
 
 
+def _migrate_live_monitors() -> None:
+    """Convert monitors saved under the retired 'lightning' type (v3.x).
+
+    Runs before the first reload: without it a monitor configured before v4.0.0
+    would keep a type no manager claims, so it would simply never start —
+    silently, with no error the user could see.
+    """
+    try:
+        configs, migrated = migrate_lightning_configs(load_live_monitors())
+        if migrated:
+            save_live_monitors(configs)
+            print(f"[DRADIS] Migrated {migrated} lightning monitor(s) to storm_front")
+            for stale in ("/data/lightning_state.json",):
+                try:
+                    os.remove(stale)
+                except OSError:
+                    pass
+            shutil.rmtree("/data/lightning_rec", ignore_errors=True)
+    except Exception as e:
+        print(f"[DRADIS] WARNING: lightning migration failed: {e}")
+
+
 async def main():
     _state._init_settings()
     _state._main_loop = asyncio.get_running_loop()
@@ -125,6 +152,7 @@ async def main():
 
         reload_task_jobs()
         reload_monitor_jobs()
+        _migrate_live_monitors()
         reload_live_monitors()
         reload_ha_monitors()
 

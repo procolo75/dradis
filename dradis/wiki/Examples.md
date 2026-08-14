@@ -31,37 +31,49 @@ DRADIS calls `read_url` directly via Jina Reader. The page content is fetched (m
 
 ---
 
-## Lightning alert *(live monitor — no cron, no LLM, no token cost)*
+## Storm front *(live monitor — no cron, no LLM, no token cost)*
 
-DRADIS keeps a persistent MQTT connection to Blitzortung and listens for lightning strike data in real time. Every 2 minutes the last 15 minutes of strikes are reduced to three stable observables — how close the storm body is, how active it is, and how fast the strike field is closing in — which drive a three-level threat state machine. No polling of an API, no cron, no LLM.
+DRADIS keeps a persistent MQTT connection to Blitzortung. Every 60 seconds the last 10 minutes of strikes are binned into concentric rings × 12 sectors, and each sector's leading edge — its *front* — drives the alerts. No API polling, no cron, no LLM.
 
-Alerts fire **only on level change** (🟡 WATCH → 🔴 WARNING → ✅ CLEAR), plus a 10-minute re-alert while the warning is active. See [Live-Monitors](Live-Monitors) for the full algorithm and the sensitivity presets.
+A ring is announced **at most once per storm**, so one storm produces at most 4 messages plus an all-clear — never a stream. Each message says whether the storm is on a collision course or will pass by (CBDR), and carries a polar radar. See [Live-Monitors](Live-Monitors) for the full algorithm.
 
 | Field | Value |
 |-------|-------|
-| Type | ⚡ Lightning alert |
+| Type | 🌩️ Storm front / CBDR |
 | Location | Bacoli (auto-resolves to lat/lon) |
-| Radius | 50 km |
-| Sensitivity | 🟠 Media |
-| Language | 🇬🇧 English |
+| Radius | 30 km |
+| Updates per storm | 4 |
+| Radar | on |
+| Language | 🇮🇹 Italiano |
 
-Sample alert (WARNING — storm approaching):
+Sample alert (second ring, storm on a collision course):
 ```
-🔴 Storm WARNING — Bacoli
-📍 Approaching: 12.4 km to NW (315°)
-🚀 ~42 km/h — estimated arrival: 18 min
-🔢 Strikes (last 15 min): 76
-🕐 14:32
+⚡ Temporale più vicino — Bacoli
+📍 Fronte a 18 km a NO (307°)
+🎯 Anello 2/4 · entro 20 km
+🧭 Rotta costante: ti arriva addosso
+⏱️ Da 27 a 18 km in 9 min
+🔢 22 fulmini in 10 min (settore NO)
+🕐 14:29
+```
+
+Sample alert (storm that will miss):
+```
+⛈️ Temporale nel raggio — Bacoli
+📍 Fronte a 27 km a NO (312°)
+🎯 Anello 1/4 · entro 30 km
+🧭 Ti sfiora: passa a N
+🔢 14 fulmini in 10 min (settore NO)
+🕐 14:20
 ```
 
 Sample alert (all clear):
 ```
-✅ Storm threat cleared — Bacoli
-🔇 Remaining activity 62 km away, moving off
-🕐 15:10
+✅ Temporale cessato — Bacoli
+🔇 Nessuna attività entro 30 km da 10 min
+📉 Massimo avvicinamento: 5 km (anello 4/4) alle 14:42
+🕐 15:05
 ```
-
-No API key required. Reconnects automatically on disconnect. Configure in Web UI → **Live Monitors** → `+`.
 
 ---
 

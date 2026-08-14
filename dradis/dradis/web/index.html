@@ -3818,7 +3818,7 @@ function renderSidebarLiveMonitors() {
     li.dataset.panel         = "live-monitor";
     li.dataset.liveMonitorId = m.id;
     li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
-                    <span class="nav-icon">${m.type === "seismic" ? "🌍" : m.type === "football_betting" ? "⚽" : "⚡"}</span>
+                    <span class="nav-icon">${m.type === "seismic" ? "🌍" : m.type === "football_betting" ? "⚽" : "🌩️"}</span>
                     <span class="nav-label">${m.name}</span>`;
     li.addEventListener("click", () => {
       selectedLiveMonitorId = m.id;
@@ -3840,7 +3840,7 @@ function renderLiveMonitorForm(monitor) {
   }
 
   const _TYPE_DESCS_LIVE = {
-    lightning:        "Persistent MQTT listener on Blitzortung. Strikes are buffered 15 min and reduced every 2 min to three stable observables: d10 (10th-percentile strike distance), r_near (strikes/min around the storm body) and v_c (closing speed of the strike field, from the shift of its centroid between the two halves of the window). A threat state machine sends 🟡 WATCH → 🔴 WARNING → ✅ CLEAR: alerts only on level change (+10-min periodic in WARNING), with separated enter/exit thresholds and dwell times, so escalation and de-escalation act on the same quantities and no level can latch. No clustering, no LLM, no cron.",
+    storm_front:      "Watches real-time lightning from Blitzortung and tells you whether a storm is heading at you or going past. It speaks a few times as the storm closes in, then stops — one storm can never produce more than a handful of messages. Each alert comes with a radar picture. No cron, no LLM, no token cost.",
     seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
     football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's AND below the configured maximum odds, in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };
@@ -3864,7 +3864,7 @@ function renderLiveMonitorForm(monitor) {
       <div class="form-group">
         <label for="lm-type">Type</label>
         <select id="lm-type">
-          <option value="lightning"        ${monitor.type === "lightning"        ? "selected" : ""}>⚡ Lightning alert (Blitzortung MQTT)</option>
+          <option value="storm_front"      ${monitor.type === "storm_front"      ? "selected" : ""}>🌩️ Storm front / CBDR (Blitzortung MQTT)</option>
           <option value="seismic"          ${monitor.type === "seismic"          ? "selected" : ""}>🌍 Seismic alert (INGV GOSSIP RSS)</option>
           <option value="football_betting" ${monitor.type === "football_betting" ? "selected" : ""}>⚽ Football Betting (RapidAPI)</option>
         </select>
@@ -3890,14 +3890,14 @@ function renderLiveMonitorForm(monitor) {
       </div>
 
       <div class="form-group" id="lm-quiet-block">
-        <label id="lm-quiet-label">🔕 Silenzio notifiche</label>
+        <label id="lm-quiet-label">🔕 Quiet hours</label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
-          <span style="color:var(--text-muted);font-size:0.85rem">Da</span>
+          <span style="color:var(--text-muted);font-size:0.85rem">From</span>
           <input type="time" id="lm-quiet-start" value="${monitor.quiet_start || ""}" style="width:115px">
-          <span style="color:var(--text-muted);font-size:0.85rem">a</span>
+          <span style="color:var(--text-muted);font-size:0.85rem">to</span>
           <input type="time" id="lm-quiet-end"   value="${monitor.quiet_end   || ""}" style="width:115px">
         </div>
-        <small id="lm-quiet-desc" style="color:var(--text-muted);margin-top:4px;display:block">Lascia vuoto per disabilitare. Gli eventi avvenuti durante il silenzio vengono inviati tutti insieme al risveglio.</small>
+        <small id="lm-quiet-desc" style="color:var(--text-muted);margin-top:4px;display:block">Leave empty to disable. Events that happen during the quiet window are delivered together when it ends.</small>
       </div>
 
       <div class="form-group">
@@ -3909,31 +3909,75 @@ function renderLiveMonitorForm(monitor) {
       </div>
 
       <div class="form-group" id="lm-radius-block">
-        <label for="lm-radius">Radius (km)</label>
-        <input type="number" id="lm-radius" min="1" max="200" value="${monitor.radius_km || 100}" style="width:80px">
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Strikes farther than this are ignored. The subscribed Blitzortung area widens automatically to cover it.</small>
+        <label for="lm-radius">Alert radius (km)</label>
+        <input type="number" id="lm-radius" min="10" max="60" value="${monitor.radius_km || 30}" style="width:80px">
+        <small style="color:var(--text-muted);margin-top:4px;display:block">How close a storm must get before you hear about it. <b>30 km</b> gives roughly 30–45 minutes of warning for a typical storm. The monitor quietly <i>watches</i> 1.6× further out to work out where the storm is going, but never alerts you about that outer area.</small>
       </div>
 
-      <div class="form-group" id="lm-sensitivity-block">
-        <label for="lm-sensitivity">Sensibilità</label>
-        <select id="lm-sensitivity" style="width:200px">
-          <option value="low"    ${monitor.sensitivity === "low"    ? "selected" : ""}>🟢 Bassa — solo temporali vicini</option>
-          <option value="medium" ${(monitor.sensitivity || "medium") === "medium" ? "selected" : ""}>🟠 Media — consigliata</option>
-          <option value="high"   ${monitor.sensitivity === "high"   ? "selected" : ""}>🔴 Alta — avvisa prima</option>
+      <div class="form-group" id="lm-rings-block">
+        <label for="lm-ring-count">Updates per storm</label>
+        <select id="lm-ring-count" style="width:260px">
+          <option value="2" ${String(monitor.ring_count) === "2" ? "selected" : ""}>2 — just the essentials</option>
+          <option value="3" ${String(monitor.ring_count) === "3" ? "selected" : ""}>3 — in between</option>
+          <option value="4" ${String(monitor.ring_count || 4) === "4" ? "selected" : ""}>4 — recommended</option>
         </select>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Sceglie un set coerente di soglie di distanza, attività e ETA. Alta anticipa gli avvisi ma ne produce di più.</small>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">A <b>hard cap</b> on how many times a single storm may update you as it approaches. This is not a sensitivity setting: it does not change when the monitor decides something is coming, only how often it tells you along the way.</small>
       </div>
 
-      <div class="form-group" id="lm-lightning-hint">
-        <small style="color:var(--text-muted)">Tre livelli con isteresi: <b>🟡 WATCH</b> quando l'attività entra in zona · <b>🔴 ALLERTA</b> solo con avvicinamento confermato del fronte o temporale già vicino · <b>re-invio ogni 10 min</b> finché l'allerta è attiva · <b>✅ cessato allarme</b> quando il temporale si allontana o si esaurisce. Salita e discesa usano le stesse grandezze, quindi il livello non resta mai bloccato.</small>
+      <div class="form-group" id="lm-stormfront-hint">
+        <label>What you will actually receive</label>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:var(--card-bg)">
+
+          <div style="display:flex;gap:10px;margin-bottom:10px">
+            <span style="font-size:1.1rem;line-height:1.3">🎯</span>
+            <div style="font-size:0.82rem;line-height:1.45">
+              <b>A storm heading straight at you</b><br>
+              <span style="color:var(--text-muted)">One short update each time it gets closer &mdash; at 30, 20, 12 and 6 km &mdash; then an all-clear once it has gone.
+              <b>5 messages</b> spread over about an hour.</span>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;margin-bottom:10px">
+            <span style="font-size:1.1rem;line-height:1.3">↗️</span>
+            <div style="font-size:0.82rem;line-height:1.45">
+              <b>A storm that will miss you</b><br>
+              <span style="color:var(--text-muted)">It comes closer, then turns out to be going past. You are told <i>which side</i> it will pass on, and it stops there.
+              <b>2&ndash;3 messages.</b></span>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;margin-bottom:12px">
+            <span style="font-size:1.1rem;line-height:1.3">💤</span>
+            <div style="font-size:0.82rem;line-height:1.45">
+              <b>A storm that parks 25 km away all afternoon</b><br>
+              <span style="color:var(--text-muted)">You hear about it once, and then nothing for the next four hours.
+              <b>1&ndash;2 messages.</b></span>
+            </div>
+          </div>
+
+          <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:6px">A typical alert looks like this:</div>
+          <pre style="margin:0 0 12px 0;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-size:0.76rem;line-height:1.5;white-space:pre-wrap">⚡ Storm closing in &mdash; Bacoli
+📍 Front at 18 km to NW (307°)
+🎯 Ring 2/4 · within 20 km
+🧭 Constant bearing: heading straight for you
+⏱️ From 27 to 18 km in 9 min
+🔢 22 strikes in 10 min (NW sector)</pre>
+
+          <div style="font-size:0.8rem;line-height:1.5;color:var(--text-muted)">
+            <div style="margin-bottom:6px"><b style="color:var(--text)">It cannot flood you.</b> Each step is announced once and once only. There are no repeated reminders: if the storm stalls, hovers right on a boundary, or sits nearby for hours, you simply hear nothing more until it gets genuinely closer.</div>
+            <div style="margin-bottom:6px"><b style="color:var(--text)">It answers the real question.</b> Every alert says whether the storm is coming at you or going past, worked out from how far sideways it drifts as it approaches &mdash; the same rule sailors use to spot a collision course.</div>
+            <div><b style="color:var(--text)">It never guesses.</b> There is no predicted arrival time. When it is still too early to tell where a storm is going, the alert says <i>&ldquo;track not yet determinable&rdquo;</i> instead of inventing a number. The only time you ever see is measured, not forecast.</div>
+          </div>
+
+        </div>
       </div>
 
-      <div class="form-group" id="lm-record-block">
+      <div class="form-group" id="lm-chart-block">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="lm-record-strikes" ${monitor.record_strikes ? "checked" : ""}>
-          Registra i fulmini per l'analisi offline
+          <input type="checkbox" id="lm-chart" ${monitor.chart === false ? "" : "checked"}>
+          Attach a radar picture to each alert
         </label>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Scrive ogni fulmine ricevuto in <code>/data/lightning_rec/</code> (rotazione giornaliera, 7 giorni). Serve a rigiocare un temporale vero con <code>python -m live_monitors.replay</code> e tarare la sensibilità.</small>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Every strike of the last 10 minutes plotted around you, coloured by age — older strikes fade, so you can see at a glance which way the storm is drifting. Picture and text arrive as <b>one</b> Telegram message, so your phone buzzes once.</small>
       </div>
 
       <div class="form-group" id="lm-windows-block">
@@ -3999,15 +4043,22 @@ function renderLiveMonitorForm(monitor) {
   `;
 
   function _lmApplyType(type) {
-    const isSeismic   = type === "seismic";
-    const isFootball  = type === "football_betting";
-    const isLightning = !isSeismic && !isFootball;
+    const isSeismic = type === "seismic";
+    const isFootball = type === "football_betting";
+    const isStorm    = !isSeismic && !isFootball;
     document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[type] || "";
-    document.getElementById("lm-location-block").style.display    = isLightning ? "" : "none";
-    document.getElementById("lm-radius-block").style.display      = isLightning ? "" : "none";
-    document.getElementById("lm-sensitivity-block").style.display = isLightning ? "" : "none";
-    document.getElementById("lm-lightning-hint").style.display    = isLightning ? "" : "none";
-    document.getElementById("lm-record-block").style.display      = isLightning ? "" : "none";
+    document.getElementById("lm-location-block").style.display   = isStorm ? "" : "none";
+    document.getElementById("lm-radius-block").style.display     = isStorm ? "" : "none";
+    document.getElementById("lm-rings-block").style.display      = isStorm ? "" : "none";
+    document.getElementById("lm-stormfront-hint").style.display  = isStorm ? "" : "none";
+    document.getElementById("lm-chart-block").style.display      = isStorm ? "" : "none";
+    if (isStorm) {
+      // The payload is shared with the other live types and still defaults
+      // radius_km to 100, which is far outside this algorithm's range.
+      const r = document.getElementById("lm-radius");
+      r.min = 10; r.max = 60;
+      if (!r.value || Number(r.value) > 60 || Number(r.value) < 10) r.value = 30;
+    }
     document.getElementById("lm-areas-block").style.display       = isSeismic   ? "" : "none";
     document.getElementById("lm-quiet-block").style.display       = "";
     document.getElementById("lm-windows-block").style.display     = isFootball  ? "" : "none";
@@ -4018,17 +4069,17 @@ function renderLiveMonitorForm(monitor) {
       const qe = document.getElementById("lm-quiet-end");
       if (!qs.value) qs.value = "23:00";
       if (!qe.value) qe.value = "07:00";
-      quietLabel.textContent = "🔕 Pausa chiamate API";
-      quietDesc.textContent  = "In questo intervallo le chiamate all'API non vengono eseguite. Lascia vuoto per disabilitare.";
-    } else if (isLightning) {
-      quietLabel.textContent = "🔕 Silenzio notifiche";
-      quietDesc.textContent  = "Lascia vuoto per disabilitare. Silenzia 🟡 WATCH e ✅ cessato allarme; l'allerta 🔴 viene sempre inviata.";
+      quietLabel.textContent = "🔕 API pause";
+      quietDesc.textContent  = "No API calls are made during this window. Leave empty to disable.";
+    } else if (isStorm) {
+      quietLabel.textContent = "🔕 Quiet hours";
+      quietDesc.textContent  = "Leave empty to disable. Silences the outer rings and the all-clear; a storm already well inside the radius always gets through.";
     } else {
-      quietLabel.textContent = "🔕 Silenzio notifiche";
-      quietDesc.textContent  = "Lascia vuoto per disabilitare. Gli eventi avvenuti durante il silenzio vengono inviati tutti insieme al risveglio.";
+      quietLabel.textContent = "🔕 Quiet hours";
+      quietDesc.textContent  = "Leave empty to disable. Events that happen during the quiet window are delivered together when it ends.";
     }
   }
-  _lmApplyType(monitor.type || "lightning");
+  _lmApplyType(monitor.type || "storm_front");
   document.getElementById("lm-type").addEventListener("change", e => _lmApplyType(e.target.value));
 
   panel.querySelectorAll(".fp-provider-btn").forEach(btn => {
@@ -4126,15 +4177,15 @@ function renderLiveMonitorForm(monitor) {
       location:     document.getElementById("lm-location").value.trim(),
       latitude:     parseFloat(document.getElementById("lm-latitude").value)  || 0,
       longitude:    parseFloat(document.getElementById("lm-longitude").value) || 0,
-      radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 100,
+      radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 30,
       areas:        Array.from(document.querySelectorAll(".lm-area:checked")).map(c => c.value),
       windows:      Array.from(document.querySelectorAll(".lm-window:checked")).map(c => c.value),
       max_odds:     parseFloat(document.getElementById("lm-max-odds")?.value) || 2.0,
       language:     document.getElementById("lm-language").value,
       quiet_start:     document.getElementById("lm-quiet-start")?.value || "",
       quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
-      sensitivity:     document.getElementById("lm-sensitivity")?.value || "medium",
-      record_strikes:  document.getElementById("lm-record-strikes")?.checked || false,
+      ring_count:      parseInt(document.getElementById("lm-ring-count")?.value, 10) || 4,
+      chart:           document.getElementById("lm-chart")?.checked ?? true,
       telegram_bot_id: document.getElementById("lm-bot-id").value,
     };
     try {
@@ -4176,6 +4227,10 @@ function renderLiveMonitorForm(monitor) {
         longitude:       src.longitude,
         radius_km:       src.radius_km,
         language:        src.language,
+        ring_count:      src.ring_count ?? 4,
+        chart:           src.chart ?? true,
+        quiet_start:     src.quiet_start || "",
+        quiet_end:       src.quiet_end   || "",
         areas:           src.areas   || [],
         windows:         src.windows || ["55-65", "75-81"],
         max_odds:        src.max_odds ?? 2.0,
@@ -4196,9 +4251,9 @@ document.getElementById("btn-new-live-monitor").addEventListener("click", async 
   try {
     const monitor = await api("POST", "/api/live-monitors", {
       name: "New Live Monitor", enabled: false,
-      type: "lightning", location: "Rome",
+      type: "storm_front", location: "Rome",
       latitude: 41.9028, longitude: 12.4964,
-      radius_km: 100, language: "it",
+      radius_km: 30, ring_count: 4, chart: true, language: "it",
     });
     liveMonitors.push(monitor);
     selectedLiveMonitorId = monitor.id;

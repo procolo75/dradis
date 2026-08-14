@@ -40,7 +40,7 @@ The single agent calls these tools when relevant; each capability is enabled and
   - 📊 **Weather Charts** — LLM-free multi-model Open-Meteo forecast charts (temperature, precipitation, wind speed/gusts/direction, cloud cover, pressure, humidity, geopotential, …); one PNG per variable sent to Telegram — cloud cover as bars, wind direction as per-model arrow lanes
   - ☁️ **Google Drive Backup** — uploads all sensitive DRADIS config files to a dedicated "DRADIS Backup" Drive folder; `drive.file` scope only (no full Drive access)
 - **Live Monitors** — persistent push-based monitors that react to external events in real time:
-  - ⚡ **Lightning alert** — persistent Blitzortung MQTT listener; every 2 min a 15-min strike window is reduced to three stable observables (proximity, activity, closing speed of the strike field) driving a 🟡 WATCH → 🔴 WARNING → ✅ CLEAR state machine with hysteresis and dwell times; three sensitivity presets; state survives restarts; offline replay for tuning on real storms; no cron, no LLM
+  - 🌩️ **Storm front / CBDR** — persistent Blitzortung MQTT listener; every 60 s the last 10 min of strikes are binned into concentric rings × 12 sectors and each sector's leading edge drives a bounded ladder of alerts. A ring is announced at most once, so **one storm produces at most 4 messages plus an all-clear** — no periodic re-alerting, ever. Each message says whether the storm is on a **collision course** or **will pass by** (CBDR — constant bearing, decreasing range) and carries a polar radar; when the evidence is inconclusive it says so instead of inventing an ETA. State survives restarts; no cron, no LLM
   - 🌍 **Seismic live** — polls INGV GOSSIP JSON API every 60 s; alerts on new events and Automatic→Revised promotions; quiet-hours support
   - ⚽ **Football Betting** — polls a live-odds API every 5 min; alerts when a losing team's next-goal odds beat the winning team's and are below a configurable maximum, inside configurable 2nd-half minute windows; provider fallback; timezone-aware quiet hours; no cron, no LLM
 - **HA Monitors** — monitor any Home Assistant entity via MQTT statestream; two alert modes:
@@ -82,18 +82,20 @@ The single agent calls these tools when relevant; each capability is enabled and
 > *"Summarise this article: https://www.example.com/article"*
 > → DRADIS fetches the page via Jina Reader and analyses the content. No API key required.
 
-**Lightning alert** *(live monitor — no cron, no LLM, no token cost)*
-> DRADIS keeps a persistent MQTT connection to Blitzortung. Every 2 minutes the last 15 minutes of strikes are reduced to three stable observables — how close the storm body is, how active it is, and how fast the strike field is closing in — which drive a three-level threat state machine. Alerts fire only on level change, plus a 10-minute re-alert while the warning is active.
+**Storm front** *(live monitor — no cron, no LLM, no token cost)*
+> DRADIS keeps a persistent MQTT connection to Blitzortung. Every 60 seconds the last 10 minutes of strikes are binned into concentric rings × 12 sectors; each sector's leading edge drives the alerts, and a ring is announced at most once — so a storm produces a handful of messages and then silence, never a stream. Each message answers the question that matters: is it coming at me, or going past?
 >
 > ```
-> 🔴 Storm WARNING — Bacoli
-> 📍 Approaching: 12.4 km to NW (315°)
-> 🚀 ~42 km/h — estimated arrival: 18 min
-> 🔢 Strikes (last 15 min): 76
-> 🕐 14:32
+> ⚡ Temporale più vicino — Bacoli
+> 📍 Fronte a 18 km a NO (307°)
+> 🎯 Anello 2/4 · entro 20 km
+> 🧭 Rotta costante: ti arriva addosso
+> ⏱️ Da 27 a 18 km in 9 min
+> 🔢 22 fulmini in 10 min (settore NO)
+> 🕐 14:29
 > ```
 >
-> Configure in Web UI → **Live Monitors** → `+` → Type: ⚡ Lightning alert
+> …with a polar radar attached to each message. Configure in Web UI → **Live Monitors** → `+` → Type: 🌩️ Storm front
 
 **Seismic live alert** *(live monitor — INGV GOSSIP)*
 > DRADIS polls the INGV seismic API every 60 s for Campi Flegrei, Vesuvio, Ischia, and Golfo di Napoli. Sends an alert on new events and when Automatic events are promoted to Revised. Quiet-hours support.

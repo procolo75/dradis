@@ -50,11 +50,11 @@ class MonitorPayload(BaseModel):
 class LiveMonitorPayload(BaseModel):
     name:            str
     enabled:         bool      = False
-    type:            str       = "lightning"
+    type:            str       = "storm_front"
     location:        str       = ""
     latitude:        float     = 0.0
     longitude:       float     = 0.0
-    radius_km:       float     = 100.0
+    radius_km:       float     = 30.0
     language:        str       = "it"
     areas:           list[str] = []
     quiet_start:     str       = ""
@@ -62,12 +62,11 @@ class LiveMonitorPayload(BaseModel):
     windows:         list[str] = ["55-65", "75-81"]
     max_odds:        float     = 2.0
     telegram_bot_id: str       = "default"
-    # Lightning only — "low" | "medium" | "high". Selects a coherent set of
-    # distance/rate/ETA thresholds in live_monitors/lightning_core.py.
-    sensitivity:     str       = "medium"
-    # Lightning only — append every received strike to /data/lightning_rec so a
-    # real storm can be replayed offline (python -m live_monitors.replay).
-    record_strikes:  bool      = False
+    # Storm front only — how many approach updates a single storm may produce.
+    # 2, 3 or 4; the ring distances are derived proportionally from radius_km.
+    ring_count:      int       = 4
+    # Storm front only — attach the polar radar to each ring message.
+    chart:           bool      = True
 
 
 class HaMonitorPayload(BaseModel):

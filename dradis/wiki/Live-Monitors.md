@@ -8,114 +8,127 @@ Click `+` in the **Live Monitors** sidebar header. Select a **Type** to reveal t
 
 | Type | Description |
 |------|-------------|
-| ⚡ Lightning alert | Persistent MQTT listener on Blitzortung; strikes reduced to proximity / activity / closing-speed observables driving a 🟡/🔴/✅ state machine with hysteresis |
+| 🌩️ Storm front / CBDR | Persistent MQTT listener on Blitzortung; strikes binned into rings × sectors, each sector's leading edge drives a bounded ladder of alerts; says whether the storm will hit you or pass by |
 | 🌍 Seismic live | Polls INGV GOSSIP every 60 s; alerts on new events and state promotions |
 | ⚽ Football Betting | Polls RapidAPI every 5 min (clock-aligned); alerts on statistically favourable live-match conditions |
 
 All types share **Name**, **Enabled**, and **Telegram bot** fields. Additional fields are type-specific (see sections below).
 
-There is no cron field and no "run now" action — the monitor is always-on when enabled. On disconnect, event-based monitors (Lightning, Seismic) reconnect automatically after a short delay.
+There is no cron field and no "run now" action — the monitor is always-on when enabled. On disconnect, event-based monitors (Storm front, Seismic) reconnect automatically after a short delay.
 
 ---
 
-## ⚡ Lightning Alert
+## 🌩️ Storm Front / CBDR
 
-Subscribes to the geohash-based MQTT topics covering the configured location; the subscribed area widens automatically with `radius_km`. Incoming strikes are buffered for **15 minutes** as `(time, lat, lon)` — without their distance, which is derived at evaluation time against the current origin.
+Subscribes to the geohash MQTT topics covering the configured location. Strikes are buffered for **10 minutes** as `(time, lat, lon)` — without their distance, which is derived at evaluation time.
 
-Every 2 minutes the buffer is reduced to **three observables**:
+### The grid
 
-| Observable | Definition | Why |
-|------------|-----------|-----|
-| **d10** | 10th percentile of the individual strike distances | A percentile, not a minimum: one stray strike cannot move it |
-| **r_near** | Strikes/min within `d10 + 15 km` | The activity of the relevant storm body, self-scaling with distance |
-| **v_c** | Closing speed, from the shift of the strike-field centroid between the older and newer half of the window | The motion of a *mass* of strikes, immune to individual cells appearing and disappearing |
+Every 60 seconds the buffer is binned into **concentric rings × 12 sectors of 30°**. `(lat, lon) → (sector, distance)` is a pure function of the strike and the origin: no assignment step, no `min_samples`, no neighbour search, so **nothing can be re-labelled between two polls**. Two consecutive frames differ only by strikes that arrived and strikes that aged out.
 
-`d10` and `v_c` are EMA-smoothed; an **ETA** is only computed once the field has been closing for 3 consecutive polls.
+Rings are proportional to the radius, so changing the radius does not change the shape of the ladder:
 
-> **Why the change (v3.3.0):** the previous design drove the state machine with the distance of the nearest DBSCAN cluster centroid — a minimum over an unstable set, recomputed from scratch every poll with `min_samples=2`. Two stray strikes forming closer than the current storm made that scalar jump (e.g. 60 → 20 km) in one step, which read as a fast approach and fired a **WARNING for a storm that did not exist**. And de-escalation required *zero* clusters anywhere in the radius, so activity 70 km away kept the **all-clear from ever being sent**. Both symptoms came from the same design error: escalation and de-escalation were evaluated on different variables, so they were not complements and the machine had states it could not leave. No threshold tuning could fix that.
+| Updates per storm | Ring edges at R = 30 km |
+|---|---|
+| 2 | 30 / 12 km |
+| 3 | 30 / 16.5 / 7.5 km |
+| 4 *(default)* | 30 / 19.5 / 12 / 6 km |
 
-### Threat Levels
+The feed observes to **1.6 × the radius**. Those strikes never alert; they populate the bearing history so the *first* message can already carry a track verdict.
 
-Thresholds shown for the default *Medium* sensitivity.
+### The front
 
-| Level | Enter | Exit |
-|-------|-------|------|
-| 🟡 WATCH | `d10 ≤ 40 km` and `r_near ≥ 0.20/min` | `d10 ≥ 55 km` or `r_near < 0.07/min`, held 20 min → ✅ |
-| 🔴 WARNING | `r_near ≥ 0.50/min` **and** (`d10 ≤ 15 km` or confirmed ETA ≤ 25 min within 45 km), held 2 polls | `d10 ≥ 22 km` and `v_c ≤ 3 km/h`, held 10 min → 🟡 |
+Each sector's **front** is a low quantile of its distances, floored at the **3rd-nearest strike** of that sector. The floor is the important half: Blitzortung mislocates strikes by a few km routinely, and this makes it impossible for one or two phantom strikes to pull the front inward, however busy the sector. A sector needs 4 strikes to count at all.
 
-Enter and exit conditions use the **same** variables with strictly separated thresholds (a Schmitt trigger), and every transition carries a dwell time. That is what makes ✅ always reachable — a storm simply moving away is enough — and what keeps 🔴 from firing on activity that is not actually approaching.
+Only the **dominant** sector — the active one with the nearest front — drives the ring, which is why several simultaneous cells can never produce two parallel streams of messages.
 
-### Sensitivity
+> **Why the change (v4.0.0):** the previous design reduced everything to `d10`, the 10th percentile of *all* strike distances in the radius. That is a function of the count ratio between cells, not of geometry: a very active storm 80 km away dominates the percentile, and when it dies `d10` collapses to 20 km although nothing moved. On top of that, WARNING latched — leaving it required distance *and* closing speed conditions but nothing about activity, so a weak cell parked between the thresholds re-alerted every 10 minutes for hours. And no version ever answered the question that actually matters: will it hit me, or pass by?
 
-| | Bassa | Media *(default)* | Alta |
-|---|---|---|---|
-| WATCH enter / exit | 30 / 45 km | 40 / 55 km | 55 / 70 km |
-| WARNING enter / exit | 10 / 16 km | 15 / 22 km | 22 / 30 km |
-| WARNING min. activity | 0.80/min | 0.50/min | 0.30/min |
-| Max ETA | 20 min | 25 min | 35 min |
-| All-clear dwell | 25 min | 20 min | 15 min |
+### CBDR — will it hit me?
 
-### Alert Triggers (level-based)
+The mariner's collision rule: *constant bearing, decreasing range*. A descending ring is the precondition; whether the bearing holds or rotates is the discriminant.
+
+The rotation is converted into **sideways travel in kilometres**, because degrees are not comparable across distances — the same 25° swing is 12 km of sideways travel at 28 km out but only 2 km at 5 km out, so a degree threshold would call a storm about to hit you "a glancing pass" exactly when it is closest.
+
+| Sideways travel | Verdict |
+|---|---|
+| ≤ 2.5 km | 🧭 Constant bearing — heading straight for you |
+| 2.5 – 4 km | 🧭 Track not yet determinable |
+| ≥ 4 km | 🧭 Glancing pass — going by to the *(side)* |
+
+Calibrated over 175 seeded scenarios: **zero** head-on storms mislabelled as grazing, 73 of 75 grazing storms correctly identified.
+
+**There is no ETA.** The only time figure in a message is the measured interval between two confirmed ring crossings ("from 27 to 18 km in 9 min"). The sequence of messages *is* the approach timeline.
+
+### When it speaks
+
+A ring is announced **at most once per event**. No periodic re-alert, no message on retreat. Two independent barriers: 15 % hysteresis on the ring index, and an announced ring is never announced again.
 
 | Event | Trigger | Icon |
 |-------|---------|------|
-| Watch | Activity enters the WATCH range | 🟡 |
-| Warning | Storm already close, or a confirmed approach with a short ETA | 🔴 |
-| Periodic re-alert | Every 10 min while in WARNING | 🔴 |
-| De-escalation | Storm pulls away past the exit threshold | 🟡 |
-| All clear | Exit condition held for the all-clear dwell | ✅ |
+| Ring message | Front reaches a ring deeper than any announced, confirmed over 2 polls | ⛈️ ⚡ 🟠 🔴 |
+| All clear | No activity inside the radius for 10 min, feed connected ≥ 2 min | ✅ |
 
-Alerts fire **only on level change** (plus the periodic WARNING re-alert). The state machine advances only on a confirmed Telegram send, so a dropped message is retried rather than lost.
+**At most `ring_count` messages plus one all-clear per storm**, for any input. A direct hit is 5 messages; a glancing storm 2–3; a cell parked at 25 km for four hours, 1–2 and then silence.
 
-**Quiet hours** silence 🟡 WATCH and ✅ CLEAR only — a 🔴 WARNING is always delivered.
+### Two invariants
 
-**State survives restarts.** The threat level is persisted to `/data/lightning_state.json` and restored on startup (if less than an hour old), so a storm in progress does not lose its all-clear when the add-on restarts. Saving an unrelated live monitor no longer restarts the lightning monitor either — only a change to its own configuration does.
+- **A · Bounded messages.** `notified_ring` increases strictly at every message and resets only when the event closes. The v3.3.0 field failure is not unlikely here, it is arithmetically impossible.
+- **B · Every state has a reachable exit.** Only activity inside the radius holds an event open, over a sliding window with unconditional expiry. No exit condition mentions speed, ring, bearing, verdict or ETA — one variable holds the event open and it decays on its own.
 
-### Tuning on Real Storms
+Both are enforced by tests, including an exhaustive sweep proving no combination of state variables is a trap.
 
-Enable **Record strikes** and every received strike is appended to `/data/lightning_rec/<id>-<date>.ndjson` (daily rotation, 7-day retention). Replay a recording through the exact same decision code, and compare all three presets on it:
+**Quiet hours** silence the outer rings and the all-clear; a front within 40 % of the radius always gets through. Suppressed alerts are still committed, so they do not queue up and arrive as a burst.
 
-```
-cd /app/dradis && python3 -m live_monitors.replay \
-    /data/lightning_rec/abc-2026-08-09.ndjson --monitor abc --compare
-```
+**State survives restarts.** Persisted to `/data/storm_front_state.json` and restored if under 30 minutes old, so a storm in progress does not re-announce rings it already announced. Saving an unrelated live monitor does not restart the monitor — only a change to its own configuration does.
+
+**If the feed goes down** everything freezes: no alerts, and the all-clear countdown restarts on reconnect. A dead socket and a clear sky look identical if you only count strikes, so the monitor refuses to guess.
+
+### The radar
+
+Every ring message carries a polar plot — rings and sectors *are* the model, so it is a literal photograph of the monitor's state: strikes coloured and sized by age (the direction of travel is visible at a glance), the dominant sector highlighted, the front marked, north up. Rendered on a worker thread in ~45 ms; any failure degrades to text only. Image and caption arrive as **one** Telegram message, so a ring alert notifies once, not twice.
 
 ### Alert Examples
 
-**Watch:**
+**Ring:**
 ```
-🟡 Storm in the area — Bacoli
-📍 Activity at 28.3 km to NW (315°)
-📊 Approaching
-🔢 Strikes (last 15 min): 9
+⚡ Temporale più vicino — Bacoli
+📍 Fronte a 18 km a NO (307°)
+🎯 Anello 2/4 · entro 20 km
+🧭 Rotta costante: ti arriva addosso
+⏱️ Da 27 a 18 km in 9 min
+🔢 22 fulmini in 10 min (settore NO)
+🕐 14:29
+```
+
+**Glancing pass:**
+```
+⛈️ Temporale nel raggio — Bacoli
+📍 Fronte a 27 km a NO (312°)
+🎯 Anello 1/4 · entro 30 km
+🧭 Ti sfiora: passa a N
+🔢 14 fulmini in 10 min (settore NO)
 🕐 14:20
 ```
 
-**Warning:**
+**All clear:**
 ```
-🔴 Storm WARNING — Bacoli
-📍 Approaching: 12.0 km to NW (315°)
-🚀 ~42 km/h — estimated arrival: 18 min
-🔢 Strikes (last 15 min): 24
-🕐 14:32
-```
-
-**All clear:** the message states *why* it cleared, since a storm can either move off or die out.
-```
-✅ Storm threat cleared — Bacoli
-🔇 Remaining activity 62 km away, moving off
-🕐 15:10
+✅ Temporale cessato — Bacoli
+🔇 Nessuna attività entro 30 km da 10 min
+📉 Massimo avvicinamento: 5 km (anello 4/4) alle 14:42
+🕐 15:05
 ```
 
 ### Example Configuration
 
 ```
-Name:        Bacoli Lightning
-Type:        ⚡ Lightning alert
-Location:    Bacoli
-Radius:      50 km
-Sensitivity: 🟠 Media
-Language:    🇮🇹 Italiano
+Name:              Bacoli Temporali
+Type:              🌩️ Storm front / CBDR
+Location:          Bacoli
+Radius:            30 km      (10-60)
+Updates per storm: 4
+Radar:             on
+Language:          🇮🇹 Italiano
 ```
 
 ---

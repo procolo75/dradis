@@ -68,7 +68,7 @@ All runtime data is stored in `/data/` (inside the add-on container — never ex
 | `/data/agents.json` | Legacy custom-agent definitions (unused in v3) |
 | `/data/tasks.json` | Scheduled LLM tasks |
 | `/data/monitors.json` | Scheduled monitors (thunderstorm, rain, seismic) |
-| `/data/live_monitors.json` | Live monitors (lightning, seismic live, football betting) |
+| `/data/live_monitors.json` | Live monitors (storm front, seismic live, football betting) |
 | `/data/ha_monitors.json` | HA entity monitors |
 | `/data/google_calendar_token.json` | Google Calendar OAuth token |
 | `/data/google_gmail_token.json` | Gmail OAuth token |

@@ -346,7 +346,7 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
     if not monitor:
         await query.message.reply_text("❌ Live monitor not found.")
         return
-    mtype  = monitor.get("type", "lightning")
+    mtype  = monitor.get("type", "storm_front")
     status = _live_status_dispatcher(item_id)
     # "degraded" = the task is alive but the feed is not delivering. Without it a
     # broken monitor and a quiet sky looked identical from here.
@@ -368,13 +368,13 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Status: {badge}\n"
                f"Polling: 300s")
     else:
-        sensitivity = monitor.get("sensitivity", "medium")
-        msg = (f"⚡ <b>{html.escape(monitor['name'])}</b>\n"
+        rings = monitor.get("ring_count", 4)
+        msg = (f"🌩️ <b>{html.escape(monitor['name'])}</b>\n"
                f"📍 {html.escape(monitor.get('location', '?'))}\n"
                f"Status: {badge}\n"
-               f"Radius: {monitor.get('radius_km', '?')} km — "
-               f"Sensitivity: {html.escape(sensitivity)}\n"
-               f"Levels: 🟡 WATCH → 🔴 WARNING → ✅ CLEAR — Polling: 120s")
+               f"Raggio: {monitor.get('radius_km', '?')} km — {rings} anelli\n"
+               f"Al massimo {rings} avvisi di avvicinamento + 1 cessato "
+               f"per temporale — Polling: 60s")
     await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 

@@ -40,7 +40,7 @@ _BACKUP_FILES = [
     Path("/data/tasks.json"),
     Path("/data/monitors.json"),
     Path("/data/live_monitors.json"),
-    Path("/data/lightning_state.json"),
+    Path("/data/storm_front_state.json"),
     Path("/data/ha_monitors.json"),
     Path("/data/agents.json"),
 ]

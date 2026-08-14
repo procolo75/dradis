@@ -24,7 +24,7 @@ from monitors.rain          import run_rain_monitor
 from monitors.seismic       import run_seismic_monitor
 from monitors.weather_chart import run_weather_chart_monitor
 from backup.gdrive          import run_backup_monitor
-from live_monitors.lightning import live_monitor_manager
+from live_monitors.storm_front import storm_front_monitor_manager
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
 from live_monitors.football  import football_monitor_manager
@@ -312,14 +312,31 @@ def reload_live_monitors():
 
     def _make_send(cfg: dict):
         bid = cfg.get("telegram_bot_id", "default")
-        async def _send(text: str) -> bool:
-            # Propagate delivery status so callers (lightning monitor) can gate
+
+        async def _send(text: str, photo: bytes | None = None) -> bool:
+            # Propagate delivery status so callers (storm front monitor) can gate
             # state flags on a confirmed send.
-            return await _state.send_telegram(text, bot_id=bid)
+            #
+            # With a photo the text rides along as the CAPTION, so the picture and
+            # its explanation are ONE Telegram message and one notification — two
+            # separate sends would buzz the user's phone twice per ring.
+            if photo is None:
+                return await _state.send_telegram(text, bot_id=bid)
+            bot, chat_id = _state.get_bot_and_chat(bid)
+            if not bot:
+                return False
+            try:
+                await bot.send_photo(chat_id=chat_id, photo=photo, caption=text,
+                                     parse_mode=ParseMode.HTML,
+                                     read_timeout=60, write_timeout=60)
+                return True
+            except Exception as e:
+                print(f"[DRADIS] send_photo(bot_id={bid!r}) error: {e}")
+                return False
         return _send
 
     configs = load_live_monitors()
-    live_monitor_manager.reload(configs, _make_send, tz_name)
+    storm_front_monitor_manager.reload(configs, _make_send, tz_name)
     seismic_monitor_manager.reload(configs, _make_send, tz_name)
     football_monitor_manager.reload(configs, _make_send, tz_name)
 
@@ -330,7 +347,7 @@ def _live_status_dispatcher(monitor_id: str) -> str:
         return seismic_monitor_manager.status(monitor_id)
     if cfg and cfg.get("type") == "football_betting":
         return football_monitor_manager.status(monitor_id)
-    return live_monitor_manager.status(monitor_id)
+    return storm_front_monitor_manager.status(monitor_id)
 
 
 # ── HA Monitors ───────────────────────────────────────────────────────────────
