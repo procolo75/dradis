@@ -85,6 +85,7 @@ The single agent runs on the main model (**Settings → DRADIS**). On an API err
 | `web/routes/monitors.py` | FastAPI routes: scheduled monitor, live monitor, HA monitor CRUD; geocode; HA test/discover |
 | `web/routes/tools.py` | FastAPI routes: Google OAuth callbacks, web search test, weather test |
 | `web/routes/bots.py` | FastAPI routes: extra Telegram bot CRUD, test-connection endpoint |
+| `web/routes/positions.py` | FastAPI routes: named position CRUD, coordinate-entity discovery, connection test |
 | `web/server.py` | FastAPI app assembly — includes all routers, re-exports store symbols |
 
 ---
