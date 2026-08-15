@@ -28,6 +28,7 @@ from web.store import (
     load_monitors,
     load_live_monitors,
     load_ha_monitors,
+    load_positions,
     toggle_task,
     toggle_monitor,
     toggle_live_monitor,
@@ -197,6 +198,14 @@ def _live_monitor_detail(m: dict) -> str:
         return ", ".join(m.get("areas", [])) or "—"
     if t == "football_betting":
         return "⚽ live"
+    # A monitor following a position does not use `location` at all, and showing
+    # it would name a place the monitor is not watching — the stale default a
+    # storm front was created with, most likely.
+    position_id = (m.get("position_id") or "").strip()
+    if position_id:
+        name = next((p.get("name") for p in load_positions()
+                     if p.get("id") == position_id), None)
+        return f"📍 {name}" if name else "⚠️ missing position"
     return m.get("location", "?")
 
 

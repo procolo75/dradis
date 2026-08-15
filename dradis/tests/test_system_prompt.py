@@ -80,9 +80,16 @@ class ScopingTest(unittest.TestCase):
 
     def setUp(self):
         self._read = st.read_settings
+        # Web Search is only available when a Tavily key was present in
+        # /data/options.json at import time. That is decided by whichever test
+        # module imports bot.state first, so pin it here rather than let the
+        # suite's file order decide what this test is asserting about.
+        self._key = st.TAVILY_API_KEY
+        st.TAVILY_API_KEY = "test-key"
 
     def tearDown(self):
         st.read_settings = self._read
+        st.TAVILY_API_KEY = self._key
 
     def prompt(self, s, selected=None) -> str:
         st.read_settings = lambda: s
@@ -167,9 +174,12 @@ class ReadUrlTest(unittest.TestCase):
 
     def setUp(self):
         self._read = st.read_settings
+        self._key = st.TAVILY_API_KEY
+        st.TAVILY_API_KEY = "test-key"
 
     def tearDown(self):
         st.read_settings = self._read
+        st.TAVILY_API_KEY = self._key
 
     def prompt(self, s) -> str:
         st.read_settings = lambda: s

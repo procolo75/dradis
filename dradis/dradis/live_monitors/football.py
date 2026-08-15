@@ -18,6 +18,7 @@ match disappears from the live feed (guard: only prune if feed returned results)
 
 import asyncio
 import html
+import json
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -384,9 +385,22 @@ async def fetch_inplaying_data(max_odds: float = 2.0) -> list[dict]:
 
 # ── Manager ───────────────────────────────────────────────────────────────────
 
+def _fingerprint(cfg: dict, tz_name: str) -> str:
+    """Everything about this monitor that would change how it behaves.
+
+    The whole config is hashed rather than a curated list of fields: missing one
+    would mean a real edit that never takes effect, and there is nothing here
+    cheap enough to be worth that risk. `created_at` is excluded because it never
+    changes, and `id` because it is the key.
+    """
+    payload = {k: v for k, v in cfg.items() if k not in ("id", "created_at")}
+    return json.dumps([payload, tz_name], sort_keys=True, default=str)
+
+
 class FootballMonitorManager:
     def __init__(self):
         self._monitors: dict[str, FootballLiveMonitor] = {}
+        self._fingerprints: dict[str, str] = {}
 
     def reload(self, configs: list[dict], make_send_fn, tz_name: str = "UTC") -> None:
         wanted: set[str] = set()
@@ -399,8 +413,20 @@ class FootballMonitorManager:
                 continue
             mid = cfg["id"]
             wanted.add(mid)
-            if mid in self._monitors:
-                self._monitors[mid].stop()
+
+            # Every manager is handed the WHOLE live-monitor list on every save,
+            # so without this check toggling an unrelated task would tear this
+            # monitor down and back up — losing its dedup state and its place in
+            # the polling cycle for something that has nothing to do with it.
+            fingerprint = _fingerprint(cfg, tz_name)
+            existing = self._monitors.get(mid)
+            if (existing and self._fingerprints.get(mid) == fingerprint
+                    and existing.is_running()):
+                continue
+
+            self._fingerprints[mid] = fingerprint
+            if existing:
+                existing.stop()
             m = FootballLiveMonitor(cfg, make_send_fn(cfg), tz_name)
             self._monitors[mid] = m
             m.start()
@@ -408,6 +434,7 @@ class FootballMonitorManager:
             if mid not in wanted:
                 self._monitors[mid].stop()
                 del self._monitors[mid]
+                self._fingerprints.pop(mid, None)
 
     def stop_all(self) -> None:
         for m in self._monitors.values():

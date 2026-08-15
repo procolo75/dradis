@@ -337,14 +337,29 @@ def reload_live_monitors():
                 return False
         return _send
 
-    # Reconfigure the position manager BEFORE the monitors, so a monitor that
-    # follows a position finds the feed already aimed at the right entities.
-    position_manager.configure(settings, load_positions())
+    # Every step is isolated. These run in sequence on one call, so an exception
+    # anywhere used to abandon the rest silently: a manager that failed to reload
+    # left the ones after it still running their old configuration, which is
+    # exactly what "I disabled it in /manage and nothing happened" looks like
+    # from the outside. One broken component must not take the others with it.
+    def _step(label: str, fn, *args) -> None:
+        try:
+            fn(*args)
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[DRADIS] WARNING: {label} reload failed: {e}")
+
+    # The position manager goes first, so a monitor that follows a position finds
+    # the feed already aimed at the right entities.
+    _step("position manager", position_manager.configure, settings, load_positions())
 
     configs = load_live_monitors()
-    storm_front_monitor_manager.reload(configs, _make_send, tz_name)
-    seismic_monitor_manager.reload(configs, _make_send, tz_name)
-    football_monitor_manager.reload(configs, _make_send, tz_name)
+    _step("storm front monitors", storm_front_monitor_manager.reload,
+          configs, _make_send, tz_name)
+    _step("seismic monitors", seismic_monitor_manager.reload,
+          configs, _make_send, tz_name)
+    _step("football monitors", football_monitor_manager.reload,
+          configs, _make_send, tz_name)
 
 
 def _live_status_dispatcher(monitor_id: str) -> str:

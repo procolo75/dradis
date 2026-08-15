@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## [4.1.1] - 2026-08-15
+
+Three fixes to what `/monitors` and `/manage` actually do, all found while testing v4.1.0.
+
+- **Fix — one failing manager silently stopped the others from reloading.** `reload_live_monitors` runs the position manager and the three live-monitor managers in sequence, unguarded, so an exception anywhere abandoned the rest: the monitors after it kept running their previous configuration. From the outside that is indistinguishable from *"I disabled it in /manage and nothing happened"* — the flag was written correctly and nothing acted on it. v4.1.0 made this worse by putting the position manager first in the chain, where a bad broker setting would freeze **every** live monitor. Each step is now isolated and logged.
+- **Fix — `/monitors` showed a place the monitor is not watching.** A storm front following a named position still printed its `location` field, which is unused in that mode — so it showed the default the monitor happened to be created with. It now shows `📍 <position name>`, or `⚠️ missing position` if the position was deleted.
+- **Fix — the football monitor restarted on every unrelated save.** Each manager is handed the whole live-monitor list on every change, and this one had no fingerprint check, so toggling a task or saving an HA monitor tore it down and started it again — losing its deduplication state and its place in the polling cycle for something that had nothing to do with it. Its whole configuration is now fingerprinted, so only a real edit to it restarts it.
+
 ## [4.1.0] - 2026-08-15
 
 **Feat — a Storm front monitor can follow a phone instead of a fixed place.** Positions are named things you create once and select per monitor, so two phones — or another family member's — are the ordinary case rather than a limitation. Opt-in: every monitor already configured keeps watching its fixed location, and nothing connects until you add a position.
