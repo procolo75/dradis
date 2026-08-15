@@ -1,5 +1,52 @@
 # CHANGELOG
 
+## [4.1.0] - 2026-08-15
+
+**Feat — a Storm front monitor can follow a phone instead of a fixed place.** Positions are named things you create once and select per monitor, so two phones — or another family member's — are the ordinary case rather than a limitation. Opt-in: every monitor already configured keeps watching its fixed location, and nothing connects until you add a position.
+
+### The problem
+
+Every monitor watched a point chosen at configuration time. While travelling that is not merely imprecise, it is the wrong question: *"the front is 20 km from home"* does not answer **am I driving into it?**
+
+### How the position gets in
+
+Over MQTT, like everything else DRADIS reads from Home Assistant — no Supervisor token, no new add-on permission. A `device_tracker` keeps its coordinates in *attributes* and `mqtt_statestream` publishes *states*, so the supported shape is two template sensors whose state **is** the coordinate, included in statestream. The **Positions** panel documents the exact YAML and tests the result. Turning on `publish_attributes` globally would have worked too and is deliberately not what is recommended: it floods the broker with every attribute of every included entity.
+
+`publish_timestamps: true` is worth enabling. It publishes `last_updated` next to each value, which is the only way to date the *retained* message received on connect — without it a position from yesterday looks brand new, and no staleness check can catch it.
+
+Any number of positions share **one** MQTT connection, routed by topic, each with its own freshness and accuracy budgets: two phones have different GPS chips and different reporting habits.
+
+### Why the collision logic needed no changes
+
+The strike buffer holds **absolute** coordinates and the geometry is already rebuilt against the current origin on every poll, so a moving origin simply produces a different — and correct — frame.
+
+CBDR then comes along for free, and this is the part worth understanding. `track_verdict` compares bearings and ranges *measured from the origin*. Let the origin move and those become **relative** bearings and ranges, which is exactly what the mariner's rule was always defined on: constant relative bearing with decreasing relative range means collision, whether or not the observer is under way. Driving into a storm reads as `closing` without a line of new decision logic.
+
+What is *not* free is telling **moving** from **being moved**. A continuous track is signal. A jump — a mislocated fix, or the position returning after a blackout somewhere else entirely — is a change of reference frame, and the stored bearings were measured from somewhere else. Those are detected and the CBDR history is dropped; the *event* is deliberately left open, because reopening it would reset the notification ladder and let one storm emit a second full set of ring messages.
+
+### No fallback: it freezes instead
+
+A monitor following a position has no reserve coordinates. When the fix is missing, too old or too imprecise — or the position was deleted — it does not know where it is and therefore perceives nothing.
+
+That is the same blindness the monitor already handles when the strike feed drops, and it is handled with the same machinery rather than new state: `evaluate(feed_ok=False)`. No alerts, and **no all-clear** — a monitor that cannot tell "nothing is happening" from "I cannot see" would otherwise cheerfully report that the storm has cleared. The freeze is silent, and it lifts by itself when the position returns.
+
+Falling back to the configured house was the first design and was wrong: it answers a different question without saying so, and it forced the form to ask for both a place *and* "follow my phone", a pairing no label could make coherent. Selecting a position now hides the Location field entirely.
+
+### Also
+
+- **Feat — an own-motion line on ring alerts.** "🚗 Ti stai dirigendo verso il temporale a 90 km/h" when your course is within 45° of the front. It *explains* the verdict above it rather than competing with it — the CBDR reading is already relative, so the two can never disagree.
+- **Feat — the alert is titled by the position's name.** `⚡ Temporale più vicino — Cellulare di Procolo` says where these distances were measured from, which is the thing you need to know when several phones are monitored.
+- **Feat — the feed re-aims itself.** Blitzortung topics are geohash cells (~110 km each) derived from the origin. Travel far enough and the subscription is rebuilt; without this the monitor would quietly stop hearing the sky you moved into while still looking healthy. The strike buffer survives — absolute coordinates stay true wherever you go. A monitor following a position connects on its first fix rather than at start-up, since until then it has nothing to derive topics from.
+- **Feat — the entity pickers only offer coordinates.** 🔍 Detect classifies what it hears on MQTT and fills in each field when there is exactly one candidate, instead of handing over every entity on the broker to hunt through.
+- **Feat — Test connection tests the form, not the last save.** It uses the values on screen and connects with its own throwaway client, so the running manager is untouched. Testing a form you have not saved yet is the normal case.
+- **Stationary is a real answer, an invented course is not.** Below the GPS noise floor the monitor reports "not moving" and no heading. A fabricated course on a 20 km lever arm is enough to claim you are driving into a storm.
+- **A wild fix must be confirmed before it is believed** — the same rule ring descents already follow. One mislocated report cannot move the radar 300 km.
+- **The message bound is untouched.** No new alert triggers: this feature changes the origin and the text, never how many messages a storm may produce.
+- **Fix — a tool's extra instructions applied to every tool.** The per-capability *Additional instructions* were appended to the system prompt as bare sentences, directly under the global agent instructions and with nothing saying which tool they belonged to — so "report temperatures in Celsius" also shaped a web search. They are now grouped under a header that names each capability and its tool names and states the line applies only while that tool is in use. Attaching fewer tools was never a fix: ordinary chat attaches all of them.
+- **Fix — MQTT discovery could hang forever.** The 3-second budget was only checked after a message arrived, so on a quiet broker — or one where the prefix is wrong, exactly when you reach for Discover — the request never returned. Pre-existing in `/api/ha/discover`; both endpoints now bound the whole listen.
+- **Fix — the accuracy of the first fix was dropped.** On connect all retained messages land at once and in no order, so a coordinate pair regularly beat its own accuracy value, and the accuracy threshold silently never applied to the fix shown in Test connection.
+- **Tests — 211, up from 70.** Including moving-observer scenarios driven through the real pipeline against **parked** storms, so the only thing that can close the range is the car and a correct verdict has nowhere else to come from.
+
 ## [4.0.0] - 2026-08-14
 
 **Breaking — the `lightning` live monitor is replaced by `storm_front`.** Existing monitors are migrated automatically on first start (type converted, radius clamped into the new range, `sensitivity` and `record_strikes` dropped); `/data/lightning_state.json` and `/data/lightning_rec/` are removed. Nothing to reconfigure.

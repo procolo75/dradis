@@ -23,7 +23,9 @@ from telegram.ext import (
 )
 
 import bot.state as _state
-from live_monitors.storm_front import migrate_lightning_configs
+from live_monitors.storm_front import (
+    migrate_lightning_configs, migrate_position_source_configs,
+)
 from bot.scheduler import (
     reload_task_jobs,
     reload_monitor_jobs,
@@ -68,6 +70,8 @@ from web.store import (
     register_ha_monitors_changed_callback,
     register_ha_monitor_status_callback,
     register_bots_changed_callback,
+    register_positions_changed_callback,
+    migrate_legacy_position,
 )
 from live_monitors.ha import ha_monitor_manager
 
@@ -125,6 +129,27 @@ def _migrate_live_monitors() -> None:
         print(f"[DRADIS] WARNING: lightning migration failed: {e}")
 
 
+def _migrate_positions() -> None:
+    """Fold the unreleased single-position shape into the named position list.
+
+    v4.1.0 kept one position in the global settings and marked monitors with
+    `position_source: "live"`. Positions are now named entities a monitor selects
+    by id, so both halves move together: without this a monitor would point at a
+    source that no longer exists and would simply stay frozen.
+    """
+    try:
+        new_id = migrate_legacy_position()
+        configs, migrated = migrate_position_source_configs(
+            load_live_monitors(), new_id)
+        if migrated:
+            save_live_monitors(configs)
+            print(f"[DRADIS] Migrated {migrated} monitor(s) to named positions")
+        elif new_id:
+            print("[DRADIS] Migrated the saved position to the named list")
+    except Exception as e:
+        print(f"[DRADIS] WARNING: position migration failed: {e}")
+
+
 async def main():
     _state._init_settings()
     _state._main_loop = asyncio.get_running_loop()
@@ -138,6 +163,7 @@ async def main():
         await _register_commands(telegram_app.bot)
         _state._telegram_bot = telegram_app.bot
         register_bots_changed_callback(_state.reload_extra_bots)
+        register_positions_changed_callback(reload_live_monitors)
         _state.reload_extra_bots()
         _state._scheduler.start()
 
@@ -153,6 +179,7 @@ async def main():
         reload_task_jobs()
         reload_monitor_jobs()
         _migrate_live_monitors()
+        _migrate_positions()
         reload_live_monitors()
         reload_ha_monitors()
 

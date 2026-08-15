@@ -292,18 +292,45 @@ def task_tool_selection(task: dict):
     return sel
 
 
+# Routing rule, not a per-tool behaviour rule: it says WHEN to reach for the tool,
+# so it belongs with the global instructions rather than under the scoped header.
+_READ_URL_RULE = ("When the user gives an http:// or https:// URL, call read_url "
+                  "to fetch the page and answer from it.")
+
+# Without this header the per-capability instructions are bare sentences sitting
+# directly under `agent_instructions`, which is to say indistinguishable from
+# global rules — so "report temperatures in Celsius" would shape a web search
+# too. Naming the capability and its tools is what binds each instruction to the
+# one tool it was written for.
+_TOOL_INSTRUCTIONS_HEADER = (
+    "Tool-specific instructions. Each line applies ONLY while you are using that "
+    "tool, and must not influence any other answer:")
+
+
 def _system_prompt(settings: dict, tools: list[dict]) -> str:
-    base    = build_system_prompt()  # time + agent_instructions (reads settings itself)
-    caps_in = {t.get("capability") for t in tools if t.get("capability")}
-    extra   = []
+    base = build_system_prompt()  # time + agent_instructions (reads settings itself)
+
+    tools_by_cap: dict[str, list[str]] = {}
+    for tool in tools:
+        cap = tool.get("capability")
+        if cap:
+            tools_by_cap.setdefault(cap, []).append(tool["name"])
+
+    scoped = []
     for cap in CAPABILITIES:
-        if cap["id"] in caps_in:
-            instr = (settings.get(cap["instr"]) or "").strip()
-            if instr:
-                extra.append(instr)
+        names = tools_by_cap.get(cap["id"])
+        if not names:
+            continue
+        instr = (settings.get(cap["instr"]) or "").strip()
+        if instr:
+            scoped.append(f"- {cap['label']} ({', '.join(names)}): {instr}")
+
+    extra = []
     if any(t["name"] == "read_url" for t in tools):
-        extra.append("When the user gives an http:// or https:// URL, call read_url to fetch the page and answer from it.")
-    return base + ("\n\n" + "\n".join(extra) if extra else "")
+        extra.append(_READ_URL_RULE)
+    if scoped:
+        extra.append(_TOOL_INSTRUCTIONS_HEADER + "\n" + "\n".join(scoped))
+    return base + ("\n\n" + "\n\n".join(extra) if extra else "")
 
 
 # ── Runner (single agent, one model, with fallback) ───────────────────────────

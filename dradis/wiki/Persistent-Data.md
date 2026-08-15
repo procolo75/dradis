@@ -5,7 +5,7 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | File | Content |
 |------|---------|
 | `/data/options.json` | App configuration managed by HA (API keys, etc.) |
-| `/data/dradis_settings.json` | Runtime settings edited from the Web UI |
+| `/data/dradis_settings.json` | Runtime settings edited from the Web UI, plus the extra Telegram bots and the named positions |
 | `/data/agents.json` | Legacy custom-agent config (unused in v3) |
 | `/data/tasks.json` | Scheduled task configuration (managed from Web UI) |
 | `/data/monitors.json` | Scheduled monitor configuration (managed from Web UI) |

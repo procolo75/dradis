@@ -309,6 +309,10 @@
           <span class="nav-icon">📡</span>
           <span class="nav-label">MQTT / Home Assistant</span>
         </li>
+        <li class="nav-item" data-panel="position" id="nav-position">
+          <span class="nav-icon">📍</span>
+          <span class="nav-label">Position</span>
+        </li>
         <li class="nav-item" data-panel="bots" id="nav-bots">
           <span class="nav-icon">🤖</span>
           <span class="nav-label">Telegram Bots</span>
@@ -630,7 +634,8 @@
 
         <div class="form-group">
           <label for="ws-instructions">Additional instructions</label>
-          <textarea id="ws-instructions" placeholder="Optional: extra instructions for the web search sub-agent..."></textarea>
+          <textarea id="ws-instructions" placeholder="Optional: how DRADIS should behave when it uses the web search tools…"></textarea>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Applies <b>only</b> while web search tools are in use — it will not change how DRADIS answers anything else.</small>
         </div>
 
 
@@ -732,7 +737,8 @@
 
         <div class="form-group">
           <label for="weather-instructions">Additional instructions</label>
-          <textarea id="weather-instructions" placeholder="Optional: extra instructions for the weather sub-agent..."></textarea>
+          <textarea id="weather-instructions" placeholder="Optional: how DRADIS should behave when it uses the weather tools…"></textarea>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Applies <b>only</b> while weather tools are in use — it will not change how DRADIS answers anything else.</small>
         </div>
 
 
@@ -907,7 +913,8 @@
 
         <div class="form-group">
           <label for="gcal-instructions">Additional instructions</label>
-          <textarea id="gcal-instructions" placeholder="Optional: extra instructions for the calendar sub-agent…"></textarea>
+          <textarea id="gcal-instructions" placeholder="Optional: how DRADIS should behave when it uses the calendar tools…"></textarea>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Applies <b>only</b> while calendar tools are in use — it will not change how DRADIS answers anything else.</small>
         </div>
 
 
@@ -1016,7 +1023,8 @@
 
         <div class="form-group">
           <label for="gmail-instructions">Additional instructions</label>
-          <textarea id="gmail-instructions" placeholder="Optional: extra instructions for the Gmail sub-agent…"></textarea>
+          <textarea id="gmail-instructions" placeholder="Optional: how DRADIS should behave when it uses the Gmail tools…"></textarea>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Applies <b>only</b> while Gmail tools are in use — it will not change how DRADIS answers anything else.</small>
         </div>
 
 
@@ -1131,7 +1139,8 @@
 
         <div class="form-group">
           <label for="gtasks-instructions">Additional instructions</label>
-          <textarea id="gtasks-instructions" placeholder="Optional: extra instructions for the Google Tasks sub-agent…"></textarea>
+          <textarea id="gtasks-instructions" placeholder="Optional: how DRADIS should behave when it uses the Google Tasks tools…"></textarea>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Applies <b>only</b> while Google Tasks tools are in use — it will not change how DRADIS answers anything else.</small>
         </div>
 
 
@@ -1225,6 +1234,161 @@
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-ha-mqtt">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Positions -->
+    <div class="panel" id="panel-position">
+      <div class="form-card">
+        <h2>📍 Positions</h2>
+        <p style="color:var(--text-muted);margin-bottom:16px;font-size:0.92em;">
+          A position is a phone DRADIS can follow. A Storm front monitor selects one and
+          then watches wherever <em>that</em> phone is, so while travelling it can tell you
+          whether you are driving into the storm rather than away from it. Add one per
+          phone — yours, another family member's — and give each a name you will recognise
+          in an alert.
+        </p>
+
+        <div id="positions-list" style="display:flex;flex-direction:column;gap:10px;"></div>
+
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="btn-save" id="btn-positions-add">+ Add position</button>
+        </div>
+
+        <details style="margin-top:20px">
+          <summary style="cursor:pointer;color:var(--text-muted);font-size:0.88rem">
+            How to publish a phone's position to MQTT (Home Assistant setup)
+          </summary>
+          <div style="font-size:0.85rem;color:var(--text-muted);line-height:1.6;margin-top:10px">
+            <p>A <code>device_tracker</code> keeps its coordinates in <b>attributes</b>, and
+            <code>mqtt_statestream</code> publishes <b>states</b>. Rather than turning on
+            <code>publish_attributes</code> — which is global and would flood the broker with
+            every attribute of every included entity — expose just the two values as template
+            sensors, in <code>configuration.yaml</code>:</p>
+<pre style="overflow-x:auto;background:var(--bg-alt,#00000018);padding:10px;border-radius:6px"><code>template:
+  - sensor:
+      - name: "Phone latitude"
+        unique_id: phone_latitude
+        state: "{{ state_attr('device_tracker.my_phone', 'latitude') | round(5) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'latitude') is not none }}"
+      - name: "Phone longitude"
+        unique_id: phone_longitude
+        state: "{{ state_attr('device_tracker.my_phone', 'longitude') | round(5) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'longitude') is not none }}"
+      - name: "Phone GPS accuracy"
+        unique_id: phone_gps_accuracy
+        state: "{{ state_attr('device_tracker.my_phone', 'gps_accuracy') | int(0) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'gps_accuracy') is not none }}"
+
+mqtt_statestream:
+  base_topic: homeassistant
+  publish_attributes: false
+  publish_timestamps: true
+  include:
+    entities:
+      - sensor.phone_latitude
+      - sensor.phone_longitude
+      - sensor.phone_gps_accuracy</code></pre>
+            <p>Repeat the three sensors per phone, with distinct names.</p>
+            <p><b>If you already have an <code>mqtt_statestream</code> block, merge into it</b> —
+            Home Assistant accepts only one, and a second would drop your current includes.</p>
+            <p><code>publish_timestamps: true</code> is worth keeping: it publishes
+            <code>last_updated</code> alongside each value, which is the only way to tell how old
+            the retained position received on connect actually is. Without it a fix from
+            yesterday looks brand new.</p>
+            <p>Finally, in the <b>Companion app</b> raise the location update frequency
+            (Settings → Companion app → Manage sensors → Location sensors). The default
+            "significant change" reporting can lag by minutes at motorway speed, which is
+            exactly when this feature has to be right.</p>
+          </div>
+        </details>
+
+        <!-- Add/edit form (hidden by default) -->
+        <div id="positions-form-wrap" style="display:none;margin-top:16px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div class="form-group">
+            <label for="pos-f-name">Name</label>
+            <input type="text" id="pos-f-name" placeholder="e.g. My phone" style="max-width:420px">
+            <small style="color:var(--text-muted);margin-top:4px;display:block">
+              This is what an alert is titled with, so make it recognisable.
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label>Find the sensors</label>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <button class="btn-icon" id="btn-position-discover" type="button">🔍 Detect entities</button>
+              <span id="position-discover-note" style="font-size:0.85rem;color:var(--text-muted)"></span>
+            </div>
+            <small style="color:var(--text-muted);margin-top:4px;display:block">
+              Listens on MQTT for 3 seconds and keeps only what looks like a coordinate,
+              filling in each field when there is exactly one candidate.
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="pos-f-lat">Latitude entity</label>
+            <input type="text" id="pos-f-lat" list="position-lat-options"
+                   placeholder="sensor/phone_latitude" style="max-width:420px">
+            <small style="color:var(--text-muted);margin-top:4px;display:block">
+              Topic path after the prefix — <code>sensor/phone_latitude</code> means
+              <code>homeassistant/sensor/phone_latitude/state</code>.
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="pos-f-lon">Longitude entity</label>
+            <input type="text" id="pos-f-lon" list="position-lon-options"
+                   placeholder="sensor/phone_longitude" style="max-width:420px">
+          </div>
+
+          <div class="form-group">
+            <label for="pos-f-acc">GPS accuracy entity <span style="color:var(--text-muted);font-weight:normal">(optional)</span></label>
+            <input type="text" id="pos-f-acc" list="position-acc-options"
+                   placeholder="sensor/phone_gps_accuracy" style="max-width:420px">
+          </div>
+          <datalist id="position-lat-options"></datalist>
+          <datalist id="position-lon-options"></datalist>
+          <datalist id="position-acc-options"></datalist>
+
+          <div class="form-group">
+            <label for="pos-f-max-age">Maximum fix age (minutes)</label>
+            <input type="number" id="pos-f-max-age" min="1" max="240" step="1" style="width:100px">
+            <small style="color:var(--text-muted);margin-top:4px;display:block">
+              Older than this and a monitor following this position stops alerting until it
+              comes back — there is no fallback, because watching somewhere else instead
+              would answer a different question without saying so. While a storm is in
+              progress this budget is tripled, so losing GPS in a tunnel does not blind the
+              monitor mid-event.
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="pos-f-max-accuracy">Maximum GPS accuracy (metres)</label>
+            <input type="number" id="pos-f-max-accuracy" min="10" max="10000" step="10" style="width:120px">
+            <small style="color:var(--text-muted);margin-top:4px;display:block">
+              Ignored when no accuracy entity is configured.
+            </small>
+          </div>
+
+          <div class="form-group">
+            <label for="pos-f-prefix">Statestream prefix override <span style="color:var(--text-muted);font-weight:normal">(optional)</span></label>
+            <input type="text" id="pos-f-prefix" placeholder="Leave empty to use the global setting" style="max-width:420px">
+          </div>
+
+          <div class="form-group">
+            <label>Connection test</label>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <button class="btn-icon" id="btn-position-test">Test connection</button>
+              <span id="position-test-result" style="font-size:0.85rem;color:var(--text-muted)"></span>
+            </div>
+          </div>
+
+          <input type="hidden" id="pos-f-id">
+          <div class="btn-row">
+            <button class="btn-save" id="btn-position-save">Save</button>
+            <button class="btn-save" id="btn-position-cancel" style="background:var(--text-muted,#888)">Cancel</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2829,6 +2993,14 @@ async function init() {
   }
   renderSidebarBots();
 
+  // Needed before any live monitor form renders: its "Where to watch" selector is
+  // built from this list.
+  try {
+    positions = await api("GET", "/api/positions");
+  } catch (e) {
+    console.error("loadPositions:", e);
+  }
+
   applyV3CapabilityNotice();
 }
 
@@ -3871,6 +4043,12 @@ function renderLiveMonitorForm(monitor) {
         <small id="lm-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)">${_TYPE_DESCS_LIVE[monitor.type] || ""}</small>
       </div>
 
+      <div class="form-group" id="lm-position-block">
+        <label for="lm-position-id">Where to watch</label>
+        <select id="lm-position-id" style="max-width:420px">${renderPositionSelector(monitor.position_id)}</select>
+        <small id="lm-position-desc" style="color:var(--text-muted);margin-top:4px;display:block"></small>
+      </div>
+
       <div class="form-group" id="lm-location-block">
         <label for="lm-location">Location</label>
         <input type="text" id="lm-location" value="${monitor.location || ""}" placeholder="e.g. Bacoli, Rome...">
@@ -4042,12 +4220,43 @@ function renderLiveMonitorForm(monitor) {
     </div>
   `;
 
+  function _lmApplyOrigin() {
+    // Following a position, the Location field is not a fallback — it is nothing
+    // at all, so it disappears. Showing a place to watch next to "follow my
+    // phone" was a contradiction no label could explain away.
+    const select = document.getElementById("lm-position-id");
+    const desc   = document.getElementById("lm-position-desc");
+    const block  = document.getElementById("lm-location-block");
+    if (!select || !desc || !block) return;
+
+    const followed = !!select.value;
+    block.style.display = followed ? "none" : "";
+    if (!followed) {
+      desc.textContent = "The radar is centred on the location below and stays there.";
+      return;
+    }
+    const known = positions.some(p => p.id === select.value);
+    desc.innerHTML = known
+      ? "The radar follows this phone, so while travelling the distances — and the " +
+        "\"heading straight for you\" verdict — are about <b>where it is</b>. If its " +
+        "position goes missing or stale the monitor stops alerting until it comes back: " +
+        "there is no fallback, because watching somewhere else would answer a different " +
+        "question without saying so."
+      : "⚠️ This monitor follows a position that no longer exists, so it cannot alert at " +
+        "all. Pick another, or add it again in <b>Settings → Positions</b>.";
+  }
+
+  document.getElementById("lm-position-id")
+    ?.addEventListener("change", _lmApplyOrigin);
+
   function _lmApplyType(type) {
     const isSeismic = type === "seismic";
     const isFootball = type === "football_betting";
     const isStorm    = !isSeismic && !isFootball;
     document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[type] || "";
     document.getElementById("lm-location-block").style.display   = isStorm ? "" : "none";
+    document.getElementById("lm-position-block").style.display   = isStorm ? "" : "none";
+    if (isStorm) _lmApplyOrigin();
     document.getElementById("lm-radius-block").style.display     = isStorm ? "" : "none";
     document.getElementById("lm-rings-block").style.display      = isStorm ? "" : "none";
     document.getElementById("lm-stormfront-hint").style.display  = isStorm ? "" : "none";
@@ -4186,6 +4395,7 @@ function renderLiveMonitorForm(monitor) {
       quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
       ring_count:      parseInt(document.getElementById("lm-ring-count")?.value, 10) || 4,
       chart:           document.getElementById("lm-chart")?.checked ?? true,
+      position_id:     document.getElementById("lm-position-id")?.value || "",
       telegram_bot_id: document.getElementById("lm-bot-id").value,
     };
     try {
@@ -4229,6 +4439,7 @@ function renderLiveMonitorForm(monitor) {
         language:        src.language,
         ring_count:      src.ring_count ?? 4,
         chart:           src.chart ?? true,
+        position_id:     src.position_id || "",
         quiet_start:     src.quiet_start || "",
         quiet_end:       src.quiet_end   || "",
         areas:           src.areas   || [],
@@ -4327,6 +4538,212 @@ document.getElementById("btn-save-ha-mqtt").addEventListener("click", async () =
 document.getElementById("nav-ha-mqtt").addEventListener("click", async () => {
   navigateTo("ha-mqtt", document.getElementById("nav-ha-mqtt"));
   try { await loadHaMqttSettings(); } catch {}
+});
+
+// ── Positions panel ───────────────────────────────────────────────────────────
+
+let positions = [];
+
+async function loadPositions() {
+  positions = await api("GET", "/api/positions");
+  renderPositionsList();
+}
+
+function renderPositionsList() {
+  const el = document.getElementById("positions-list");
+  if (!el) return;
+  if (!positions.length) {
+    el.innerHTML = '<p style="color:var(--text-muted);font-size:0.9em;">' +
+      'No position configured. Storm front monitors will keep using their fixed location.</p>';
+    return;
+  }
+  el.innerHTML = positions.map(p => `
+    <div style="display:flex;align-items:center;gap:10px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+      <span style="font-size:1.3em;">📍</span>
+      <div style="flex:1">
+        <strong>${escHtml(p.name)}</strong>
+        <div style="font-size:0.82em;color:var(--text-muted);">${escHtml(p.lat_entity)} · ${escHtml(p.lon_entity)}</div>
+      </div>
+      <button class="btn-icon" title="Edit this position" onclick="editPosition('${p.id}')">✏️</button>
+      <button class="btn-icon" title="Delete — monitors following it will stop alerting until you pick another" onclick="deletePosition('${p.id}')">🗑️</button>
+    </div>
+  `).join("");
+}
+
+function renderPositionSelector(currentId) {
+  const opts = [`<option value=""${!currentId ? " selected" : ""}>📌 A fixed place</option>`];
+  for (const p of positions) {
+    opts.push(`<option value="${p.id}"${currentId === p.id ? " selected" : ""}>📍 ${escHtml(p.name)}</option>`);
+  }
+  // A monitor pointing at a deleted position must not silently look like a fixed
+  // one: it is frozen, and the cause has to be visible.
+  if (currentId && !positions.some(p => p.id === currentId)) {
+    opts.push(`<option value="${currentId}" selected>⚠️ Missing position — pick another</option>`);
+  }
+  return opts.join("");
+}
+
+function _positionForm() {
+  return {
+    name:            document.getElementById("pos-f-name").value.trim() || "Position",
+    lat_entity:      document.getElementById("pos-f-lat").value.trim(),
+    lon_entity:      document.getElementById("pos-f-lon").value.trim(),
+    accuracy_entity: document.getElementById("pos-f-acc").value.trim(),
+    max_age_min:     parseFloat(document.getElementById("pos-f-max-age").value) || 15,
+    max_accuracy_m:  parseFloat(document.getElementById("pos-f-max-accuracy").value) || 500,
+    mqtt_prefix:     document.getElementById("pos-f-prefix").value.trim(),
+  };
+}
+
+function _showPositionForm(p) {
+  document.getElementById("positions-form-wrap").style.display = "block";
+  document.getElementById("pos-f-id").value           = p?.id || "";
+  document.getElementById("pos-f-name").value         = p?.name || "";
+  document.getElementById("pos-f-lat").value          = p?.lat_entity || "";
+  document.getElementById("pos-f-lon").value          = p?.lon_entity || "";
+  document.getElementById("pos-f-acc").value          = p?.accuracy_entity || "";
+  document.getElementById("pos-f-max-age").value      = p?.max_age_min ?? 15;
+  document.getElementById("pos-f-max-accuracy").value = p?.max_accuracy_m ?? 500;
+  document.getElementById("pos-f-prefix").value       = p?.mqtt_prefix || "";
+  document.getElementById("position-test-result").textContent = "";
+  document.getElementById("position-discover-note").textContent = "";
+  document.getElementById("pos-f-name").focus();
+}
+
+function editPosition(id) {
+  _showPositionForm(positions.find(p => p.id === id));
+}
+
+async function deletePosition(id) {
+  const p = positions.find(x => x.id === id);
+  if (!confirm(`Delete "${p ? p.name : id}"? Monitors following it will stop alerting until you pick another position.`)) return;
+  try {
+    await api("DELETE", `/api/positions/${id}`);
+    await loadPositions();
+    showToast("Position deleted.");
+  } catch (e) {
+    showToast(e.message || "Error deleting position", true);
+  }
+}
+
+document.getElementById("btn-positions-add").addEventListener("click", () => {
+  _showPositionForm(null);
+});
+
+document.getElementById("btn-position-cancel").addEventListener("click", () => {
+  document.getElementById("positions-form-wrap").style.display = "none";
+});
+
+function _fillDatalist(id, entities) {
+  document.getElementById(id).innerHTML =
+    entities.map(e => `<option value="${e}"></option>`).join("");
+}
+
+document.getElementById("btn-position-discover").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-position-discover");
+  const note = document.getElementById("position-discover-note");
+  btn.disabled = true;
+  note.textContent = "Listening on MQTT for 3s…";
+  note.style.color = "var(--text-muted)";
+  try {
+    const prefix = document.getElementById("pos-f-prefix").value.trim();
+    const d = await api("POST", `/api/positions/discover?prefix=${encodeURIComponent(prefix)}`);
+
+    // Each field offers only the entities that belong to it; `all` is the escape
+    // hatch for a naming scheme we did not recognise.
+    _fillDatalist("position-lat-options", d.latitude.length  ? d.latitude  : d.all);
+    _fillDatalist("position-lon-options", d.longitude.length ? d.longitude : d.all);
+    _fillDatalist("position-acc-options", d.accuracy.length  ? d.accuracy  : d.all);
+
+    // Fill in what is unambiguous. Guessing between two candidates would be worse
+    // than leaving the field for the user.
+    const filled = [];
+    const autofill = (inputId, candidates, label) => {
+      const input = document.getElementById(inputId);
+      if (candidates.length === 1 && !input.value) { input.value = candidates[0]; filled.push(label); }
+    };
+    autofill("pos-f-lat", d.latitude,  "latitude");
+    autofill("pos-f-lon", d.longitude, "longitude");
+    autofill("pos-f-acc", d.accuracy,  "accuracy");
+
+    const found = d.latitude.length + d.longitude.length + d.accuracy.length;
+    if (!found) {
+      note.textContent = `No coordinate-looking entity among the ${d.all.length} seen. ` +
+        `Check that mqtt_statestream includes your latitude/longitude sensors.`;
+      note.style.color = "var(--warning, #fb8c00)";
+    } else if (filled.length) {
+      note.textContent = `✅ Filled in ${filled.join(", ")}. ${d.all.length} entities seen in total.`;
+      note.style.color = "var(--success, #43a047)";
+    } else {
+      note.textContent = `${found} candidate(s) found — pick from each field's list. ` +
+        `${d.all.length} entities seen in total.`;
+      note.style.color = "var(--text-muted)";
+    }
+  } catch (e) {
+    note.textContent = `❌ ${e.message || "Discovery failed"}`;
+    note.style.color = "var(--danger, #e53935)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-position-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-position-test");
+  const result = document.getElementById("position-test-result");
+  btn.disabled = true;
+  result.textContent = "Testing…";
+  result.style.color = "var(--text-muted)";
+  try {
+    // The form's current values, so this answers "would THIS work" without
+    // needing a save first.
+    const d = await api("POST", "/api/positions/test", _positionForm());
+    if (d.latitude === undefined) {
+      result.textContent = `⚠️ ${d.detail || d.status}`;
+      result.style.color = "var(--warning, #fb8c00)";
+    } else {
+      const bits = [`${d.latitude}, ${d.longitude}`, `${Math.round(d.age_sec)}s old`];
+      if (d.accuracy_m !== null && d.accuracy_m !== undefined) bits.push(`±${d.accuracy_m} m`);
+      if (d.moving) bits.push(`${d.speed_kmh} km/h towards ${d.course_deg}°`);
+      else if (d.speed_kmh === 0) bits.push("stationary");
+      let note = "";
+      if (d.too_old)   note = " — older than this position's budget";
+      if (d.too_vague) note = " — less accurate than this position's budget";
+      result.textContent = `${d.ok ? "✅" : "⚠️"} ${bits.join(" · ")}${note}`;
+      result.style.color = d.ok ? "var(--success, #43a047)" : "var(--warning, #fb8c00)";
+    }
+  } catch (e) {
+    result.textContent = `❌ ${e.message || "Test failed"}`;
+    result.style.color = "var(--danger, #e53935)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-position-save").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-position-save");
+  const payload = _positionForm();
+  if (!(payload.lat_entity && payload.lon_entity)) {
+    showToast("Latitude and longitude entities are both required.", true);
+    return;
+  }
+  btn.disabled = true;
+  const id = document.getElementById("pos-f-id").value;
+  try {
+    if (id) await api("PUT", `/api/positions/${id}`, payload);
+    else    await api("POST", "/api/positions", payload);
+    await loadPositions();
+    document.getElementById("positions-form-wrap").style.display = "none";
+    showToast("Position saved.");
+  } catch (e) {
+    showToast(e.message || "Error saving position", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("nav-position").addEventListener("click", async () => {
+  navigateTo("position", document.getElementById("nav-position"));
+  try { await loadPositions(); } catch {}
 });
 
 // ── HA Monitors ───────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 from apscheduler.triggers.cron import CronTrigger
 
@@ -398,6 +399,87 @@ def save_bots(bots: list[dict]) -> None:
         raw = {}
     raw["telegram_bots"] = bots
     SETTINGS_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2))
+
+
+# ── Named positions ───────────────────────────────────────────────────────────
+#
+# A position is a named thing a live monitor selects, exactly like a Telegram
+# bot: two phones, or another family member's phone, is the ordinary case.
+
+_on_positions_changed: Callable | None = None
+
+
+def register_positions_changed_callback(fn: Callable) -> None:
+    global _on_positions_changed
+    _on_positions_changed = fn
+
+
+def _notify_positions_changed() -> None:
+    if _on_positions_changed:
+        _on_positions_changed()
+
+
+def load_positions() -> list[dict]:
+    try:
+        raw = json.loads(SETTINGS_FILE.read_text())
+        return raw.get("positions", [])
+    except Exception:
+        return []
+
+
+def save_positions(positions: list[dict]) -> None:
+    try:
+        raw = json.loads(SETTINGS_FILE.read_text())
+    except Exception:
+        raw = {}
+    raw["positions"] = positions
+    SETTINGS_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2))
+
+
+# Settings keys written by the unreleased single-position shape of this feature.
+_LEGACY_POSITION_KEYS = (
+    "position_enabled", "position_lat_entity", "position_lon_entity",
+    "position_accuracy_entity", "position_max_age_min",
+    "position_max_accuracy_m", "position_mqtt_prefix",
+)
+
+
+def migrate_legacy_position() -> str | None:
+    """Fold a v4.1.0 single-position configuration into the named list.
+
+    Returns the id of the position it created, or None if there was nothing to
+    migrate. Idempotent: the legacy keys are removed as part of the move, so a
+    second run finds nothing.
+    """
+    try:
+        raw = json.loads(SETTINGS_FILE.read_text())
+    except Exception:
+        return None
+    if not any(k in raw for k in _LEGACY_POSITION_KEYS):
+        return None
+
+    lat = (raw.get("position_lat_entity") or "").strip()
+    lon = (raw.get("position_lon_entity") or "").strip()
+    new_id = None
+    if lat and lon:
+        positions = raw.get("positions", [])
+        new_id = str(uuid4())
+        positions.append({
+            "id": new_id,
+            "name": "My phone",
+            "lat_entity": lat,
+            "lon_entity": lon,
+            "accuracy_entity": (raw.get("position_accuracy_entity") or "").strip(),
+            "max_age_min": raw.get("position_max_age_min", 15.0),
+            "max_accuracy_m": raw.get("position_max_accuracy_m", 500.0),
+            "mqtt_prefix": (raw.get("position_mqtt_prefix") or "").strip(),
+        })
+        raw["positions"] = positions
+
+    for key in _LEGACY_POSITION_KEYS:
+        raw.pop(key, None)
+    SETTINGS_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2))
+    return new_id
 
 
 # ── Provider helpers ──────────────────────────────────────────────────────────

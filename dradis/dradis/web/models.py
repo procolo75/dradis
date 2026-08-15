@@ -67,6 +67,12 @@ class LiveMonitorPayload(BaseModel):
     ring_count:      int       = 4
     # Storm front only — attach the polar radar to each ring message.
     chart:           bool      = True
+    # Storm front only — empty centres the radar on latitude/longitude above
+    # (the historical behaviour, and the default). Otherwise it is the id of a
+    # named position, and the monitor follows THAT and nothing else: there is no
+    # fallback, because watching your house instead of you is not a gentle
+    # degradation, it is answering a different question without saying so.
+    position_id:     str       = ""
 
 
 class HaMonitorPayload(BaseModel):
@@ -147,6 +153,18 @@ class SettingsPayload(BaseModel):
     mqtt_username:           str  = ""
     mqtt_password:           str  = ""
     mqtt_statestream_prefix: str  = "homeassistant"
+
+
+class PositionPayload(BaseModel):
+    """One named position. Thresholds are per position, not global: two phones
+    have different GPS chips and different reporting habits."""
+    name:            str   = "Position"
+    lat_entity:      str   = ""
+    lon_entity:      str   = ""
+    accuracy_entity: str   = ""
+    max_age_min:     float = 15.0
+    max_accuracy_m:  float = 500.0
+    mqtt_prefix:     str   = ""
 
 
 class SpeedtestPayload(BaseModel):

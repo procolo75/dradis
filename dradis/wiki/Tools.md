@@ -2,7 +2,7 @@
 
 DRADIS is **one agent** with a flat set of tools (v3.0 — no sub-agents, no coordinator, no framework). The model decides which tool to call; the runtime executes it and feeds the result back. Everything runs on the **main model** configured in **Settings → DRADIS** (with the single fallback model on API error).
 
-Each capability below is enabled and authenticated independently from the **Web UI → Tools** section. A capability's *Additional instructions* are appended to the system prompt **only when one of its tools is attached** to the run. Per-capability model/provider settings no longer exist — the single agent always uses the main model.
+Each capability below is enabled and authenticated independently from the **Web UI → Tools** section. A capability's *Additional instructions* are added to the system prompt **only when one of its tools is attached** to the run, and under a header naming that capability and its tools, so they apply **only while that tool is in use**. Without the attribution they read as standing rules — a weather instruction would shape how a web search is written. Per-capability model/provider settings no longer exist — the single agent always uses the main model.
 
 For a **task**, you can select exactly which tools to attach (see [Tasks](Tasks)); **chat** gets all available tools.
 

@@ -18,6 +18,7 @@ from web.store import (
     load_monitors,
     load_live_monitors,
     load_ha_monitors,
+    load_positions,
 )
 from monitors.thunderstorm  import run_thunderstorm_monitor
 from monitors.rain          import run_rain_monitor
@@ -25,6 +26,7 @@ from monitors.seismic       import run_seismic_monitor
 from monitors.weather_chart import run_weather_chart_monitor
 from backup.gdrive          import run_backup_monitor
 from live_monitors.storm_front import storm_front_monitor_manager
+from live_monitors.position   import position_manager
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
 from live_monitors.football  import football_monitor_manager
@@ -334,6 +336,10 @@ def reload_live_monitors():
                 print(f"[DRADIS] send_photo(bot_id={bid!r}) error: {e}")
                 return False
         return _send
+
+    # Reconfigure the position manager BEFORE the monitors, so a monitor that
+    # follows a position finds the feed already aimed at the right entities.
+    position_manager.configure(settings, load_positions())
 
     configs = load_live_monitors()
     storm_front_monitor_manager.reload(configs, _make_send, tz_name)

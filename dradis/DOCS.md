@@ -33,7 +33,7 @@ Each capability contributes tool specs (`agents/*.py` → `*_tools(settings)`):
 | Google Tasks | `list_tasks`, `create_task`, `complete_task`, `delete_task`, `update_task` |
 | Read URL | `read_url` |
 
-A capability's tools are available when it is **Enabled** and authenticated. **Chat** gets all available tools; a **task** and an **HA monitor (LLM mode)** each select exactly which tools to attach (fewer tools = smaller prompt; HA monitors default to *none*). `bot/state.py:build_tools(settings, selected)` assembles the list — `[]` = no tools, `["*"]` = all, a list = only those. A capability's *Additional instructions* are appended to the system prompt when any of its tools are attached.
+A capability's tools are available when it is **Enabled** and authenticated. **Chat** gets all available tools; a **task** and an **HA monitor (LLM mode)** each select exactly which tools to attach (fewer tools = smaller prompt; HA monitors default to *none*). `bot/state.py:build_tools(settings, selected)` assembles the list — `[]` = no tools, `["*"]` = all, a list = only those. A capability's *Additional instructions* are added to the system prompt when any of its tools are attached, under a header that names the capability and its tool names and states that the line applies **only while that tool is in use**. Without that attribution they read as standing rules and shape unrelated answers — a weather instruction would change how a web search is written.
 
 ### One model + fallback
 
@@ -71,6 +71,8 @@ The single agent runs on the main model (**Settings → DRADIS**). On an API err
 | `live_monitors/storm_front_chart.py` | Polar radar attached to ring messages (matplotlib, object API, rendered off the event loop) |
 | `live_monitors/blitzortung.py` | Blitzortung MQTT feed — connection, strike buffer, health (`feed_ok`, `connected_for`) |
 | `live_monitors/geo.py` | Pure geo maths — Haversine, bearings, compass labels, geohash topic derivation |
+| `live_monitors/position.py` | Named positions — one MQTT listener on the HA broker serving every configured phone; `PositionSource` + `PositionManager` singleton |
+| `live_monitors/position_core.py` | Pure position logic — lat/lon pairing, fix age, speed/course, discontinuity detection. No I/O, fully unit-tested |
 | `live_monitors/replay.py` | Offline replay of a recorded storm through the decision core — used to tune sensitivity on real data |
 | `live_monitors/ha.py` | HA Monitor — persistent MQTT listener for Home Assistant entity state changes; `HaLiveMonitor` + `HaMonitorManager` singleton |
 | `live_monitors/seismic.py` | Seismic live monitor — polls INGV GOSSIP JSON API every 60 s, alerts on new events and state promotions |
@@ -220,7 +222,7 @@ When enabled, DRADIS automatically decides which tool to call — no prompt engi
 | Model | — | Model used to synthesise search results. Click 🔄 to load, ⚡ to speed-test. |
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
-| Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
+| Additional instructions | — | Optional extra instructions that apply **only when this capability's tools are used**. |
 
 ### Agents -> Weather
 
@@ -236,7 +238,7 @@ When enabled, DRADIS automatically calls `get_weather` when the user asks about 
 | Model | — | Model used to synthesise weather data. Click 🔄 to load, ⚡ to speed-test. |
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
-| Additional instructions | — | Optional extra instructions appended to the synthesis agent's system prompt. |
+| Additional instructions | — | Optional extra instructions that apply **only when this capability's tools are used**. |
 
 #### Weather variables fetched
 
@@ -286,7 +288,7 @@ A calendar sub-agent formats the raw API response using the configured LLM model
 | Model | — | Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test. |
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
-| Additional instructions | — | Optional extra instructions appended to the calendar sub-agent's system prompt. |
+| Additional instructions | — | Optional extra instructions that apply **only when this capability's tools are used**. |
 
 ### Agents → Gmail
 
@@ -311,7 +313,7 @@ A synthesis sub-agent formats the raw email data using the configured LLM model 
 | Model | — | Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test. |
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
-| Additional instructions | — | Optional extra instructions appended to the Gmail sub-agent's system prompt. |
+| Additional instructions | — | Optional extra instructions that apply **only when this capability's tools are used**. |
 
 ### Agents → Google Tasks
 
@@ -337,7 +339,7 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 | Model | — | Model for the sub-agent. Click 🔄 to load, ⚡ to speed-test. |
 | Fallback Provider | *(blank)* | Provider to use if the primary model call fails. |
 | Fallback Model | *(blank)* | Model to retry with on API error. Leave blank to disable fallback. |
-| Additional instructions | — | Optional extra instructions appended to the Google Tasks sub-agent's system prompt. |
+| Additional instructions | — | Optional extra instructions that apply **only when this capability's tools are used**. |
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
 
@@ -375,6 +377,71 @@ Configure the MQTT broker connection used by HA Monitors. Required before creati
 | Statestream prefix | `homeassistant` | Base topic prefix used by `mqtt_discoverystream_alt`. Must match the `base_topic` set in `configuration.yaml`. |
 
 Click **Save** to apply. Changes take effect immediately — no restart required.
+
+### Settings → Positions
+
+A **position** is a phone DRADIS can follow. A Storm front monitor selects one and then watches wherever *that* phone is, so while travelling it can tell you whether you are driving into the storm rather than away from it. Add one per phone — yours, another family member's — and give each a name you will recognise in an alert, because that name is what the alert is titled with.
+
+Positions are stored under `positions` in `/data/dradis_settings.json`, and they all share **one** MQTT connection. Nothing connects until you add one.
+
+#### Publishing a phone's position (Home Assistant side)
+
+A `device_tracker` keeps its coordinates in **attributes**, and `mqtt_statestream` publishes **states**. Turning on `publish_attributes` would expose them, but it is a *global* switch that floods the broker with every attribute of every included entity. Expose just the two values instead, in `configuration.yaml`:
+
+```yaml
+template:
+  - sensor:
+      - name: "Phone latitude"
+        unique_id: phone_latitude
+        state: "{{ state_attr('device_tracker.my_phone', 'latitude') | round(5) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'latitude') is not none }}"
+      - name: "Phone longitude"
+        unique_id: phone_longitude
+        state: "{{ state_attr('device_tracker.my_phone', 'longitude') | round(5) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'longitude') is not none }}"
+      - name: "Phone GPS accuracy"
+        unique_id: phone_gps_accuracy
+        state: "{{ state_attr('device_tracker.my_phone', 'gps_accuracy') | int(0) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'gps_accuracy') is not none }}"
+
+mqtt_statestream:
+  base_topic: homeassistant
+  publish_attributes: false
+  publish_timestamps: true
+  include:
+    entities:
+      - sensor.phone_latitude
+      - sensor.phone_longitude
+      - sensor.phone_gps_accuracy
+```
+
+Repeat the three sensors per phone, with distinct names.
+
+`round(5)` is ~1 metre of resolution — precise enough for anything the storm front does, and it damps the GPS jitter that would otherwise republish constantly. The `availability` guard keeps `unknown` off the topic while the app has no fix yet.
+
+**If you already have an `mqtt_statestream` block, merge into it.** Home Assistant accepts only one, and a second would silently drop your current includes.
+
+**Keep `publish_timestamps: true`.** It publishes `last_updated` next to each value, which is the only way to date the *retained* message received on connect. Without it a position from yesterday arrives looking brand new and no staleness check can catch it.
+
+Finally, raise the Companion app's location update frequency (*Settings → Companion app → Manage sensors → Location sensors*). The default "significant change" reporting can lag by minutes at motorway speed, which is exactly when this has to be right. Consider triggering high-accuracy mode from your car's Bluetooth so it only runs while you drive.
+
+#### Fields per position
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Name | *(blank)* | What alerts are titled with. Make it recognisable. |
+| Latitude entity | *(blank)* | Topic path after the prefix, e.g. `sensor/phone_latitude`. |
+| Longitude entity | *(blank)* | As above. Both are required. |
+| GPS accuracy entity | *(blank)* | Optional. When unset, the accuracy threshold is not applied. |
+| Maximum fix age | `15` min | Older and a monitor following this position stops alerting until it comes back. Tripled while a storm is in progress. |
+| Maximum GPS accuracy | `500` m | Vaguer fixes are not used. |
+| Statestream prefix override | *(blank)* | Defaults to the global MQTT prefix. |
+
+**🔍 Detect entities** listens on MQTT for three seconds and keeps only what looks like a coordinate, so you pick from a handful of candidates rather than every entity on the broker. When exactly one candidate matches a field it is filled in for you; when several do, each field's dropdown offers only its own kind. If nothing is recognised — an unusual naming scheme — every entity is offered instead, so this is never a dead end.
+
+**Test connection** uses the values **currently on screen**, saved or not: testing a form you have not saved yet is the normal case. It connects with its own throwaway client, so the running manager is never disturbed. It reports the fix, its age, its accuracy and your speed, and names the threshold that failed — "no position at all" and "a position from two hours ago" are different problems with different fixes.
+
+**Deleting a position** does not rewrite the monitors following it. Silently converting them back to a fixed place would put them somewhere you never asked to watch, so they freeze instead, and their form shows the dangling reference.
 
 ### Scheduled Monitors
 
@@ -546,7 +613,7 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 
 | Type | Required fields |
 |------|----------------|
-| 🌩️ Storm front / CBDR | Location, Radius (km), Updates per storm, Radar, Language, Quiet hours *(optional)* |
+| 🌩️ Storm front / CBDR | Where to watch, Location *(fixed only)*, Radius (km), Updates per storm, Radar, Language, Quiet hours *(optional)* |
 | 🌍 Seismic live | Areas, Quiet hours |
 | ⚽ Football Betting | Minute windows, Quiet hours (API pause) |
 
@@ -621,6 +688,44 @@ These replace the threshold tuning of the previous six generations, and both are
 **Quiet hours** silence the outer rings and the all-clear. A front already within 40 % of the radius always gets through. Suppressed alerts are still committed, so they are not retried every minute until the window ends.
 
 **Radius** is clamped to **10–60 km**, in the UI and again in the monitor.
+
+##### Where to watch — a fixed place, or a phone
+
+**Where to watch** chooses where the radar is centred. `📌 A fixed place` (the default, and what every monitor configured before v4.1.0 inherits) uses the Location field and never consults the position manager. Selecting a position instead makes the monitor follow that phone — and the Location field disappears, because it is no longer used for anything.
+
+Nothing in the collision logic changed for this, and the reason is worth stating. The strike buffer holds **absolute** coordinates and the geometry is rebuilt against the current origin on every poll, so a moving origin simply produces a different — and correct — frame. CBDR then follows for free: it compares bearings and ranges *measured from the origin*, so a moving origin turns those into **relative** bearings and ranges, which is exactly what the mariner's rule was always defined on. Constant relative bearing with decreasing relative range means collision whether or not you are under way.
+
+What is not free is telling **moving** apart from **being moved**:
+
+- A continuous track is signal and is kept — that is the whole point.
+- A **jump** is a change of reference frame: a mislocated fix, or the position returning after a blackout somewhere else entirely. The stored bearings were measured from somewhere else, so the CBDR history is dropped. The *event* stays open on purpose — reopening it would reset the notification ladder and let one storm emit a second full set of ring messages, which is precisely what invariant A exists to prevent.
+- A single wild fix is **held until the next report agrees with it**, the same rule ring descents follow. One bad reading cannot move the radar 300 km.
+
+When you are moving, ring alerts carry an extra line:
+
+```
+⚡ Temporale più vicino — Cellulare di Procolo
+📍 Fronte a 18 km a N (0°)
+🎯 Anello 2/4 · entro 20 km
+🧭 Rotta costante: ti arriva addosso
+🚗 Ti stai dirigendo verso il temporale a 90 km/h
+🔢 22 fulmini in 10 min (settore N)
+🕐 12:05
+```
+
+The 🚗 line appears when your course is within 45° of the front, otherwise `🚗 In movimento a 90 km/h verso NE`. It **explains** the track verdict above it rather than competing with it: the CBDR reading already accounts for your motion, so the two lines can never disagree. Below the GPS noise floor the monitor reports nothing at all rather than inventing a heading — a fabricated course on a 20 km lever arm is enough to claim you are driving into a storm.
+
+The header is the **position's name**, not the configured place: it says where these distances were measured from, which is what you need to know when several phones are monitored.
+
+###### With no usable position, it freezes
+
+There is **no fallback**. When the fix is missing, too old or too imprecise — or the position was deleted — the monitor does not know where it is and therefore perceives nothing.
+
+That is the same blindness it already handles when the strike feed drops, and it is handled the same way rather than with new state: no alerts, and **no all-clear**. A monitor that cannot tell "nothing is happening" from "I cannot see" would otherwise cheerfully report that the storm has cleared. The freeze is silent and lifts by itself when the position returns; the CBDR history is dropped at that point, since the bearings from before the blackout were measured wherever you were then.
+
+While a storm is in progress the age budget is **tripled**, so losing GPS in a tunnel does not blind the monitor mid-event: the last known position is still the best evidence available.
+
+Blitzortung topics are geohash cells (~110 km each) derived from the origin, so the subscription is rebuilt only when you travel far enough to change the cell set — in practice almost never. Without it the monitor would quietly stop hearing the sky you moved into while still reporting itself healthy. The strike buffer survives a re-aim: absolute coordinates stay true wherever you go. A monitor following a position connects on its **first fix** rather than at start-up, since until then it has nothing to derive topics from.
 
 ##### The radar
 

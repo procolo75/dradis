@@ -10,8 +10,10 @@ from pathlib import Path
 
 from apscheduler.triggers.cron import CronTrigger
 
+from live_monitors.position import position_manager
 from web.store import (
     PROVIDERS,
+    load_positions,
     _get_provider_api_key,
     _get_configured_tz,
     load_settings,
@@ -62,6 +64,13 @@ async def update_settings(payload: SettingsPayload):
             detail=f"Invalid timezone: '{tz}'. Use an IANA name such as 'Europe/Rome' or 'UTC'.",
         )
     save_settings(data)
+    # Broker credentials live here, and the position manager connects with them,
+    # so a settings save must re-aim it. `configure` returns early when nothing it
+    # depends on changed, so an unrelated save does not disturb a live fix history.
+    try:
+        position_manager.configure(data, load_positions())
+    except Exception as e:
+        print(f"[DRADIS] position manager reconfigure failed: {e}")
     return data
 
 

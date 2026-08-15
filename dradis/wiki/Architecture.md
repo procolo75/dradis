@@ -35,6 +35,8 @@ dradis/
 │   ├── storm_front_chart.py # Polar radar attached to ring messages (matplotlib, off the event loop)
 │   ├── blitzortung.py       # Blitzortung MQTT feed: connection, strike buffer, health
 │   ├── geo.py               # Pure geo maths: Haversine, bearings, geohash topics
+│   ├── position.py          # Named positions: one MQTT listener serving them all (singleton)
+│   ├── position_core.py     # Pure position logic: pairing, age, speed/course, jumps (no I/O)
 │   ├── ha.py                # HA entity monitor (MQTT statestream)
 │   └── seismic.py           # Seismic live monitor (INGV GOSSIP polling)
 └── web/
@@ -46,6 +48,7 @@ dradis/
         ├── agents.py        # /api/agents, /api/models, /api/speedtest, /api/voice-*
         ├── tasks.py         # /api/tasks CRUD, /api/tasks/validate-cron
         ├── monitors.py      # /api/monitors, /api/live-monitors, /api/ha-monitors CRUD
+        ├── positions.py     # /api/positions CRUD, entity discovery, connection test
         └── tools.py         # Google OAuth callbacks, /api/websearch-test, /api/weather-test
 ```
 

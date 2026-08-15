@@ -84,6 +84,44 @@ Both are enforced by tests, including an exhaustive sweep proving no combination
 
 **If the feed goes down** everything freezes: no alerts, and the all-clear countdown restarts on reconnect. A dead socket and a clear sky look identical if you only count strikes, so the monitor refuses to guess.
 
+### Where to watch — a fixed place, or a phone
+
+**Where to watch** chooses where the radar is centred. `📌 A fixed place` (the default, and what every monitor configured before v4.1.0 inherits) uses the Location field and never consults the position manager. Selecting a position instead makes the monitor follow that phone — and the Location field disappears, because it is no longer used for anything.
+
+Nothing in the collision logic changed for this, and the reason is worth stating. The strike buffer holds **absolute** coordinates and the geometry is rebuilt against the current origin on every poll, so a moving origin simply produces a different — and correct — frame. CBDR then follows for free: it compares bearings and ranges *measured from the origin*, so a moving origin turns those into **relative** bearings and ranges, which is exactly what the mariner's rule was always defined on. Constant relative bearing with decreasing relative range means collision whether or not you are under way.
+
+What is not free is telling **moving** apart from **being moved**:
+
+- A continuous track is signal and is kept — that is the whole point.
+- A **jump** is a change of reference frame: a mislocated fix, or the position returning after a blackout somewhere else entirely. The stored bearings were measured from somewhere else, so the CBDR history is dropped. The *event* stays open on purpose — reopening it would reset the notification ladder and let one storm emit a second full set of ring messages, which is precisely what invariant A exists to prevent.
+- A single wild fix is **held until the next report agrees with it**, the same rule ring descents follow. One bad reading cannot move the radar 300 km.
+
+When you are moving, ring alerts carry an extra line:
+
+```
+⚡ Temporale più vicino — Cellulare di Procolo
+📍 Fronte a 18 km a N (0°)
+🎯 Anello 2/4 · entro 20 km
+🧭 Rotta costante: ti arriva addosso
+🚗 Ti stai dirigendo verso il temporale a 90 km/h
+🔢 22 fulmini in 10 min (settore N)
+🕐 12:05
+```
+
+The 🚗 line appears when your course is within 45° of the front, otherwise `🚗 In movimento a 90 km/h verso NE`. It **explains** the track verdict above it rather than competing with it: the CBDR reading already accounts for your motion, so the two lines can never disagree. Below the GPS noise floor the monitor reports nothing at all rather than inventing a heading — a fabricated course on a 20 km lever arm is enough to claim you are driving into a storm.
+
+The header is the **position's name**, not the configured place: it says where these distances were measured from, which is what you need to know when several phones are monitored.
+
+#### With no usable position, it freezes
+
+There is **no fallback**. When the fix is missing, too old or too imprecise — or the position was deleted — the monitor does not know where it is and therefore perceives nothing.
+
+That is the same blindness it already handles when the strike feed drops, and it is handled the same way rather than with new state: no alerts, and **no all-clear**. A monitor that cannot tell "nothing is happening" from "I cannot see" would otherwise cheerfully report that the storm has cleared. The freeze is silent and lifts by itself when the position returns; the CBDR history is dropped at that point, since the bearings from before the blackout were measured wherever you were then.
+
+While a storm is in progress the age budget is **tripled**, so losing GPS in a tunnel does not blind the monitor mid-event: the last known position is still the best evidence available.
+
+Blitzortung topics are geohash cells (~110 km each) derived from the origin, so the subscription is rebuilt only when you travel far enough to change the cell set — in practice almost never. Without it the monitor would quietly stop hearing the sky you moved into while still reporting itself healthy. The strike buffer survives a re-aim: absolute coordinates stay true wherever you go. A monitor following a position connects on its **first fix** rather than at start-up, since until then it has nothing to derive topics from.
+
 ### The radar
 
 Every ring message carries a polar plot — rings and sectors *are* the model, so it is a literal photograph of the monitor's state: strikes coloured and sized by age (the direction of travel is visible at a glance), the dominant sector highlighted, the front marked, north up. Rendered on a worker thread in ~45 ms; any failure degrades to text only. Image and caption arrive as **one** Telegram message, so a ring alert notifies once, not twice.
@@ -125,10 +163,22 @@ Every ring message carries a polar plot — rings and sectors *are* the model, s
 Name:              Bacoli Temporali
 Type:              🌩️ Storm front / CBDR
 Location:          Bacoli
+Where to watch:    📌 A fixed place   (or a named position)
 Radius:            30 km      (10-60)
 Updates per storm: 4
 Radar:             on
 Language:          🇮🇹 Italiano
+```
+
+**Travelling:**
+```
+⚡ Temporale più vicino — Cellulare di Procolo
+📍 Fronte a 18 km a N (0°)
+🎯 Anello 2/4 · entro 20 km
+🧭 Rotta costante: ti arriva addosso
+🚗 Ti stai dirigendo verso il temporale a 90 km/h
+🔢 22 fulmini in 10 min (settore N)
+🕐 12:01
 ```
 
 ---

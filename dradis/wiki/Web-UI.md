@@ -44,6 +44,73 @@ Click **Test connection** to verify the broker is reachable.
 
 ---
 
+## Settings → Positions
+
+A **position** is a phone DRADIS can follow. A Storm front monitor selects one and then watches wherever *that* phone is, so while travelling it can tell you whether you are driving into the storm rather than away from it. Add one per phone — yours, another family member's — and give each a name you will recognise in an alert, because that name is what the alert is titled with.
+
+Positions are stored under `positions` in `/data/dradis_settings.json`, and they all share **one** MQTT connection. Nothing connects until you add one.
+
+### Publishing a phone's position (Home Assistant side)
+
+A `device_tracker` keeps its coordinates in **attributes**, and `mqtt_statestream` publishes **states**. Turning on `publish_attributes` would expose them, but it is a *global* switch that floods the broker with every attribute of every included entity. Expose just the two values instead, in `configuration.yaml`:
+
+```yaml
+template:
+  - sensor:
+      - name: "Phone latitude"
+        unique_id: phone_latitude
+        state: "{{ state_attr('device_tracker.my_phone', 'latitude') | round(5) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'latitude') is not none }}"
+      - name: "Phone longitude"
+        unique_id: phone_longitude
+        state: "{{ state_attr('device_tracker.my_phone', 'longitude') | round(5) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'longitude') is not none }}"
+      - name: "Phone GPS accuracy"
+        unique_id: phone_gps_accuracy
+        state: "{{ state_attr('device_tracker.my_phone', 'gps_accuracy') | int(0) }}"
+        availability: "{{ state_attr('device_tracker.my_phone', 'gps_accuracy') is not none }}"
+
+mqtt_statestream:
+  base_topic: homeassistant
+  publish_attributes: false
+  publish_timestamps: true
+  include:
+    entities:
+      - sensor.phone_latitude
+      - sensor.phone_longitude
+      - sensor.phone_gps_accuracy
+```
+
+Repeat the three sensors per phone, with distinct names.
+
+`round(5)` is ~1 metre of resolution — precise enough for anything the storm front does, and it damps the GPS jitter that would otherwise republish constantly. The `availability` guard keeps `unknown` off the topic while the app has no fix yet.
+
+**If you already have an `mqtt_statestream` block, merge into it.** Home Assistant accepts only one, and a second would silently drop your current includes.
+
+**Keep `publish_timestamps: true`.** It publishes `last_updated` next to each value, which is the only way to date the *retained* message received on connect. Without it a position from yesterday arrives looking brand new and no staleness check can catch it.
+
+Finally, raise the Companion app's location update frequency (*Settings → Companion app → Manage sensors → Location sensors*). The default "significant change" reporting can lag by minutes at motorway speed, which is exactly when this has to be right. Consider triggering high-accuracy mode from your car's Bluetooth so it only runs while you drive.
+
+### Fields per position
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Name | *(blank)* | What alerts are titled with. Make it recognisable. |
+| Latitude entity | *(blank)* | Topic path after the prefix, e.g. `sensor/phone_latitude`. |
+| Longitude entity | *(blank)* | As above. Both are required. |
+| GPS accuracy entity | *(blank)* | Optional. When unset, the accuracy threshold is not applied. |
+| Maximum fix age | `15` min | Older and a monitor following this position stops alerting until it comes back. Tripled while a storm is in progress. |
+| Maximum GPS accuracy | `500` m | Vaguer fixes are not used. |
+| Statestream prefix override | *(blank)* | Defaults to the global MQTT prefix. |
+
+**🔍 Detect entities** listens on MQTT for three seconds and keeps only what looks like a coordinate, so you pick from a handful of candidates rather than every entity on the broker. When exactly one candidate matches a field it is filled in for you; when several do, each field's dropdown offers only its own kind. If nothing is recognised — an unusual naming scheme — every entity is offered instead, so this is never a dead end.
+
+**Test connection** uses the values **currently on screen**, saved or not: testing a form you have not saved yet is the normal case. It connects with its own throwaway client, so the running manager is never disturbed. It reports the fix, its age, its accuracy and your speed, and names the threshold that failed — "no position at all" and "a position from two hours ago" are different problems with different fixes.
+
+**Deleting a position** does not rewrite the monitors following it. Silently converting them back to a fixed place would put them somewhere you never asked to watch, so they freeze instead, and their form shows the dangling reference.
+
+---
+
 ## Tools
 
 Each capability contributes tools the single agent can call (see [Tools](Tools) for the full tool list). They are enabled and authenticated here; the agent always uses the **main model**. Common fields per capability:
@@ -52,7 +119,7 @@ Each capability contributes tools the single agent can call (see [Tools](Tools) 
 |-------|-------------|
 | Enabled | Activate the capability (requires its API key / OAuth token). |
 | Test connection | Verify the backend is reachable (Web Search, Weather…). |
-| Additional instructions | Appended to the system prompt **when one of this capability's tools is attached** to a run. |
+| Additional instructions | Apply **only while this capability's tools are in use**. Added to the system prompt when one of them is attached, labelled with the capability and its tool names. |
 
 **Capabilities:** Web Search (Tavily), Weather (Open-Meteo), Google Calendar, Gmail, Google Tasks, URL Fetch (Jina Reader). Per-capability provider/model selectors no longer exist — a notice in each panel explains this.
 

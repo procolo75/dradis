@@ -90,14 +90,24 @@ class Result:
         return [a for a in self.alerts if isinstance(a, ClearAlert)]
 
 
-def run(storms, *, origin=ORIGIN, radius_km=30.0, ring_count=4,
+def run(storms, *, origin=ORIGIN, observer=None, radius_km=30.0, ring_count=4,
         duration_min=180.0, seed=42, feed_ok_fn=None, connected_for_fn=None,
         commit=True, tracker=None) -> Result:
     """Drive `storms` through the real pipeline for `duration_min`.
 
     feed_ok_fn(minutes) -> bool simulates an MQTT outage: while it returns False
     no strikes reach the buffer, exactly as a dead socket would behave.
+
+    `origin` and `observer` are deliberately two different things, and conflating
+    them would silently break every scenario. `origin` is the FIELD's reference
+    frame: storms are defined in km north/east of it, so it must stay fixed or the
+    weather would follow the user around. `observer` is where the user is —
+    `None` (the default) means "standing at the origin", which is what every
+    scenario written before the origin could move means. Pass a
+    `callable(minutes) -> (lat, lon)` to drive them somewhere.
     """
+    observer_at = (observer if callable(observer)
+                   else (lambda _m, _fixed=(observer or origin): _fixed))
     rng = random.Random(seed)
     tracker = tracker or StormFrontTracker(radius_km, ring_count)
     observe = tracker.observe_radius_km
@@ -118,7 +128,10 @@ def run(storms, *, origin=ORIGIN, radius_km=30.0, ring_count=4,
                 buffer.extend(storm.emit(rng, origin, minutes - poll_min, minutes))
         buffer = [s for s in buffer if s[0] >= now - window_sec]
 
-        frame = build_frame(buffer, origin, now, tracker.radius_km, observe, window_sec)
+        # The buffer holds absolute coordinates, exactly as the live feed does, so
+        # moving the observer needs nothing more than measuring from a new point.
+        here = observer_at(minutes)
+        frame = build_frame(buffer, here, now, tracker.radius_km, observe, window_sec)
         if connected_for_fn is not None:
             connected_for = connected_for_fn(minutes)
         else:
@@ -128,7 +141,7 @@ def run(storms, *, origin=ORIGIN, radius_km=30.0, ring_count=4,
         result.trace.append({
             "minutes": minutes, "now": now, "frame": frame,
             "ring": tracker.current_ring, "notified": tracker.notified_ring,
-            "event": tracker.event_state, "feed_ok": feed_ok,
+            "event": tracker.event_state, "feed_ok": feed_ok, "observer": here,
         })
         if alert is not None:
             result.alerts.append(alert)
@@ -155,3 +168,32 @@ def crossing(miss_km: float, start_east_km: float = -45.0,
     """A storm travelling due east that passes `miss_km` to the north."""
     return Storm(north_km=miss_km, east_km=start_east_km,
                  v_north=0.0, v_east=speed_kmh, **kw)
+
+
+def parked(north_km: float, east_km: float, **kw) -> Storm:
+    """A storm that does not move. Any closing then comes from the OBSERVER, which
+    is the only way to isolate own-motion in a scenario."""
+    return Storm(north_km=north_km, east_km=east_km, v_north=0.0, v_east=0.0, **kw)
+
+
+# ── Observers ─────────────────────────────────────────────────────────────────
+
+def driving(bearing_deg: float, speed_kmh: float, origin=ORIGIN, start_min=0.0):
+    """An observer leaving `origin` on a constant heading at a constant speed."""
+    rad = math.radians(bearing_deg)
+
+    def at(minutes: float) -> tuple[float, float]:
+        km = speed_kmh * max(0.0, minutes - start_min) / 60.0
+        return offset_km(origin[0], origin[1], km * math.cos(rad), km * math.sin(rad))
+    return at
+
+
+def teleporting(at_min: float, north_km: float, east_km: float, origin=ORIGIN):
+    """An observer standing at `origin` who is instantaneously relocated at
+    `at_min`. Not a journey — a change of reference frame, which is what a GPS
+    glitch or a fallback to the configured point looks like from the inside."""
+    def at(minutes: float) -> tuple[float, float]:
+        if minutes < at_min:
+            return origin
+        return offset_km(origin[0], origin[1], north_km, east_km)
+    return at

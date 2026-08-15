@@ -24,6 +24,16 @@ Pipeline
 
 State survives a restart via /data/storm_front_state.json: a storm in progress
 does not re-announce rings it already announced, and does not lose its all-clear.
+
+Origin
+──────
+`position_id` selects where the radar is centred. Empty — the default, and what
+every monitor configured before this existed inherits — uses the configured
+coordinates and never touches the position manager. Otherwise it names a position
+from `position.py`, and the monitor follows THAT and nothing else: there is no
+fallback, because watching the configured house while the user is two hundred
+kilometres away answers a different question without saying so. With no usable
+fix the monitor goes blind and freezes; see `_go_blind`.
 """
 
 import asyncio
@@ -36,12 +46,14 @@ from datetime import datetime, time as time_t
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .blitzortung import BlitzortungFeed
-from .geo import direction_label
+from .geo import direction_label, distance_km
+from .position import position_manager
+from .position_core import MAX_PLAUSIBLE_KMH
 from .storm_front_core import (
-    CLEAR_DWELL_SEC, OBSERVE_FACTOR, POLL_INTERVAL_SEC, WINDOW_MIN,
+    CLEAR_DWELL_SEC, EVENT_IDLE, OBSERVE_FACTOR, POLL_INTERVAL_SEC, WINDOW_MIN,
     TRACK_CLOSING, TRACK_GRAZING,
     ClearAlert, RingAlert, StormFrontTracker,
-    build_frame, clamp_radius, clamp_ring_count, ring_edges,
+    angle_delta, build_frame, clamp_radius, clamp_ring_count, ring_edges,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,6 +71,41 @@ QUIET_OVERRIDE_FRACTION = 0.40
 # A chart must never delay an alert. If it is not ready in time, the message
 # goes out as text.
 CHART_TIMEOUT_SEC = 20.0
+
+# ── Moving origin ─────────────────────────────────────────────────────────────
+#
+# With a `position_id` set, the origin follows that phone. Nothing in the
+# perception pipeline had to change for that: the strike buffer holds ABSOLUTE
+# coordinates and the geometry is rebuilt against the current origin on every poll
+# (see `blitzortung.py`), so a different origin simply produces a different — and
+# correct — frame.
+#
+# The CBDR verdict comes along for free, and this is the part worth understanding.
+# `track_verdict` compares bearings and ranges MEASURED FROM THE ORIGIN. Let the
+# origin move and those become relative bearings and relative ranges, which is
+# exactly what the mariner's rule is defined on: a constant relative bearing with
+# a decreasing relative range means collision whether or not the observer is under
+# way. Driving into a storm therefore reads as TRACK_CLOSING without a single line
+# of new decision logic.
+#
+# What does NOT come for free is the difference between MOVING and BEING MOVED. A
+# continuous track is signal; a jump — a mislocated fix, or the position coming
+# back after a blackout somewhere else entirely — is a change of reference frame.
+# The stored bearings were then measured from somewhere else and comparing them to
+# the new ones would fabricate a rotation that never happened.
+
+# While an event is open a stale fix is tolerated for longer: losing GPS in a
+# tunnel mid-storm should not blind the monitor, because the last known position
+# is still the best evidence available. Outside an event there is no history to
+# protect and the normal budget applies.
+EVENT_STALE_FACTOR = 3.0
+
+# Two consecutive origins further apart than this many km per hour of elapsed time
+# were not travelled between — the observer was relocated.
+ORIGIN_JUMP_KMH = MAX_PLAUSIBLE_KMH
+
+# A course within this much of the front's bearing counts as "heading for it".
+HEADING_TOLERANCE_DEG = 45.0
 
 
 # ── Persistent state ──────────────────────────────────────────────────────────
@@ -116,9 +163,19 @@ class StormFrontLiveMonitor:
 
         self.latitude  = float(cfg.get("latitude", 0) or 0)
         self.longitude = float(cfg.get("longitude", 0) or 0)
+        # Empty (the default) is the historical behaviour to the letter. Otherwise
+        # it names a position, and the monitor follows THAT and nothing else.
+        self.position_id = (cfg.get("position_id") or "").strip()
         self._chart    = bool(cfg.get("chart", True))
         self._quiet_start = (cfg.get("quiet_start") or "").strip()
         self._quiet_end   = (cfg.get("quiet_end") or "").strip()
+
+        # Origin bookkeeping — only ever used when following a position.
+        self._motion = None                       # PositionState | None
+        self._last_origin: tuple[float, float] | None = None
+        self._last_origin_at = 0.0
+        self._last_discontinuity: int | None = None
+        self._blind_since = 0.0
 
         self._tracker = StormFrontTracker(self.radius_km, self.ring_count)
         self._feed = BlitzortungFeed(
@@ -135,13 +192,18 @@ class StormFrontLiveMonitor:
         if self._poll_task and not self._poll_task.done():
             return
         self._restore_state()
-        self._feed.start()
+        # A monitor following a position has no coordinates yet, so it has nothing
+        # to derive geohash topics from. The feed starts on the first usable fix
+        # instead — see `_ensure_feed`.
+        if not self.position_id:
+            self._feed.start()
         self._poll_task = asyncio.create_task(
             self._poll_loop(), name=f"storm_front_poll:{self.monitor_id}"
         )
         print(f"[StormFront] '{self.name}' started (radius={self.radius_km:.0f}km, "
               f"rings={self.ring_count}, edges={[round(e) for e in self.edges]}, "
-              f"observe={self.observe_radius_km:.0f}km)")
+              f"observe={self.observe_radius_km:.0f}km, "
+              f"origin={self.position_id or 'fixed'})")
 
     def stop(self) -> None:
         if self._poll_task and not self._poll_task.done():
@@ -208,25 +270,157 @@ class StormFrontLiveMonitor:
             except Exception as e:
                 _LOGGER.error("[StormFront] '%s' poll error: %s", self.name, e)
 
+    # ── Origin ────────────────────────────────────────────────────────────────
+
+    def _resolve_origin(self, now: float) -> tuple[float, float] | None:
+        """Where the radar is centred this poll, or None if that is unknown.
+
+        With no position configured this is the fixed point and nothing else
+        happens — a monitor that has not opted in never consults the position
+        manager and never causes it to connect.
+
+        Following a position, there is NO fallback. Watching the configured house
+        while the user is two hundred kilometres away is not a gentle degradation:
+        it answers a different question without saying so. None means "I do not
+        know where I am", and the caller treats that as blindness.
+        """
+        if not self.position_id:
+            return (self.latitude, self.longitude)
+
+        # A storm in progress buys patience: a fix that went stale in a tunnel is
+        # still the best evidence available, and changing frame mid-event would
+        # throw away the CBDR history for no gain.
+        budget = None
+        if self._tracker.event_state != EVENT_IDLE:
+            budget = position_manager.max_age_sec(self.position_id) * EVENT_STALE_FACTOR
+
+        state = position_manager.usable(self.position_id, now, max_age_sec=budget)
+        if state is None:
+            self._motion = None
+            return None
+
+        self._motion = state
+        return state.lat, state.lon
+
+    def _origin_jumped(self, origin: tuple[float, float], now: float) -> bool:
+        """True when the observer was relocated rather than having travelled.
+
+        Two ways that happens, and both invalidate the stored geometry equally:
+        the position source reported a discontinuity of its own, or the two
+        origins are further apart than anything could have covered in the elapsed
+        time.
+        """
+        if self._last_origin is None:
+            return False                      # first poll — nothing to compare
+
+        if self._motion is not None:
+            seen = self._motion.discontinuity
+            jumped = (self._last_discontinuity is not None
+                      and seen != self._last_discontinuity)
+            self._last_discontinuity = seen
+            if jumped:
+                return True
+
+        elapsed = max(1.0, now - self._last_origin_at)
+        moved = distance_km(*self._last_origin, *origin)
+        return moved / (elapsed / 3600.0) > ORIGIN_JUMP_KMH
+
+    async def _ensure_feed(self, origin: tuple[float, float]) -> None:
+        """Aim the Blitzortung subscription at `origin`, starting it if needed.
+
+        A monitor following a position cannot subscribe until it knows where it
+        is, so the feed starts here rather than in `start()`. Afterwards this is
+        the re-aim: a geohash cell is ~110 km across, so an ordinary journey
+        changes nothing and `retune` is a no-op.
+        """
+        try:
+            await self._feed.retune(*origin)
+            if not self._feed.is_running():
+                self._feed.start()
+        except Exception as e:
+            _LOGGER.warning("[StormFront] '%s' feed retune failed: %s", self.name, e)
+
+    # ── Poll ──────────────────────────────────────────────────────────────────
+
     async def _tick(self, notify: bool) -> None:
         now = time.time()
+
+        origin = self._resolve_origin(now)
+        if origin is None:
+            self._go_blind(now)
+            return
+
+        if self._blind_since:
+            _LOGGER.info("[StormFront] '%s' position recovered after %.0f min",
+                         self.name, (now - self._blind_since) / 60.0)
+            self._blind_since = 0.0
+            # The bearings stored before the blackout were measured from wherever
+            # the user was then, which is not where they are now.
+            self._tracker.reset_geometry_history()
+            self._last_origin = None
+
+        if self.position_id:
+            if self._origin_jumped(origin, now):
+                _LOGGER.info("[StormFront] '%s' origin discontinuity — CBDR "
+                             "history reset (event left open)", self.name)
+                self._tracker.reset_geometry_history()
+            await self._ensure_feed(origin)
+        self._last_origin, self._last_origin_at = origin, now
+
         strikes = self._feed.strikes(now)
-        frame = build_frame(strikes, (self.latitude, self.longitude), now,
+        frame = build_frame(strikes, origin, now,
                             self.radius_km, self.observe_radius_km,
                             WINDOW_MIN * 60.0)
         alert = self._tracker.evaluate(frame, now, self._feed.feed_ok(),
                                        self._feed.connected_for(now))
 
         stats = self._feed.stats()
-        _LOGGER.info("[StormFront] %s | %s msgs=%d", self.name,
-                     self._tracker.debug_line(frame), stats["messages"])
+        _LOGGER.info("[StormFront] %s | %s msgs=%d%s", self.name,
+                     self._tracker.debug_line(frame), stats["messages"],
+                     self._origin_debug(origin))
 
         if alert is not None and notify:
-            await self._dispatch(alert, frame, list(strikes), now)
+            await self._dispatch(alert, frame, list(strikes), now, origin=origin)
+
+    def _go_blind(self, now: float) -> None:
+        """No usable position: perceive nothing until one comes back.
+
+        This is the same blindness the monitor already handles when the strike
+        feed drops, and it is handled the same way rather than with new state.
+        Not knowing where you are and not knowing where the lightning is are the
+        same epistemic problem, and the dangerous failure is identical: a monitor
+        that cannot tell "nothing is happening" from "I cannot see" will
+        cheerfully announce that the storm has cleared.
+
+        `evaluate(feed_ok=False)` is that refusal, already written and already
+        tested: no alert of any kind, and the all-clear countdown reset so the
+        silence can never be mistaken for calm.
+        """
+        if not self._blind_since:
+            self._blind_since = now
+            _LOGGER.info("[StormFront] '%s' has no usable position — frozen "
+                         "(no alerts, no false all-clear)", self.name)
+        self._tracker.evaluate(
+            build_frame([], (0.0, 0.0), now, self.radius_km,
+                        self.observe_radius_km, WINDOW_MIN * 60.0),
+            now, feed_ok=False)
+
+    def _origin_debug(self, origin: tuple[float, float]) -> str:
+        if not self.position_id or self._motion is None:
+            return ""
+        speed = self._motion.speed_kmh
+        return (f" origin={origin[0]:.4f},{origin[1]:.4f} "
+                f"age={self._motion.age_sec:.0f}s "
+                f"v={'—' if speed is None else f'{speed:.0f}km/h'}")
 
     # ── Dispatch ──────────────────────────────────────────────────────────────
 
-    async def _dispatch(self, alert, frame, strikes, now: float) -> None:
+    async def _dispatch(self, alert, frame, strikes, now: float, *,
+                        origin: tuple[float, float] | None = None) -> None:
+        """`origin` defaults to the configured point: the radar is drawn around
+        wherever the frame was measured from, and in fixed mode that is the only
+        origin there has ever been."""
+        origin = origin or (self.latitude, self.longitude)
         if self._is_silenceable(alert) and self._in_quiet_hours():
             _LOGGER.info("[StormFront] '%s' alert suppressed by quiet hours",
                          self.name)
@@ -237,7 +431,7 @@ class StormFrontLiveMonitor:
             return
 
         text = self._format(alert)
-        photo = await self._render_chart(alert, frame, strikes, now)
+        photo = await self._render_chart(alert, frame, strikes, now, origin=origin)
 
         try:
             ok = await self._send(text, photo=photo) if photo else await self._send(text)
@@ -254,16 +448,18 @@ class StormFrontLiveMonitor:
         _LOGGER.info("[StormFront] %s | committed %s", self.name,
                      f"ring {alert.ring}" if isinstance(alert, RingAlert) else "clear")
 
-    async def _render_chart(self, alert, frame, strikes, now: float) -> bytes | None:
+    async def _render_chart(self, alert, frame, strikes, now: float, *,
+                            origin: tuple[float, float] | None = None) -> bytes | None:
         """Render the radar off the event loop. Any failure degrades to text —
         a picture must never be able to stop an alert."""
         if not self._chart or not isinstance(alert, RingAlert):
             return None
+        origin = origin or (self.latitude, self.longitude)
         try:
             from .storm_front_chart import render_radar
             return await asyncio.wait_for(
                 asyncio.to_thread(
-                    render_radar, strikes, (self.latitude, self.longitude), now,
+                    render_radar, strikes, origin, now,
                     alert, radius_km=self.radius_km,
                     observe_radius_km=self.observe_radius_km, edges=self.edges,
                     window_sec=WINDOW_MIN * 60.0, location=self._plain_location(),
@@ -336,6 +532,31 @@ class StormFrontLiveMonitor:
         return ("🧭 Traiettoria non ancora determinabile" if it
                 else "🧭 Track not yet determinable")
 
+    def _motion_line(self, alert: RingAlert) -> str | None:
+        """The user's own movement, or None when they are not moving.
+
+        This line EXPLAINS the verdict above it, it does not compete with it. The
+        CBDR reading is already relative — it was computed from a moving origin —
+        so the two can never disagree: this only names the reason the range is
+        closing. Wording it as a second opinion would eventually put "heading
+        straight for you" next to "glancing pass" and destroy the user's trust in
+        both.
+        """
+        motion = self._motion
+        if motion is None or not motion.moving or motion.course_deg is None:
+            return None
+
+        it = self.language == "it"
+        speed = motion.speed_kmh
+        heading = direction_label(motion.course_deg, self.language)
+        toward = abs(angle_delta(motion.course_deg,
+                                 alert.bearing_deg)) <= HEADING_TOLERANCE_DEG
+        if toward:
+            return (f"🚗 Ti stai dirigendo verso il temporale a {speed:.0f} km/h" if it
+                    else f"🚗 You are heading towards the storm at {speed:.0f} km/h")
+        return (f"🚗 In movimento a {speed:.0f} km/h verso {heading}" if it
+                else f"🚗 Moving at {speed:.0f} km/h towards {heading}")
+
     def _fmt_ring(self, alert: RingAlert) -> str:
         it = self.language == "it"
         heading = direction_label(alert.bearing_deg, self.language)
@@ -353,6 +574,9 @@ class StormFrontLiveMonitor:
              f"{alert.ring_edge_km:.0f} km")
         )
         lines.append(self._track_line(alert))
+        motion_line = self._motion_line(alert)
+        if motion_line:
+            lines.append(motion_line)
 
         if (alert.prev_front_km is not None and alert.elapsed_sec
                 and alert.elapsed_sec > 0):
@@ -405,6 +629,17 @@ class StormFrontLiveMonitor:
         return "\n".join(lines)
 
     def _plain_location(self) -> str:
+        """What the message and the radar are titled with.
+
+        Following a position, that position's NAME is the honest title: it says
+        where these distances were measured from, which is the thing you need to
+        know when several phones in the house are monitored. A configured place
+        name would be worse than useless here — heading an alert "Bacoli" while
+        the user is 200 km away tells them the storm is somewhere it is not.
+        """
+        if self.position_id:
+            return (position_manager.name_of(self.position_id)
+                    or self.location or self.name)
         return self.location or self.name
 
     def _loc(self) -> str:
@@ -429,6 +664,12 @@ class StormFrontLiveMonitor:
 _FINGERPRINT_FIELDS = (
     "name", "location", "latitude", "longitude", "radius_km", "ring_count",
     "language", "quiet_start", "quiet_end", "chart", "telegram_bot_id",
+    # Changing which position a monitor follows changes what it measures, so it
+    # must restart. The coordinates themselves never appear here — they live in
+    # the position manager and never touch live_monitors.json, which is exactly
+    # why a moving user does not restart the monitor once a minute and lose the
+    # strike buffer along with the storm in progress.
+    "position_id",
 )
 
 
@@ -531,5 +772,32 @@ def migrate_lightning_configs(configs: list[dict]) -> tuple[list[dict], int]:
         cfg.setdefault("chart", True)
         cfg.pop("sensitivity", None)
         cfg.pop("record_strikes", None)
+        migrated += 1
+    return configs, migrated
+
+
+def migrate_position_source_configs(configs: list[dict],
+                                    position_id: str | None) -> tuple[list[dict], int]:
+    """Convert the unreleased `position_source` flag to a `position_id`.
+
+    v4.1.0 marked a monitor as following "the" position with `position_source:
+    "live"`, back when there was only one. Positions are now named entities
+    selected by id, so a leftover flag would point at nothing: the monitor would
+    fall through to its fixed coordinates and silently watch the wrong place.
+
+    `position_id` is the id created by the settings-side migration, or None if
+    there was no position to migrate — in which case the monitor goes back to
+    being a fixed one, which is the only honest outcome when the source it was
+    following does not exist.
+    """
+    migrated = 0
+    for cfg in configs:
+        if "position_source" not in cfg:
+            continue
+        was_live = cfg.pop("position_source") == "live"
+        if was_live and position_id:
+            cfg["position_id"] = position_id
+        else:
+            cfg.setdefault("position_id", "")
         migrated += 1
     return configs, migrated

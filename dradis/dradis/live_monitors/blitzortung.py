@@ -58,6 +58,7 @@ class BlitzortungFeed:
         self.coverage_radius_km = coverage_radius_km
         self.window_sec = window_sec
 
+        self._topics = topics_for_area(lat, lon, coverage_radius_km)
         self._buffer: list[tuple[float, float, float]] = []
 
         self._messages       = 0
@@ -93,6 +94,42 @@ class BlitzortungFeed:
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    async def retune(self, lat: float, lon: float) -> bool:
+        """Re-aim the subscription at a new origin. Returns True if it moved enough
+        to matter.
+
+        A geohash cell is about 110 km across (`geo.py`), and the subscription is
+        a ring of them, so an origin that drifts a few kilometres changes nothing
+        and this is a no-op. Only when the cell SET actually changes is there
+        anything to do — but then it must be done, because the alternative is a
+        feed that quietly stops hearing the sky the user has moved into. Silent
+        under-coverage is the worst failure available here: the monitor would look
+        healthy and report calm.
+
+        Re-aiming is done by reconnecting rather than by editing subscriptions in
+        place. It is a rare event, and a fresh connection derives its topics from
+        one place, so there is no way for the live subscription set and the
+        intended one to drift apart. The strike buffer is unaffected: it belongs
+        to the feed, not to the connection, and holds absolute coordinates that
+        stay valid whatever the origin does.
+
+        Calling this before `start()` is the normal path for a monitor that
+        follows a position: it has no coordinates until the first fix arrives, so
+        it aims first and connects afterwards.
+        """
+        wanted = topics_for_area(lat, lon, self.coverage_radius_km)
+        self.lat, self.lon = lat, lon
+        if wanted == self._topics:
+            return False
+
+        _LOGGER.info("[StormFront] '%s' re-aiming feed: %d → %d topics",
+                     self.name, len(self._topics), len(wanted))
+        self._topics = wanted
+        if self.is_running():
+            await self.aclose()
+            self.start()
+        return True
 
     def status(self) -> str:
         if not self.is_running():
@@ -138,8 +175,10 @@ class BlitzortungFeed:
     # ── MQTT ──────────────────────────────────────────────────────────────────
 
     async def _run(self) -> None:
-        topics = topics_for_area(self.lat, self.lon, self.coverage_radius_km)
         while True:
+            # Read on every attempt, not once: a retune between two reconnects
+            # must take effect without waiting for anything else.
+            topics = self._topics
             try:
                 print(f"[StormFront] '{self.name}' connecting to {MQTT_HOST}:{MQTT_PORT} "
                       f"({len(topics)} topics)")

@@ -27,6 +27,9 @@ from web.store import (
     load_settings,
 )
 from web.models import MonitorPayload, LiveMonitorPayload, HaMonitorPayload
+# Shared with the position form, which needs the same sniffing with a filter on
+# top. Defined there because that is where the bounded-listen fix belongs.
+from web.routes.positions import _sniff_state_topics
 
 router = APIRouter()
 
@@ -259,26 +262,4 @@ async def discover_ha_entities(prefix: str = Query(default="")):
     prefix   = (prefix.strip().rstrip("/") if prefix.strip()
                 else settings.get("mqtt_statestream_prefix", "homeassistant").rstrip("/"))
 
-    discovered: set[str] = set()
-    kwargs = {}
-    if username:
-        kwargs["username"] = username
-    if password:
-        kwargs["password"] = password
-
-    try:
-        async with aiomqtt.Client(host, port, **kwargs) as client:
-            await client.subscribe(f"{prefix}/#")
-            deadline = asyncio.get_event_loop().time() + 3.0
-            async for message in client.messages:
-                topic  = str(message.topic)
-                suffix = topic[len(prefix):].lstrip("/")
-                if suffix.endswith("/state"):
-                    entity_id = suffix[: -len("/state")]
-                    discovered.add(entity_id)
-                if asyncio.get_event_loop().time() >= deadline:
-                    break
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"MQTT discovery failed: {e}")
-
-    return sorted(discovered)
+    return sorted(await _sniff_state_topics(host, port, username, password, prefix))

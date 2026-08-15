@@ -584,6 +584,27 @@ class StormFrontTracker:
         self._last_front_km   = None
         self._last_alert_at   = 0.0
 
+    def reset_geometry_history(self) -> None:
+        """Forget everything derived from the PREVIOUS origin, without touching
+        the event.
+
+        Needed only by a monitor whose origin can move. Continuous motion needs
+        nothing: bearings and ranges measured from a moving observer are exactly
+        what CBDR is defined on, so the history stays comparable and the verdict
+        stays correct. A DISCONTINUITY is different — the observer did not travel
+        between the two samples, they were relocated — and the stored bearings
+        then describe a geometry that no longer exists.
+
+        What is deliberately NOT reset: `event_state` and `notified_ring`.
+        Reopening the event would reset the notification ladder and let one storm
+        emit a second full set of ring messages, which is precisely the bound
+        invariant A exists to guarantee. Losing the CBDR verdict for a few polls
+        is a cost; losing the message bound is the v3.3.0 field failure.
+        """
+        self._history        = []
+        self._descent_target = 0
+        self._descent_streak = 0
+
     # ── CBDR ──────────────────────────────────────────────────────────────────
 
     def _prune_history(self, now: float) -> None:
