@@ -62,12 +62,20 @@ class LiveMonitorPayload(BaseModel):
     windows:         list[str] = ["55-65", "75-81"]
     max_odds:        float     = 2.0
     telegram_bot_id: str       = "default"
-    # Storm front only — how many approach updates a single storm may produce.
-    # 2, 3 or 4; the ring distances are derived proportionally from radius_km.
+    # Storm front and rain front — how many approach updates a single event may
+    # produce. 2, 3 or 4; the ring distances are derived proportionally from
+    # radius_km.
     ring_count:      int       = 4
-    # Storm front only — attach the polar radar to each ring message.
+    # Storm front and rain front — attach the radar picture to each ring message.
     chart:           bool      = True
-    # Storm front only — empty centres the radar on latitude/longitude above
+    # Rain front only — the intensity, in mm/h, below which rain is not worth a
+    # message. A discharge is a discharge, but rain is a continuum, so whether
+    # drizzle deserves a notification is a preference rather than a constant.
+    min_mmh:         float     = 1.0
+    # Rain front only — also fetch the probability-of-hail product and mention it
+    # when the front carries a real chance of hail.
+    hail:            bool      = False
+    # Storm front and rain front — empty centres the radar on latitude/longitude
     # (the historical behaviour, and the default). Otherwise it is the id of a
     # named position, and the monitor follows THAT and nothing else: there is no
     # fallback, because watching your house instead of you is not a gentle

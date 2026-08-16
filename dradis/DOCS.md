@@ -615,6 +615,7 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 | Type | Required fields |
 |------|----------------|
 | 🌩️ Storm front / CBDR | Where to watch, Location *(fixed only)*, Radius (km), Updates per storm, Radar, Language, Quiet hours *(optional)* |
+| 🌧️ Rain front | Where to watch, Location *(fixed only)*, Radius (km), Updates per event, Minimum intensity, Hail *(optional)*, Radar, Language, Quiet hours *(optional)* |
 | 🌍 Seismic live | Areas, Quiet hours |
 | ⚽ Football Betting | Minute windows, Quiet hours (API pause) |
 
@@ -811,6 +812,114 @@ Negele Arsi Ketema vs Hawassa Kenema SC
 | Type | ⚽ Football Betting (RapidAPI) |
 | Minute windows | 55′–65′ ✅, 75′–81′ ✅ |
 | API pause | 23:00 – 07:00 |
+
+---
+
+#### Rain front
+
+The twin of the storm front, with the national weather radar in place of the lightning network. The storm front answers *"is there lightning coming"*; this answers *"is there rain coming, and will it and I actually meet"*.
+
+##### The source
+
+The Dipartimento della Protezione Civile publishes an Open Access composite of the 24 national radars. **No API key, no registration, no quota** — and one file covers the whole country, so a second monitor watching a different town costs nothing extra. The feed is a shared singleton, reference-counted by its consumers: it runs while at least one rain front monitor is enabled and stops with the last one.
+
+| | |
+|---|---|
+| Product | `SRI` — surface rainfall intensity, **float32 already in mm/h** |
+| Grid | 1200 × 1400 px at 1 km, Transverse Mercator on a sphere (12.5°E / 42.0°N) |
+| Cadence | 5 minutes |
+| Coverage | Italy only — see *Test radar coverage* below |
+| Optional | `POH` — probability of hail, fetched only when **Also mention hail** is on |
+
+The geotransform is read from each file's own GeoTIFF tags rather than hardcoded. If DPC ever re-grids the product the monitor notices instead of silently placing every measurement a few kilometres from where it belongs.
+
+##### The radar is ten minutes behind
+
+Products carry a nominal time and become available **about ten minutes later**. This is a property of the source, measured against the live service, and it shapes two things:
+
+- **Every message states the time of the measurement**, not the time of sending: `📡 Radar delle 17:00 (10 min fa)`. A picture that implies *now* is a promise the source cannot keep, and it falls apart the first time you look out of the window.
+- **When the drift is measurable the geometry is advected forward** to compensate. Rain moving at 60 km/h has travelled 10 km since it was seen; the monitor corrects for exactly that before measuring distances.
+
+Polling is scheduled from the cadence the API itself declares, and the lag is learned per product, so each cycle costs roughly one small metadata request plus one download.
+
+##### The front
+
+Every 60 seconds — not every 5 minutes, because *you* may be moving — the newest raster is binned into the same **rings × 12 sectors of 30°** grid the storm front uses, and the whole ring ladder, hysteresis, two-poll confirmation, event lifecycle and bounded-message invariant are inherited unchanged.
+
+One thing could **not** be inherited: the front estimator. The storm front takes the 15th percentile of the distances in a sector, which is the right answer for lightning — discharges are sparse and individually mislocated, so a low quantile robustly finds their leading edge. A radar sector is not sparse but *filled*, and in a filled sector the distance distribution has density proportional to `r`, so the 15th percentile sits at roughly 0.39 of the outer radius **no matter where the edge actually is**. Measured on a real product over Arezzo: the nearest rain was 3.7 km away and the quantile reported 14.7 km — it would have placed the front outside the innermost ring while you were getting wet.
+
+For a field the robust leading edge is the **5th nearest wet pixel**: immune to isolated speckle, and within about a kilometre of the true edge at every site tested.
+
+##### It measures the encounter instead of inferring it
+
+This is what a radar field offers that a scatter of discharges cannot: **its own velocity**, recovered by phase correlation between two consecutive rasters. Your velocity is already known from the position source. With both vectors in hand the question *"will it hit me"* is closed-form rather than inferred:
+
+```
+v_rel = v_rain − v_you
+t     = −(r · v_rel) / |v_rel|²      → minutes to closest approach
+miss  = |r + v_rel · t|              → by how much it misses
+```
+
+So the alert can say `🧭 Rotta d'incontro: ti raggiunge fra 26 min` or `🧭 Ti sfiora: passa a N a 14 km, fra 21 min` — times and distances that were measured, not forecast.
+
+**It refuses to invent one.** The correlation is gated on peak-to-sidelobe ratio: the peak divided by the best rival outside a small exclusion box. Calibrated against real products at four sites, every physically absurd reading scored 1.0–1.9 and every reading that agreed across box sizes and baselines scored 3.1–6.5, so the threshold sits in an empty gap. On scattered summer convection the gate **refuses often** — that is the honest answer, not a degraded mode, and it is why the inherited CBDR verdict remains as the fallback. CBDR needs no velocity at all: it reads the rotation of a relative bearing, which a moving observer supplies on its own. When neither can answer, the alert reports distance and bearing and nothing more.
+
+##### Three ways it can go blind
+
+An unusable position, a raster older than 25 minutes, or a disc the radar network cannot see into. All three are the same problem the storm front already solves — *not knowing* is not the same as *nothing happening* — and all three are handled the same way: no alerts, and **no all-clear**. `-9999` in the product means "outside coverage", never "no rain"; confusing the two would turn the edge of the network into a permanent dry spell.
+
+##### Settings
+
+| Field | Description |
+|-------|-------------|
+| Where to watch / Location | Identical to the storm front: a named position it follows, or fixed coordinates. |
+| Alert radius | 10–60 km. The disc is observed out to 1.6× that. |
+| Updates per event | Hard cap of 2, 3 or 4 ring messages per event, plus one all-clear. |
+| **Rain worth telling you about** | Minimum intensity in mm/h: `0.2` even drizzle, **`1` proper rain (recommended)**, `4` a real shower, `10` heavy rain only. The radar sees down to a damp mist; set this too low and a grey afternoon keeps the event open for hours. |
+| **Also mention hail** | Fetches the probability-of-hail product too and adds a line when the approaching front carries a real risk. One extra download every 5 minutes. |
+| Radar picture | Attaches the actual radar crop to each ring message. |
+
+**📡 Test radar coverage:** fetches the newest product on demand and reports whether the service is reachable, how late the product was published, what share of the watched disc the network can actually see, and the current intensity at your point. The coverage figure is the load-bearing one — a monitor watching a blind spot would report permanent calm. Points such as Pantelleria are genuinely outside the network and are reported as such.
+
+##### The picture
+
+Where the storm front draws a polar scatter of discharges — a photograph of the *model*, because lightning has no image of its own — the rain front attaches **the measurement itself**: the composite cropped to the observation disc, coloured in mm/h, with the ring ladder, the dominant sector, the front marker, an arrow for the measured drift and a cross at the closest point of approach. The crop is centred on the advected origin, the same one the numbers were computed against, so picture and text always agree. Rendering runs on a worker thread and any failure degrades to text — a picture must never be able to stop an alert.
+
+**Alert format — ring:**
+
+```
+🌧️ Pioggia nel raggio — Casa
+📍 Fronte a 26 km a O (270°)
+🌧️ Intensità massima 18.0 mm/h (forte)
+🎯 Anello 1/4 · entro 30 km
+🧭 Rotta d'incontro: ti raggiunge fra 26 min
+🌬️ La pioggia si muove verso E a 60 km/h
+🔢 241 km² di pioggia nel settore O
+📡 Radar delle 17:00 (10 min fa)
+🕐 17:10
+```
+
+**Alert format — all clear:**
+
+```
+✅ Pioggia cessata — Casa
+🔇 Niente pioggia entro 30 km da 10 min
+📉 Massimo avvicinamento: 7 km (anello 3/4) alle 16:40
+📡 Radar delle 17:25 (10 min fa)
+🕐 17:35
+```
+
+**Example configuration:**
+
+| Field | Value |
+|-------|-------|
+| Name | Rain — home |
+| Type | 🌧️ Rain front (Protezione Civile radar) |
+| Where to watch | Casa *(or a named position to follow)* |
+| Alert radius | 30 km |
+| Updates per event | 4 |
+| Rain worth telling you about | 1 mm/h |
+| Radar picture | ✅ |
 
 ---
 
@@ -1106,6 +1215,7 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/monitors.json` | Scheduled monitor configuration (managed from Web UI) |
 | `/data/live_monitors.json` | Live monitor configuration (managed from Web UI) |
 | `/data/storm_front_state.json` | Storm front event state — restored on startup (if under 30 min old) so a storm in progress does not re-announce rings |
+| `/data/rain_front_state.json` | Rain front event state — same rule, so rain in progress does not re-announce rings |
 | `/data/ha_monitors.json` | HA monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |

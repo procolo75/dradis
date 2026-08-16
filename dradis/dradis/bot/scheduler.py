@@ -26,6 +26,7 @@ from monitors.seismic       import run_seismic_monitor
 from monitors.weather_chart import run_weather_chart_monitor
 from backup.gdrive          import run_backup_monitor
 from live_monitors.storm_front import storm_front_monitor_manager
+from live_monitors.rain_front import rain_front_monitor_manager
 from live_monitors.position   import position_manager
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
@@ -356,6 +357,8 @@ def reload_live_monitors():
     configs = load_live_monitors()
     _step("storm front monitors", storm_front_monitor_manager.reload,
           configs, _make_send, tz_name)
+    _step("rain front monitors", rain_front_monitor_manager.reload,
+          configs, _make_send, tz_name)
     _step("seismic monitors", seismic_monitor_manager.reload,
           configs, _make_send, tz_name)
     _step("football monitors", football_monitor_manager.reload,
@@ -368,6 +371,8 @@ def _live_status_dispatcher(monitor_id: str) -> str:
         return seismic_monitor_manager.status(monitor_id)
     if cfg and cfg.get("type") == "football_betting":
         return football_monitor_manager.status(monitor_id)
+    if cfg and cfg.get("type") == "rain_front":
+        return rain_front_monitor_manager.status(monitor_id)
     return storm_front_monitor_manager.status(monitor_id)
 
 

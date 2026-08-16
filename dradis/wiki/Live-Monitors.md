@@ -9,6 +9,7 @@ Click `+` in the **Live Monitors** sidebar header. Select a **Type** to reveal t
 | Type | Description |
 |------|-------------|
 | 🌩️ Storm front / CBDR | Persistent MQTT listener on Blitzortung; strikes binned into rings × sectors, each sector's leading edge drives a bounded ladder of alerts; says whether the storm will hit you or pass by |
+| 🌧️ Rain front | Polls the Protezione Civile national radar composite (free, no API key, Italy only); same ring ladder, but the rain's own drift is measured so the alert can say in how many minutes it reaches you and by how much it misses |
 | 🌍 Seismic live | Polls INGV GOSSIP every 60 s; alerts on new events and state promotions |
 | ⚽ Football Betting | Polls RapidAPI every 5 min (clock-aligned); alerts on statistically favourable live-match conditions |
 
@@ -180,6 +181,192 @@ Language:          🇮🇹 Italiano
 🔢 22 fulmini in 10 min (settore N)
 🕐 12:01
 ```
+
+---
+
+## 🌧️ Rain Front
+
+Watches the Italian national weather radar and tells you when rain will reach you.
+
+It is the twin of the Storm front: same rings, same bounded ladder of messages, same "follow a phone or watch a fixed place" choice. The difference is what it looks at, and what it can therefore tell you.
+
+| | Storm front | Rain front |
+|---|---|---|
+| Watches | Lightning strikes | Rain on the radar |
+| Source | Blitzortung (MQTT) | Protezione Civile radar |
+| API key | none | none |
+| Coverage | worldwide | **Italy only** |
+| Answers | Will the storm hit me or pass by? | *When* will the rain reach me, and by how much will it miss? |
+
+### What you actually receive
+
+Rain approaching you produces a short ladder of messages — one each time it crosses into a closer ring, then an all-clear once it has gone. **At most 4 messages plus the all-clear**, for any weather whatsoever. Rain that stalls 25 km away all afternoon is mentioned once and then never again.
+
+```
+🌧️ Pioggia nel raggio — Casa
+📍 Fronte a 26 km a O (270°)
+🌧️ Intensità massima 18.0 mm/h (forte)
+🎯 Anello 1/4 · entro 30 km
+🧭 Rotta d'incontro: ti raggiunge fra 26 min
+🌬️ La pioggia si muove verso E a 60 km/h
+🔢 241 km² di pioggia nel settore O
+📡 Radar delle 17:00 (10 min fa)
+🕐 17:10
+```
+
+The 🧭 line is the one the whole monitor exists for, and it is **measured, not forecast** — see [Why it can give you a time](#why-it-can-give-you-a-time) below.
+
+When the rain has no measurable direction of travel, the monitor says so instead of inventing a number:
+
+```
+🟠 Pioggia vicina — Casa
+📍 Fronte a 11 km a SO (225°)
+🌧️ Intensità massima 4.7 mm/h (moderata)
+🎯 Anello 3/4 · entro 12 km
+🧭 Traiettoria non ancora determinabile
+🌬️ Movimento della pioggia non misurabile
+📡 Radar delle 17:05 (10 min fa)
+🕐 17:15
+```
+
+And when it is over:
+
+```
+✅ Pioggia cessata — Casa
+🔇 Niente pioggia entro 30 km da 10 min
+📉 Massimo avvicinamento: 7 km (anello 3/4) alle 16:40
+📡 Radar delle 17:25 (10 min fa)
+🕐 17:35
+```
+
+### Settings
+
+| Field | What it does |
+|-------|--------------|
+| **Where to watch** | A fixed place, or a phone to follow — identical to the Storm front, including the rule that a monitor following a phone has *no* fallback and freezes when the position is lost. |
+| **Alert radius** | 10–60 km. At 30 km you get roughly half an hour of warning for a front moving at 60 km/h. |
+| **Updates per rain event** | Hard cap of 2, 3 or 4 messages per event. Not a sensitivity setting — it changes how often you are told, never what the monitor decides. |
+| **Rain worth telling you about** | The minimum intensity that counts. See the table below. |
+| **Also mention hail** | Adds a line when the approaching rain carries a real risk of hail. |
+| **Radar picture** | Attaches the radar image to each message. |
+
+#### Choosing the minimum intensity
+
+The radar sees everything, down to a damp mist. This is where you decide what deserves a notification.
+
+| Setting | Meaning | Good for |
+|---|---|---|
+| `0.2 mm/h` | Even drizzle | You want to know about anything at all |
+| **`1 mm/h`** *(default)* | Rain you would notice walking to the car | Most people |
+| `4 mm/h` | A real shower | You only care if it is worth waiting out |
+| `10 mm/h` | Heavy rain only | Washing on the line, driving alerts |
+
+Set it too low and a grey afternoon keeps the event open for hours. Too high and light rain arrives unannounced.
+
+#### 📡 Test radar coverage
+
+**The radar network does not cover every corner of Italy.** This button fetches the newest radar image on demand and tells you whether the service is reachable, how old the image is, **how much of the area you asked to watch is actually visible to the radar**, and what it is doing there right now.
+
+That coverage figure is the one that matters. A monitor watching a blind spot would report calm forever, and there is no way to notice that from the outside. Pantelleria, for example, is genuinely outside the network and is reported as such.
+
+### Where the data comes from
+
+The [Dipartimento della Protezione Civile radar platform](https://dpc-radar.readthedocs.io/) publishes a combined image from the 24 national radars. It is Open Access — **no key, no registration, no quota**.
+
+| | |
+|---|---|
+| What is downloaded | `SRI`, rainfall intensity at ground level, directly in mm/h |
+| Size | One 1200 × 1400 image covering the whole country, 1 km per pixel |
+| How often | Every 5 minutes |
+| Also, if hail is enabled | `POH`, the probability of hail |
+
+Because one image covers all of Italy, a second monitor watching a different town **costs nothing extra**: the download is shared between every rain front monitor, and stops entirely when the last one is disabled.
+
+> **A blind spot is not a dry spell.** Where the radar cannot see, the image contains a marker meaning *"no measurement"*, which the monitor never treats as an absence of rain. Confusing the two would turn the edge of the network into permanent sunshine.
+
+### The radar is ten minutes behind
+
+Every radar image becomes available **about ten minutes after the moment it describes**. This is how the service works, not a delay inside DRADIS, and two things follow from it.
+
+- **Every message tells you when the radar looked**, not when the message was sent: `📡 Radar delle 17:00 (10 min fa)`. Anything else would fall apart the first time you looked out of the window.
+- **The monitor compensates.** Rain moving at 60 km/h has travelled 10 km since the picture was taken, so when the drift is measurable the geometry is shifted forward by exactly that before any distance is reported.
+
+DRADIS asks for a new image only when one is actually due — the schedule comes from the service's own declared cadence — so a cycle costs one small request plus one download.
+
+### How often it checks
+
+Three different rhythms, and it is worth not confusing them.
+
+| What | How often | Why |
+|---|---|---|
+| **Decides** | every **60 s** | Because *you* may be moving. At 130 km/h you cover 2.2 km a minute, far faster than the sky changes. |
+| Downloads | every 5 min | The rate at which new images exist. |
+| Measures the drift | with each new image | Comparing two images is what reveals which way the rain is going. |
+
+Deciding every minute is also what keeps the two-poll confirmation meaning **two minutes**, exactly as in the Storm front, rather than ten.
+
+### Why it can give you a time
+
+This is the one thing rain can do that lightning cannot.
+
+Lightning is a scatter of individual strikes: you can see *where* they are, but a bag of dots has no direction of its own, so the Storm front has to infer the answer from how the bearing drifts over a quarter of an hour, and can only ever return a verdict — *hit* or *miss*.
+
+Rain on the radar is a **picture**. Compare two consecutive pictures, find how far the pattern has shifted, and you have measured the rain's actual speed and direction over the ground. DRADIS already knows your own speed and direction from the position you follow. With both, the meeting point is simple geometry rather than guesswork:
+
+> Subtract your motion from the rain's motion, and you get how the two are closing on each other. From that comes **how many minutes** until the moment of closest approach, and **how many kilometres** apart you will be at that moment. Zero kilometres means it lands on you.
+
+That is why the alert can say *"ti raggiunge fra 26 min"* or *"ti sfiora: passa a N a 14 km, fra 21 min"*.
+
+#### It refuses to invent one
+
+Two pictures do not always give a clear answer. Scattered summer showers grow and die faster than they travel, and comparing them yields a smear rather than a shift.
+
+So the measurement has to pass a test: the best match must stand clearly above the runner-up. This was calibrated against real radar images at four locations — every physically absurd result (195 km/h over Rome, contradicted by the same site's other readings) sat in one range, every result that agreed across different settings sat in a distinctly higher one, and the threshold sits in the empty gap between the two.
+
+**On scattered convection this test fails often.** That is the honest answer rather than a shortcoming, and it is why the Storm front's bearing-drift method remains as the fallback: it needs no speed measurement at all, only the rotation of a bearing, which a moving observer supplies by itself. When neither can answer, the alert gives you distance and direction and no time at all.
+
+### The picture attached to each alert
+
+The Storm front draws a diagram of strikes, because lightning has no image of its own. Here the measurement **is** the image: the radar around you, coloured by intensity, with the rings drawn on it, the nearest edge of the rain marked, an arrow showing which way it is drifting, and a cross where it will come closest to you.
+
+It is centred on the same point the numbers were worked out from, so the picture and the text always agree. Image and text arrive as **one** Telegram message, so your phone buzzes once. If the drawing fails for any reason the text is sent on its own — a picture must never be able to stop a warning.
+
+### Three ways it goes blind
+
+The monitor stops speaking — **no alerts, and importantly no all-clear** — whenever it cannot see:
+
+| Situation | Meaning |
+|---|---|
+| The position it follows is missing or stale | It does not know where you are |
+| No radar image newer than 25 minutes | It does not know what the sky is doing |
+| Less than 40 % of the watched area is covered | It is looking into a blind spot |
+
+All three are the same problem: *not knowing* is not the same as *nothing happening*. A monitor that cannot tell them apart would cheerfully announce that the rain had cleared.
+
+### What it inherits from the Storm front
+
+The ring ladder, the 15 % hysteresis, the two-poll confirmation, the event lifecycle, the all-clear dwell, the saved state and **invariant A** (one event can never emit more than `ring_count` messages plus one all-clear) are taken unchanged. None of that is specific to lightning, and it is the part that six generations of storm monitor paid for.
+
+One thing could **not** be inherited: how the *nearest edge* of the weather is found.
+
+> The Storm front takes a low percentile of the distances in each sector. That is right for lightning, where strikes are sparse and each one may be mislocated by kilometres. But rain fills a sector rather than dotting it, and a sector's area grows with distance, so a low percentile always lands about a third of the way out **no matter where the edge really is**.
+>
+> On a real image over Arezzo, the nearest rain was **3.7 km** away and that method reported **14.7 km** — it would have placed the rain outside the innermost ring while the user was getting wet.
+>
+> The rain front takes the fifth-nearest raining pixel instead: still immune to a stray speckle, and within about a kilometre of the true edge everywhere it was tested.
+
+### Example Configuration
+
+| Field | Value |
+|-------|-------|
+| Name | Rain — home |
+| Type | 🌧️ Rain front (Protezione Civile radar) |
+| Where to watch | Casa |
+| Alert radius | 30 km |
+| Updates per rain event | 4 |
+| Rain worth telling you about | 1 mm/h |
+| Also mention hail | ❌ |
+| Radar picture | ✅ |
 
 ---
 

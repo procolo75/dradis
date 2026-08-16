@@ -46,7 +46,7 @@ Click **Test connection** to verify the broker is reachable.
 
 ## Settings → Positions
 
-A **position** is a phone DRADIS can follow. A Storm front monitor selects one and then watches wherever *that* phone is, so while travelling it can tell you whether you are driving into the storm rather than away from it. Add one per phone — yours, another family member's — and give each a name you will recognise in an alert, because that name is what the alert is titled with.
+A **position** is a phone DRADIS can follow. A Storm front or Rain front monitor selects one and then watches wherever *that* phone is, so while travelling it can tell you whether you are driving into the storm — or the rain — rather than away from it. Add one per phone — yours, another family member's — and give each a name you will recognise in an alert, because that name is what the alert is titled with.
 
 Positions are stored under `positions` in `/data/dradis_settings.json`, and they all share **one** MQTT connection. Nothing connects until you add one.
 
@@ -171,7 +171,8 @@ See [Live-Monitors](Live-Monitors) for full details.
 |--------|-------------|
 | `+` button | Create a new live monitor. |
 | Sidebar item | Open the form. Green/red dot = running/stopped. |
-| Status badge | 🟢 Running / 🔴 Stopped — fetched live. |
+| Status badge | 🟢 Running / 🟠 Degraded / 🔴 Stopped — fetched live. |
+| **📡 Test radar coverage** | *Rain front only.* Fetches the newest radar product and reports reachability, how late it was published, how much of the watched disc the network can actually see, and the current intensity at your point. |
 | **⎘ Copy** | Duplicate the monitor (disabled by default). |
 | **🗑 Delete** | Remove the monitor. |
 

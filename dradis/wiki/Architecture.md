@@ -33,6 +33,10 @@ dradis/
 │   ├── storm_front.py       # Storm front live monitor — lifecycle, persistence, formatting
 │   ├── storm_front_core.py  # Pure decision core: ring/sector grid, front, CBDR, event machine (no I/O)
 │   ├── storm_front_chart.py # Polar radar attached to ring messages (matplotlib, off the event loop)
+│   ├── rain_front.py        # Rain front live monitor — inherits the storm front's tracker
+│   ├── rain_front_chart.py  # The actual radar crop attached to ring messages
+│   ├── radar.py             # Protezione Civile radar feed: shared singleton, refcounted, no API key
+│   ├── radar_core.py        # Pure raster maths: projection, sampling, field motion, CPA (no I/O)
 │   ├── blitzortung.py       # Blitzortung MQTT feed: connection, strike buffer, health
 │   ├── geo.py               # Pure geo maths: Haversine, bearings, geohash topics
 │   ├── position.py          # Named positions: one MQTT listener serving them all (singleton)

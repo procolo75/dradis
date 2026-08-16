@@ -4013,6 +4013,7 @@ function renderLiveMonitorForm(monitor) {
 
   const _TYPE_DESCS_LIVE = {
     storm_front:      "Watches real-time lightning from Blitzortung and tells you whether a storm is heading at you or going past. It speaks a few times as the storm closes in, then stops — one storm can never produce more than a handful of messages. Each alert comes with a radar picture. No cron, no LLM, no token cost.",
+    rain_front:       "Watches the national weather radar (Protezione Civile, free, no API key) and tells you when rain will reach you — and, when the radar can measure which way it is drifting, in how many minutes and by how much it will miss. Italy only. Same one-message-per-step guarantee as the storm front. Each alert carries the actual radar picture. No cron, no LLM, no token cost.",
     seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
     football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's AND below the configured maximum odds, in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };
@@ -4037,6 +4038,7 @@ function renderLiveMonitorForm(monitor) {
         <label for="lm-type">Type</label>
         <select id="lm-type">
           <option value="storm_front"      ${monitor.type === "storm_front"      ? "selected" : ""}>🌩️ Storm front / CBDR (Blitzortung MQTT)</option>
+          <option value="rain_front"       ${monitor.type === "rain_front"       ? "selected" : ""}>🌧️ Rain front (Protezione Civile radar)</option>
           <option value="seismic"          ${monitor.type === "seismic"          ? "selected" : ""}>🌍 Seismic alert (INGV GOSSIP RSS)</option>
           <option value="football_betting" ${monitor.type === "football_betting" ? "selected" : ""}>⚽ Football Betting (RapidAPI)</option>
         </select>
@@ -4089,17 +4091,80 @@ function renderLiveMonitorForm(monitor) {
       <div class="form-group" id="lm-radius-block">
         <label for="lm-radius">Alert radius (km)</label>
         <input type="number" id="lm-radius" min="10" max="60" value="${monitor.radius_km || 30}" style="width:80px">
-        <small style="color:var(--text-muted);margin-top:4px;display:block">How close a storm must get before you hear about it. <b>30 km</b> gives roughly 30–45 minutes of warning for a typical storm. The monitor quietly <i>watches</i> 1.6× further out to work out where the storm is going, but never alerts you about that outer area.</small>
+        <small id="lm-radius-desc" style="color:var(--text-muted);margin-top:4px;display:block"></small>
       </div>
 
       <div class="form-group" id="lm-rings-block">
-        <label for="lm-ring-count">Updates per storm</label>
+        <label for="lm-ring-count" id="lm-rings-label">Updates per storm</label>
         <select id="lm-ring-count" style="width:260px">
           <option value="2" ${String(monitor.ring_count) === "2" ? "selected" : ""}>2 — just the essentials</option>
           <option value="3" ${String(monitor.ring_count) === "3" ? "selected" : ""}>3 — in between</option>
           <option value="4" ${String(monitor.ring_count || 4) === "4" ? "selected" : ""}>4 — recommended</option>
         </select>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">A <b>hard cap</b> on how many times a single storm may update you as it approaches. This is not a sensitivity setting: it does not change when the monitor decides something is coming, only how often it tells you along the way.</small>
+        <small id="lm-rings-desc" style="color:var(--text-muted);margin-top:4px;display:block"></small>
+      </div>
+
+      <div class="form-group" id="lm-rain-block">
+        <label for="lm-min-mmh">Rain worth telling you about</label>
+        <select id="lm-min-mmh" style="width:300px">
+          <option value="0.2" ${String(monitor.min_mmh) === "0.2" ? "selected" : ""}>0.2 mm/h — even drizzle</option>
+          <option value="1"   ${String(monitor.min_mmh ?? 1) === "1" ? "selected" : ""}>1 mm/h — proper rain (recommended)</option>
+          <option value="4"   ${String(monitor.min_mmh) === "4"   ? "selected" : ""}>4 mm/h — only a real shower</option>
+          <option value="10"  ${String(monitor.min_mmh) === "10"  ? "selected" : ""}>10 mm/h — only heavy rain</option>
+        </select>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">The radar sees everything down to a damp mist. Set this too low and a grey afternoon keeps the alert open for hours; too high and light rain arrives unannounced. <b>1 mm/h</b> is rain you would notice walking to the car.</small>
+
+        <div class="form-group" style="margin-top:12px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="lm-hail" ${monitor.hail ? "checked" : ""}>
+            Also mention hail
+          </label>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Fetches a second radar product — the probability of hail — and adds a line when the approaching front actually carries a risk of it. One extra download every 5 minutes.</small>
+        </div>
+
+        <div class="form-group" style="margin-top:12px">
+          <button class="btn-icon" id="btn-test-radar">📡 Test radar coverage</button>
+          <small id="lm-radar-test" style="color:var(--text-muted);margin-top:6px;display:block">The radar network does not cover every corner of Italy. This checks the service is reachable and that the disc you asked to watch is actually visible from it.</small>
+        </div>
+      </div>
+
+      <div class="form-group" id="lm-rainfront-hint">
+        <label>What you will actually receive</label>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:var(--card-bg)">
+
+          <div style="display:flex;gap:10px;margin-bottom:10px">
+            <span style="font-size:1.1rem;line-height:1.3">🎯</span>
+            <div style="font-size:0.82rem;line-height:1.45">
+              <b>Rain heading straight at you</b><br>
+              <span style="color:var(--text-muted)">One short update each time it gets closer &mdash; at 30, 20, 12 and 6 km &mdash; then an all-clear once it has passed.
+              When the radar can measure the drift, each one tells you <b>how many minutes</b> until it arrives.</span>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;margin-bottom:12px">
+            <span style="font-size:1.1rem;line-height:1.3">🕙</span>
+            <div style="font-size:0.82rem;line-height:1.45">
+              <b>Every message says how old the picture is</b><br>
+              <span style="color:var(--text-muted)">The national radar is published about <b>ten minutes late</b>. That is a property of the source, not a delay in this add-on, and pretending otherwise would fall apart the first time you looked out of the window.</span>
+            </div>
+          </div>
+
+          <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:6px">A typical alert looks like this:</div>
+          <pre style="margin:0 0 12px 0;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-size:0.76rem;line-height:1.5;white-space:pre-wrap">🌧️ Pioggia nel raggio &mdash; Casa
+📍 Fronte a 26 km a O (270°)
+🌧️ Intensità massima 18.0 mm/h (forte)
+🎯 Anello 1/4 · entro 30 km
+🧭 Rotta d'incontro: ti raggiunge fra 26 min
+🌬️ La pioggia si muove verso E a 60 km/h
+📡 Radar delle 17:00 (10 min fa)</pre>
+
+          <div style="font-size:0.8rem;line-height:1.5;color:var(--text-muted)">
+            <div style="margin-bottom:6px"><b style="color:var(--text)">It measures instead of guessing.</b> The arrival time comes from comparing two consecutive radar images to see which way the rain is actually drifting &mdash; not from a forecast model.</div>
+            <div style="margin-bottom:6px"><b style="color:var(--text)">It says when it cannot tell.</b> Scattered summer showers often have no measurable direction of travel at all. When that happens you are told the distance and bearing and nothing more, rather than a made-up arrival time.</div>
+            <div><b style="color:var(--text)">It cannot flood you.</b> Each step is announced once and once only, exactly like the storm front. Rain that stalls 25 km away all afternoon is mentioned once.</div>
+          </div>
+
+        </div>
       </div>
 
       <div class="form-group" id="lm-stormfront-hint">
@@ -4153,9 +4218,9 @@ function renderLiveMonitorForm(monitor) {
       <div class="form-group" id="lm-chart-block">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="lm-chart" ${monitor.chart === false ? "" : "checked"}>
-          Attach a radar picture to each alert
+          <span id="lm-chart-label">Attach a radar picture to each alert</span>
         </label>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Every strike of the last 10 minutes plotted around you, coloured by age — older strikes fade, so you can see at a glance which way the storm is drifting. Picture and text arrive as <b>one</b> Telegram message, so your phone buzzes once.</small>
+        <small id="lm-chart-desc" style="color:var(--text-muted);margin-top:4px;display:block"></small>
       </div>
 
       <div class="form-group" id="lm-windows-block">
@@ -4249,24 +4314,54 @@ function renderLiveMonitorForm(monitor) {
   document.getElementById("lm-position-id")
     ?.addEventListener("change", _lmApplyOrigin);
 
+  function _lmRingCopy(isRain) {
+    const set = (id, html) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    };
+    set("lm-rings-label", isRain ? "Updates per rain event" : "Updates per storm");
+    set("lm-radius-desc", isRain
+      ? "How close rain must get before you hear about it. <b>30 km</b> is roughly 30 minutes of warning for a front moving at 60 km/h. The monitor quietly <i>watches</i> 1.6× further out to work out where the rain is going, but never alerts you about that outer area."
+      : "How close a storm must get before you hear about it. <b>30 km</b> gives roughly 30–45 minutes of warning for a typical storm. The monitor quietly <i>watches</i> 1.6× further out to work out where the storm is going, but never alerts you about that outer area.");
+    set("lm-rings-desc", isRain
+      ? "A <b>hard cap</b> on how many times a single band of rain may update you as it approaches. This is not a sensitivity setting: it does not change when the monitor decides something is coming, only how often it tells you along the way."
+      : "A <b>hard cap</b> on how many times a single storm may update you as it approaches. This is not a sensitivity setting: it does not change when the monitor decides something is coming, only how often it tells you along the way.");
+    set("lm-chart-label", isRain
+      ? "Attach the radar picture to each alert"
+      : "Attach a radar picture to each alert");
+    set("lm-chart-desc", isRain
+      ? "The actual radar image around you, coloured by intensity, with the rings, the front marked, an arrow for the measured drift and a cross where the rain will come closest. Picture and text arrive as <b>one</b> Telegram message, so your phone buzzes once."
+      : "Every strike of the last 10 minutes plotted around you, coloured by age — older strikes fade, so you can see at a glance which way the storm is drifting. Picture and text arrive as <b>one</b> Telegram message, so your phone buzzes once.");
+  }
+
   function _lmApplyType(type) {
-    const isSeismic = type === "seismic";
+    const isSeismic  = type === "seismic";
     const isFootball = type === "football_betting";
-    const isStorm    = !isSeismic && !isFootball;
+    const isRain     = type === "rain_front";
+    // Storm front and rain front share the whole ring apparatus — origin, radius,
+    // ladder, chart — and differ only in what they watch and what they say.
+    const isRing     = !isSeismic && !isFootball;
+    const isStorm    = isRing && !isRain;
     document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[type] || "";
-    document.getElementById("lm-location-block").style.display   = isStorm ? "" : "none";
-    document.getElementById("lm-position-block").style.display   = isStorm ? "" : "none";
-    if (isStorm) _lmApplyOrigin();
-    document.getElementById("lm-radius-block").style.display     = isStorm ? "" : "none";
-    document.getElementById("lm-rings-block").style.display      = isStorm ? "" : "none";
+    document.getElementById("lm-location-block").style.display   = isRing ? "" : "none";
+    document.getElementById("lm-position-block").style.display   = isRing ? "" : "none";
+    if (isRing) _lmApplyOrigin();
+    document.getElementById("lm-radius-block").style.display     = isRing ? "" : "none";
+    document.getElementById("lm-rings-block").style.display      = isRing ? "" : "none";
     document.getElementById("lm-stormfront-hint").style.display  = isStorm ? "" : "none";
-    document.getElementById("lm-chart-block").style.display      = isStorm ? "" : "none";
-    if (isStorm) {
+    document.getElementById("lm-rainfront-hint").style.display   = isRain ? "" : "none";
+    document.getElementById("lm-rain-block").style.display       = isRain ? "" : "none";
+    document.getElementById("lm-chart-block").style.display      = isRing ? "" : "none";
+    if (isRing) {
       // The payload is shared with the other live types and still defaults
       // radius_km to 100, which is far outside this algorithm's range.
       const r = document.getElementById("lm-radius");
       r.min = 10; r.max = 60;
       if (!r.value || Number(r.value) > 60 || Number(r.value) < 10) r.value = 30;
+      // Storm and rain share these three controls but not their wording: telling
+      // a rain monitor's user about "updates per storm" and "strikes coloured by
+      // age" describes a feature they did not choose.
+      _lmRingCopy(isRain);
     }
     document.getElementById("lm-areas-block").style.display       = isSeismic   ? "" : "none";
     document.getElementById("lm-quiet-block").style.display       = "";
@@ -4280,9 +4375,10 @@ function renderLiveMonitorForm(monitor) {
       if (!qe.value) qe.value = "07:00";
       quietLabel.textContent = "🔕 API pause";
       quietDesc.textContent  = "No API calls are made during this window. Leave empty to disable.";
-    } else if (isStorm) {
+    } else if (isRing) {
+      const what = isRain ? "rain" : "storm";
       quietLabel.textContent = "🔕 Quiet hours";
-      quietDesc.textContent  = "Leave empty to disable. Silences the outer rings and the all-clear; a storm already well inside the radius always gets through.";
+      quietDesc.textContent  = `Leave empty to disable. Silences the outer rings and the all-clear; ${what} already well inside the radius always gets through.`;
     } else {
       quietLabel.textContent = "🔕 Quiet hours";
       quietDesc.textContent  = "Leave empty to disable. Events that happen during the quiet window are delivered together when it ends.";
@@ -4290,6 +4386,47 @@ function renderLiveMonitorForm(monitor) {
   }
   _lmApplyType(monitor.type || "storm_front");
   document.getElementById("lm-type").addEventListener("change", e => _lmApplyType(e.target.value));
+
+  document.getElementById("btn-test-radar")?.addEventListener("click", async () => {
+    const out = document.getElementById("lm-radar-test");
+    // A monitor that follows a position has no coordinates of its own, so the
+    // reachability half is all that can be checked from here.
+    const following = !!document.getElementById("lm-position-id")?.value;
+    const lat = parseFloat(document.getElementById("lm-latitude").value);
+    const lon = parseFloat(document.getElementById("lm-longitude").value);
+    const radius = parseFloat(document.getElementById("lm-radius").value) || 30;
+    out.textContent = "⏳ Fetching the latest radar product…";
+    out.style.color = "var(--text-muted)";
+    try {
+      const query = (!following && lat && lon)
+        ? `?latitude=${lat}&longitude=${lon}&radius_km=${radius}` : "";
+      const data = await api("POST", `/api/radar/test${query}`);
+      if (!data.ok) {
+        out.textContent = `❌ Radar unreachable — ${data.detail || "no response"}`;
+        out.style.color = "var(--danger)";
+        return;
+      }
+      const when = new Date(data.measured_at * 1000)
+        .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const age = `measured at ${when}, published ${Math.round(data.lag_sec / 60)} min late`;
+      if (data.status === "no_coverage" || data.status === "poor_coverage") {
+        out.innerHTML = `⚠️ <b>${data.detail}</b> — this monitor would report calm ` +
+                        `over a blind spot. ${age}.`;
+        out.style.color = "var(--danger)";
+        return;
+      }
+      const here = data.mmh_here == null ? "" :
+        ` · ${data.mmh_here.toFixed(1)} mm/h right here` +
+        (data.peak_mmh ? `, up to ${data.peak_mmh.toFixed(1)} mm/h within ${radius} km` : "");
+      const cover = data.coverage == null ? "" :
+        ` · ${Math.round(data.coverage * 100)}% of the watched disc is visible`;
+      out.innerHTML = `✅ Radar reachable (${data.grid}) — ${age}${cover}${here}.`;
+      out.style.color = "var(--success)";
+    } catch (err) {
+      out.textContent = `❌ ${err.message || "Test failed"}`;
+      out.style.color = "var(--danger)";
+    }
+  });
 
   panel.querySelectorAll(".fp-provider-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -4395,6 +4532,8 @@ function renderLiveMonitorForm(monitor) {
       quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
       ring_count:      parseInt(document.getElementById("lm-ring-count")?.value, 10) || 4,
       chart:           document.getElementById("lm-chart")?.checked ?? true,
+      min_mmh:         parseFloat(document.getElementById("lm-min-mmh")?.value) || 1.0,
+      hail:            document.getElementById("lm-hail")?.checked ?? false,
       position_id:     document.getElementById("lm-position-id")?.value || "",
       telegram_bot_id: document.getElementById("lm-bot-id").value,
     };
@@ -4439,6 +4578,8 @@ function renderLiveMonitorForm(monitor) {
         language:        src.language,
         ring_count:      src.ring_count ?? 4,
         chart:           src.chart ?? true,
+        min_mmh:         src.min_mmh ?? 1.0,
+        hail:            src.hail ?? false,
         position_id:     src.position_id || "",
         quiet_start:     src.quiet_start || "",
         quiet_end:       src.quiet_end   || "",

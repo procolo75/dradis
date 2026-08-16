@@ -252,6 +252,61 @@ async def test_ha_connection():
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/api/radar/test")
+async def test_radar(latitude: float | None = Query(default=None),
+                     longitude: float | None = Query(default=None),
+                     radius_km: float = Query(default=30.0)):
+    """Can we reach the radar, and does it actually cover this point?
+
+    Always answers 200 with a verdict rather than raising, as the positions probe
+    does: "the service is up but your house is in a blind spot" is a useful
+    answer, not an error, and it is the one thing a user cannot discover from the
+    outside. Coverage is the load-bearing number here — a monitor watching a disc
+    the network cannot see into would report permanent calm.
+    """
+    from live_monitors.radar import PRODUCT_RAIN, fetch_latest
+    from live_monitors.radar_core import (
+        coverage_fraction, peak_in_disc, sample)
+    from live_monitors.storm_front_core import OBSERVE_FACTOR, clamp_radius
+
+    try:
+        grid, lag_sec = await fetch_latest(PRODUCT_RAIN)
+    except Exception as e:
+        return {"ok": False, "status": "unreachable", "detail": str(e)}
+
+    result = {
+        "ok": True,
+        "status": "ok",
+        "product": grid.product,
+        "measured_at": grid.t,
+        "lag_sec": round(lag_sec),
+        "grid": f"{grid.gt.cols}x{grid.gt.rows} @ {grid.gt.pixel_m / 1000:.0f} km",
+    }
+    # No point asked about: the reachability half of the answer is all there is.
+    # Not a 0.0 sentinel — null island is a real coordinate, and a monitor pinned
+    # there by a bad config deserves the same honest verdict as any other.
+    if latitude is None or longitude is None:
+        return result
+
+    observe = clamp_radius(radius_km) * OBSERVE_FACTOR
+    coverage = coverage_fraction(grid, (latitude, longitude), observe)
+    value = sample(grid, latitude, longitude)
+    result.update({
+        "coverage": round(coverage, 3),
+        "observe_radius_km": round(observe, 1),
+        "mmh_here": value,
+        "peak_mmh": peak_in_disc(grid, (latitude, longitude),
+                                 clamp_radius(radius_km)),
+    })
+    if value is None:
+        result["status"] = "no_coverage"
+        result["detail"] = "this point is outside the radar network"
+    elif coverage < 0.4:
+        result["status"] = "poor_coverage"
+        result["detail"] = f"only {coverage:.0%} of the watched disc is visible"
+    return result
+
+
 @router.post("/api/ha/discover")
 async def discover_ha_entities(prefix: str = Query(default="")):
     settings = load_settings()
