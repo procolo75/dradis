@@ -422,6 +422,58 @@ class CaptionTest(unittest.TestCase):
         self.assertIn("Evento aperto", text)
         self.assertIn("2/4", text)
 
+    def test_voice_mode_drops_every_line_about_the_instrument(self):
+        """Car Mode is not a text filter applied afterwards.
+
+        Coordinates, the map link and "fix appena aggiornato · ±12 m · non si sta
+        muovendo" are whole LINES that only mean something on a screen — you can
+        neither tap a link nor read a coordinate at the wheel, and being told your
+        phone is not moving while you drive is worse than useless. Stripping icons
+        would not have saved any of them, so they are omitted at the source.
+        """
+        origin = OriginInfo(45.0, 9.0, True, "Telefono", True, age_sec=0.0,
+                            accuracy_m=12.0, speed_kmh=0.0, moving=False)
+        text = format_caption(snap(origin=origin, coverage=0.98), voice=True)
+        for banned in [f"{45.0:.5f}", "openstreetmap.org", "apri la mappa",
+                       "appena aggiornato", "±12 m", "non si sta muovendo",
+                       "copertura", "Nessun evento aperto", "nessun avviso inviato"]:
+            self.assertNotIn(banned, text, f"voice mode still says {banned!r}")
+
+    def test_voice_mode_keeps_what_you_asked_the_question_for(self):
+        text = format_caption(snap(front_km=8.0, front_bearing_deg=270.0),
+                              voice=True)
+        self.assertIn("Casa", text)
+        self.assertIn("8 km", text)
+
+    def test_voice_mode_never_hides_a_failure(self):
+        """Silence and calm must not sound the same. Every line that explains why
+        nothing is arriving survives, or the command answers the wrong question."""
+        origin = OriginInfo(45.0, 9.0, True, "Telefono", False,
+                            reason="the last fix is 41 min old, past the 15 min limit")
+        blind = format_caption(snap(origin=origin, blind_reason=origin.reason),
+                               voice=True)
+        self.assertIn("Cieco", blind)
+        self.assertIn("41 min", blind)
+
+        off = format_caption(snap(running=False, status="stopped"), voice=True)
+        self.assertIn("anteprima", off)
+        self.assertIn("Spento", off)
+
+        gone = OriginInfo(0.0, 0.0, True, "Telefono", False, missing=True)
+        self.assertIn("non esiste più", format_caption(snap(origin=gone), voice=True))
+
+    def test_voice_mode_stays_quiet_about_a_healthy_monitor(self):
+        """"Active" every time is a word you learn to talk over — and then you
+        talk over the one time it says "Off"."""
+        self.assertNotIn("Attivo", format_caption(snap(), voice=True))
+        self.assertIn("Attivo", format_caption(snap()))
+
+    def test_the_default_is_unchanged(self):
+        """Everything above is opt-in; the on-screen caption keeps every word."""
+        text = format_caption(snap())
+        self.assertIn(f"{SITE[0]:.5f}", text)
+        self.assertIn("nessun avviso inviato", text)
+
     def test_a_stopped_monitor_is_called_a_preview(self):
         """"Stopped" beside a live picture reads as a contradiction otherwise."""
         text = format_caption(snap(running=False, status="stopped"))

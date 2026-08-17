@@ -29,9 +29,17 @@ class MarkupAndLinksTest(unittest.TestCase):
             "Temporale a 12 chilometri.",
         )
 
-    def test_a_link_becomes_its_label_and_loses_the_url(self):
+    def test_a_link_goes_whole_label_included(self):
+        # Every link DRADIS sends is a tap target. Spoken, the label is an
+        # instruction the listener cannot follow — it sounds like information
+        # and is not. v4.4.0 kept the label and alerts ended in a flat
+        # "apri la mappa." that told a driver nothing.
         out = to_spoken('<a href="https://maps.google.com/?q=40.8,14.2">apri la mappa</a>')
-        self.assertEqual(out, "apri la mappa.")
+        self.assertEqual(out, "")
+
+    def test_a_link_in_a_sentence_leaves_the_sentence_intact(self):
+        out = to_spoken('Evento <a href="https://ingv.it/e/1">Scheda evento</a> registrato')
+        self.assertEqual(out, "Evento registrato.")
         self.assertNotIn("http", out)
 
     def test_a_bare_url_is_dropped(self):
@@ -46,6 +54,53 @@ class MarkupAndLinksTest(unittest.TestCase):
         # "less than b greater than" is not worth reading aloud, and leaving it
         # would break idempotency — a second pass would strip what the first kept.
         self.assertEqual(to_spoken("&lt;b&gt;grassetto&lt;/b&gt;"), "grassetto.")
+
+
+class TelemetryTest(unittest.TestCase):
+    """Things no message should ever read aloud, wherever they come from.
+
+    A net rather than the fix: the LINES carrying these are removed at the source
+    by `snapshot.format_caption(voice=True)`. These rules exist so a monitor added
+    later cannot quietly reintroduce them.
+    """
+
+    def test_a_coordinate_pair_is_dropped(self):
+        # Five decimals, spoken digit by digit, twice — the worst single thing
+        # on the list.
+        out = to_spoken("<code>40.85123, 14.26891</code> qui")
+        self.assertNotIn("40", out)
+        self.assertEqual(out, "qui.")
+
+    def test_negative_coordinates_too(self):
+        self.assertEqual(to_spoken("pos -12.34567, -0.98765 qui"), "pos qui.")
+
+    def test_an_ordinary_decimal_distance_survives(self):
+        # The pair needs the comma; a lone number is a measurement, not a fix.
+        self.assertIn("12.3456", to_spoken("Fronte a 12.3456 km"))
+
+    def test_a_record_id_is_dropped(self):
+        self.assertEqual(to_spoken("🕐 14:32 · <code>#31884</code>"), "14:32.")
+
+    def test_a_short_hash_number_in_prose_survives(self):
+        # "#2" means something in a sentence; "#31884" is INGV's bookkeeping.
+        self.assertIn("#2", to_spoken("Anello #2 di 4"))
+
+    def test_removing_something_mid_list_leaves_no_orphan_separator(self):
+        self.assertEqual(
+            to_spoken("alle 14:32 · <code>#31884</code> · magnitudo 2.1"),
+            "alle 14:32, magnitudo 2.1.",
+        )
+
+    def test_a_trailing_separator_does_not_survive_the_removal(self):
+        self.assertEqual(to_spoken('Testo · <a href="http://x">link</a>'), "Testo.")
+
+    def test_a_leading_separator_does_not_survive_either(self):
+        # The thunderstorm monitor writes "📍 40.7967, 14.0735 | Forecast 2 days";
+        # taking the coordinates out used to leave the line starting on a pipe.
+        self.assertEqual(
+            to_spoken("\U0001F4CD 40.7967, 14.0735 | Forecast 2 days"),
+            "Forecast 2 days.",
+        )
 
 
 class EmojiTest(unittest.TestCase):
@@ -185,18 +240,18 @@ class RealAlertLayoutTest(unittest.TestCase):
         for value in ["12", "45", "20", "80", "18", "47", "14:32"]:
             self.assertIn(value, out)
 
-    def test_a_snapshot_caption_loses_the_url_but_keeps_the_coordinates(self):
+    def test_a_snapshot_position_block_loses_the_coordinates_and_the_link(self):
+        # v4.4.0 kept both and read them out. Coordinates spoken digit by digit
+        # and a tap target with no link behind it are the two things a driver can
+        # do least with. The LINE they sit on is removed at the source by
+        # `format_caption(voice=True)`; this is the net under that.
         caption = (
             "\U0001F4CD <b>Posizione</b>\n"
             "<code>40.85123, 14.26891</code> — "
-            '<a href="https://www.google.com/maps?q=40.85123,14.26891">apri la mappa</a>\n'
-            "Fix di 3 min fa, ±12 m"
+            '<a href="https://www.google.com/maps?q=40.85123,14.26891">apri la mappa</a>'
         )
         out = to_spoken(caption)
-        self.assertNotIn("http", out)
-        self.assertIn("40.85123, 14.26891", out)
-        self.assertIn("apri la mappa", out)
-        self.assertIn("più o meno 12 metri", out)
+        self.assertEqual(out, "Posizione.")
 
     def test_an_english_rain_alert(self):
         out = to_spoken(

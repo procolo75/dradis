@@ -30,14 +30,28 @@ not have its message mangled a second time.
 import html
 import re
 
-# ── Step 1-4: markup and links ────────────────────────────────────────────────
-# The label of a link carries the meaning; the href is the part that gets spelled
-# out one character at a time. Only two sites in DRADIS emit an anchor —
-# `live_monitors/snapshot.py` (the map link) and `live_monitors/seismic.py` (INGV
-# plus Google Maps) — and both write the destination into the label already.
-_ANCHOR_RE = re.compile(r"<a\s[^>]*>(.*?)</a>", re.DOTALL | re.IGNORECASE)
+# ── Step 1-4: markup, links and machine identifiers ───────────────────────────
+# The whole anchor goes, label included. Every link DRADIS sends is a TAP TARGET
+# — "apri la mappa", "Apri in Maps", "Scheda evento" — and a tap target with no
+# link behind it is an instruction the listener cannot follow: it sounds like
+# information and is not. Keeping the label was the first attempt and it left
+# alerts ending in a flat "apri la mappa." that told a driver nothing.
+_ANCHOR_RE = re.compile(r"<a\s[^>]*>.*?</a>", re.DOTALL | re.IGNORECASE)
 _TAG_RE    = re.compile(r"</?[a-zA-Z][^>]*>")
 _URL_RE    = re.compile(r"https?://\S+")
+
+# Two things no message should ever read out, wherever they come from. These are
+# a NET, not the fix: the lines that carry them are removed at the source (see
+# `snapshot.format_caption(voice=True)`). They exist so a monitor added later
+# cannot quietly reintroduce the problem.
+#
+# A coordinate pair — five decimal places spoken digit by digit, twice, is the
+# single worst thing on this list. Four or more decimals keeps it away from
+# ordinary numbers: no alert says "12.3456 km".
+_COORD_RE = re.compile(r"-?\d{1,3}\.\d{4,}\s*,\s*-?\d{1,3}\.\d{4,}")
+# An event or record id. Three digits or more, so a "#2" that means something in
+# prose survives while INGV's "#31884" does not.
+_IDENT_RE = re.compile(r"#\d{3,}")
 
 # ── Step 5: emoji ─────────────────────────────────────────────────────────────
 # Deliberately range-based rather than a list: DRADIS gains monitors, and every
@@ -130,8 +144,15 @@ _COMPASS_RE = {
 }
 
 # Separators that carry a pause when read but a symbol name when spoken. The
-# plain ASCII hyphen is deliberately absent — "nord-est" needs it.
-_SEPARATORS = re.compile(r"\s*[·•—–]\s*")
+# plain ASCII hyphen is deliberately absent — "nord-est" needs it. The pipe is
+# included both for the monitors that use it as a field separator and because a
+# markdown table row from the model reads better as a list than as a row of
+# "vertical bar".
+_SEPARATORS = re.compile(r"\s*[·•—–|]\s*")
+
+# Two or more separators with nothing left between them, after a link, a
+# coordinate or an id was taken out from the middle of a list.
+_DANGLING_SEP = re.compile(r",(?:\s*,)+")
 
 # A line already ending in one of these does not need a full stop bolted on.
 _TERMINALS = ".!?…:;,"
@@ -155,8 +176,8 @@ def to_spoken(text: str, lang: str = "it") -> str:
 
     units = _UNITS.get(lang, _UNITS["it"])
 
-    # 1-2. Links become their own label; remaining markup goes.
-    text = _ANCHOR_RE.sub(r"\1", text)
+    # 1-2. Links go whole; remaining markup goes.
+    text = _ANCHOR_RE.sub("", text)
     text = _TAG_RE.sub("", text)
     # 3. Entities resolve only AFTER the tags are gone, so a literal `&lt;b&gt;` in
     #    the text is not confused with real markup. Unescaping can itself expose
@@ -165,8 +186,11 @@ def to_spoken(text: str, lang: str = "it") -> str:
     #    would break idempotency: a second pass would strip what the first kept.
     text = html.unescape(text)
     text = _TAG_RE.sub("", text)
-    # 4. A bare URL nobody wrapped in an anchor.
+    # 4. A bare URL nobody wrapped in an anchor, then the two things that are
+    #    never worth hearing whichever message they turn up in.
     text = _URL_RE.sub("", text)
+    text = _COORD_RE.sub("", text)
+    text = _IDENT_RE.sub("", text)
     # 5.
     text = _EMOJI_RE.sub("", text)
     # 6.
@@ -180,7 +204,11 @@ def to_spoken(text: str, lang: str = "it") -> str:
     #    or the speech engine runs two of them together into nonsense.
     sentences = []
     for line in text.split("\n"):
-        line = _WHITESPACE.sub(" ", line).strip()
+        # Removing a link or an id leaves the separator that introduced it behind
+        # — "14:32 · #31884" would end up as "14:32,". Collapse the doubles FIRST,
+        # then the whitespace: the other order leaves the gap the removal opened.
+        line = _DANGLING_SEP.sub(", ", line)
+        line = _WHITESPACE.sub(" ", line).strip(" ,;")
         # A line reduced to punctuation by the steps above (a lone emoji, a bare
         # link) is not a sentence and must not become a stray full stop.
         if not line or not any(ch.isalnum() for ch in line):

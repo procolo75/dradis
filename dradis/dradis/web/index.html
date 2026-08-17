@@ -663,11 +663,18 @@
         </p>
         <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
           When enabled, every alert, scheduled report and chat answer is rewritten as plain
-          spoken prose: icons and markup removed, links reduced to their label, units spelled
+          spoken prose: icons, markup and links removed, coordinates and diagnostics dropped, units spelled
           out (<em>km/h → chilometri orari</em>), compass points expanded
           (<em>O → ovest</em>), and lines joined into sentences. Charts are not sent.
           Snapshots you ask for with <code>/rain</code> and <code>/storm</code> keep their
           picture — you requested those, so you are looking at the screen.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          Nothing that describes the <em>instrument</em> is said at all: no token or tool
+          footer even when those toggles are on, no coordinates, map links or record ids,
+          no fix age, accuracy or “non si sta muovendo”, no radar coverage. But every line
+          that explains a <em>failure</em> survives — a blind monitor and why, a switched-off
+          one, a stale feed. Silence and calm must not sound the same.
         </p>
         <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
           The conversion is deterministic — no model call, no added latency, no tokens spent.

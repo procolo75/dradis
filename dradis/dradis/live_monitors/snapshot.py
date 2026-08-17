@@ -219,7 +219,26 @@ class Snapshot:
 # so the wording is unit-testable without stubbing python-telegram-bot, the LLM
 # SDKs and /data/options.json into existence.
 
-def format_caption(snap) -> str:
+def format_caption(snap, voice: bool = False) -> str:
+    """The snapshot as a Telegram caption. `voice=True` is the Car Mode wording.
+
+    Car Mode is not a text filter applied afterwards — half of what has to go is
+    a whole LINE that only makes sense on a screen, and no amount of stripping
+    icons turns "fix appena aggiornato · ±12 m · non si sta muovendo" into
+    something worth hearing at the wheel. So the caller says what it needs and
+    this function omits it at the source.
+
+    What voice mode drops is everything that answers "is the instrument healthy":
+    coordinates, the map link, fix age and accuracy, radar coverage, the open
+    event, and the reassurance that nothing was changed. What it KEEPS is
+    everything that answers "is weather coming at me", plus every line that
+    explains a failure — a blind monitor, a switched-off one, a stale feed. Those
+    are the reason you asked, and dropping them would leave silence sounding
+    exactly like calm.
+
+    It stays a parameter rather than a settings lookup so this module keeps
+    importing nothing that opens a socket, which is what makes it testable.
+    """
     it = snap.language == "it"
     icon = "🌧️" if snap.kind == "rain" else "🌩️"
 
@@ -235,12 +254,18 @@ def format_caption(snap) -> str:
         badge = "⏸️ Spento" if it else "⏸️ Off"
 
     lines = [f"{icon} <b>{html.escape(snap.name)}</b> — "
-             + ("situazione ora" if it else "right now"), badge]
+             + ("situazione ora" if it else "right now")]
+    # Spoken, "Active" every single time is a word you learn to talk over, and
+    # the one time it says "Off" you talk over that too. Voice mode reports the
+    # status only when it is not the expected one — the same rule
+    # `_format_source_health` already applies to the feed.
+    if not voice or not snap.running:
+        lines.append(badge)
     source = _format_source_health(snap, it)
     if source:
         lines.append(source)
     lines.append("")
-    lines += _format_origin(snap.origin, it)
+    lines += _format_origin(snap.origin, it, voice)
 
     if snap.blind_reason:
         lines.append("")
@@ -250,7 +275,7 @@ def format_caption(snap) -> str:
                      else "This is why it is not alerting.")
     else:
         lines.append("")
-        lines += (_format_rain(snap, it) if snap.kind == "rain"
+        lines += (_format_rain(snap, it, voice) if snap.kind == "rain"
                   else _format_storm(snap, it))
 
     lines.append("")
@@ -261,17 +286,21 @@ def format_caption(snap) -> str:
                       "riceverai avvisi finché non lo riattivi.") if it else
                      ("⏸️ The monitor is off: this is a preview, nothing will "
                       "arrive on its own until you enable it."))
-    if snap.event_open:
-        lines.append((f"🎯 Evento aperto: anello {snap.notified_ring}/"
-                      f"{snap.ring_count} già annunciato") if it else
-                     (f"🎯 Event open: ring {snap.notified_ring}/"
-                      f"{snap.ring_count} already announced"))
-    else:
-        lines.append("🎯 Nessun evento aperto" if it else "🎯 No event open")
-    lines.append(("ℹ️ Ho solo guardato: nessun avviso inviato, niente cambiato "
-                  "nel monitor.") if it else
-                 ("ℹ️ Only looked: no alert sent, nothing changed in the "
-                  "monitor."))
+    # Both of these describe the MONITOR's bookkeeping, not the weather. On
+    # screen they are what makes the command trustworthy; read aloud they are two
+    # more sentences between the driver and the thing that is coming at them.
+    if not voice:
+        if snap.event_open:
+            lines.append((f"🎯 Evento aperto: anello {snap.notified_ring}/"
+                          f"{snap.ring_count} già annunciato") if it else
+                         (f"🎯 Event open: ring {snap.notified_ring}/"
+                          f"{snap.ring_count} already announced"))
+        else:
+            lines.append("🎯 Nessun evento aperto" if it else "🎯 No event open")
+        lines.append(("ℹ️ Ho solo guardato: nessun avviso inviato, niente cambiato "
+                      "nel monitor.") if it else
+                     ("ℹ️ Only looked: no alert sent, nothing changed in the "
+                      "monitor."))
     return "\n".join(lines)
 
 
@@ -296,10 +325,22 @@ def _format_source_health(snap, it: bool) -> str:
     return ""
 
 
-def _format_origin(origin, it: bool) -> list[str]:
+def _format_origin(origin, it: bool, voice: bool = False) -> list[str]:
+    # The warning survives voice mode; the description does not. A monitor
+    # following a position that was deleted is silently watching nowhere, and
+    # that has to be said however you are listening.
     if origin.missing:
         return ["⚠️ " + ("Segue una posizione che non esiste più."
                          if it else "It follows a position that no longer exists.")]
+
+    # Everything below answers "is the instrument telling the truth" — where it
+    # believes it is, to five decimals, with a map to check against, how old the
+    # fix is and how tight. That is the whole point of the command on a screen,
+    # and pure noise through a speaker: you cannot tap a link or read a
+    # coordinate while driving, and being told your phone "is not moving" when
+    # you are in a moving car is worse than useless.
+    if voice:
+        return []
 
     if origin.following:
         head = (f"📍 Origine: posizione «{html.escape(origin.source_name)}»" if it
@@ -335,13 +376,15 @@ def _format_origin(origin, it: bool) -> list[str]:
     return lines
 
 
-def _format_rain(snap, it: bool) -> list[str]:
+def _format_rain(snap, it: bool, voice: bool = False) -> list[str]:
     lines = []
     if snap.radar_t is not None:
         clock = datetime.fromtimestamp(snap.radar_t, _tz(snap.tz_name)).strftime("%H:%M")
         age = (snap.radar_age_sec or 0) / 60.0
         extra = ""
-        if snap.coverage is not None:
+        # How much of the radar frame had usable data is a quality figure for the
+        # instrument, not a fact about the weather.
+        if snap.coverage is not None and not voice:
             extra = (f" · copertura {snap.coverage:.0%}" if it
                      else f" · coverage {snap.coverage:.0%}")
         fetched = (" · scaricato ora" if it else " · fetched on demand") \

@@ -100,7 +100,7 @@ In movimento a 80 chilometri orari verso nord-est. 14:32.
 
 Note `O` → *ovest*. Spoken, the compass abbreviation for west is the Italian conjunction "or" — a bug invisible on screen and total in the car.
 
-Snapshots you ask for with `/rain` and `/storm` keep their picture: you requested those, so you are looking at the screen. Their caption is still converted, and the map link becomes its own label rather than a URL read character by character.
+Snapshots you ask for with `/rain` and `/storm` keep their picture: you requested those, so you are looking at the screen. Their caption is still converted — and stripped of the coordinates, the map link and the fix diagnostics, which mean something on a screen and nothing at all through a speaker.
 
 Send `/car` again to switch back, or use `/car on` and `/car off` to be explicit. `/info` shows the current state.
 

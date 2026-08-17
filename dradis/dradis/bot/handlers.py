@@ -485,11 +485,14 @@ async def _deliver_snapshot(message, kind: str, cfg: dict):
         return
 
     # The picture survives Car Mode here, unlike an alert: you asked for this one,
-    # so you are looking at the phone. The caption is still spoken form, and the
-    # map link becomes its own label — reading a URL aloud is the worst case.
+    # so you are looking at the phone. The CAPTION still has to be listenable, and
+    # `format_caption` is told so directly rather than left to the sanitiser —
+    # coordinates, the map link and the fix diagnostics are whole lines that only
+    # mean anything on a screen, and no amount of stripping icons fixes that.
     # Truncate AFTER rewriting: sanitising shortens the text, so a cut measured on
     # the original would throw away words it did not need to.
-    caption, parse_mode = _state.for_car(format_caption(snap),
+    voice = _state.car_mode_enabled()
+    caption, parse_mode = _state.for_car(format_caption(snap, voice=voice),
                                          cfg.get("language", "it"))
     if len(caption) > _TG_CAPTION_MAX:
         caption = caption[:_TG_CAPTION_MAX - 1] + "…"

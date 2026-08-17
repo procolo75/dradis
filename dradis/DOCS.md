@@ -351,7 +351,8 @@ DRADIS messages are built to be **looked at**: an icon on every line, bold text,
 With **Car Mode** on, every alert, scheduled report and chat answer is rewritten as plain spoken prose:
 
 - icons and markup removed;
-- links reduced to their label, the URL dropped;
+- links removed whole — every one DRADIS sends is a tap target, and a tap target with no link behind it is an instruction you cannot follow;
+- coordinates, record ids and instrument diagnostics (fix age, accuracy, "non si sta muovendo", radar coverage) dropped;
 - units spelled out — `12 km/h` → *12 chilometri orari*, `±12 m` → *più o meno 12 metri*;
 - compass points expanded — `O` → *ovest* (spoken, the abbreviation is the conjunction "or");
 - ratios turned into words — `Anello 2/4` → *Anello 2 su 4*;
@@ -359,7 +360,11 @@ With **Car Mode** on, every alert, scheduled report and chat answer is rewritten
 
 The conversion is deterministic: no model call, no added latency on an urgent alert, no tokens spent. Monitors keep using their own configured language.
 
-**What is not sent:** radar charts and scheduled chart reports. A picture is exactly what a driver cannot use, and a photo notification is the one CarPlay tends not to read at all. A chart-only scheduled report is replaced by a line saying it is waiting, so it never disappears silently. The token footer and the monitor signature are dropped rather than read aloud.
+**What is not sent:** radar charts and scheduled chart reports. A picture is exactly what a driver cannot use, and a photo notification is the one CarPlay tends not to read at all. A chart-only scheduled report is replaced by a line saying it is waiting, so it never disappears silently.
+
+**What is not said:** anything that describes the instrument rather than the weather — the token footer (`🔢 in N · out N`), the tools used (`🔧 …`), the monitor signature, coordinates, map links, record ids, fix age and accuracy, "non si sta muovendo", radar coverage, the open-event state, and the "nothing was changed" reassurance. All of it is worth a block on screen and nothing at all through a speaker.
+
+**What is always said:** every line that explains a failure — a blind monitor and why, a switched-off one, a stale feed, a position that no longer exists. Silence and calm must not sound the same.
 
 **What keeps its picture:** snapshots you asked for with `/rain` and `/storm`. You requested those, so you are looking at the screen — the caption is still converted.
 

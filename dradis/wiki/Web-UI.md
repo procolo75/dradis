@@ -35,7 +35,7 @@ Runtime settings for the DRADIS agent. Saved to `/data/dradis_settings.json`, ef
 
 DRADIS messages are built to be **looked at**: an icon on every line, bold text, abbreviated units, `·` and `—` between facts, and a radar chart attached to weather alerts. Behind the wheel that format breaks down — CarPlay announces emoji by name, spells `45°` and `2/4` as symbols, reads URLs character by character, and often says nothing beyond "Image" when a photo is attached.
 
-With Car Mode on, every alert, scheduled report and chat answer is rewritten as plain spoken prose: icons and markup removed, links reduced to their label, units spelled out (`12 km/h` → *12 chilometri orari*), compass points expanded (`O` → *ovest*), ratios turned into words (`Anello 2/4` → *Anello 2 su 4*), and lines joined into sentences. Monitors keep their own configured language.
+With Car Mode on, every alert, scheduled report and chat answer is rewritten as plain spoken prose: icons, markup and links removed, coordinates and record ids dropped, units spelled out (`12 km/h` → *12 chilometri orari*), compass points expanded (`O` → *ovest*), ratios turned into words (`Anello 2/4` → *Anello 2 su 4*), and lines joined into sentences. Monitors keep their own configured language.
 
 The conversion is deterministic — no model call, no added latency on an urgent alert, no tokens spent.
 
@@ -44,9 +44,13 @@ The conversion is deterministic — no model call, no added latency on an urgent
 | Enabled | `off` | Turn Car Mode on. Also togglable from Telegram with `/car`. Takes effect on the next message — nothing needs reloading. |
 | Test message | — | Sends a sample storm alert in Car Mode wording, **whatever the toggle is set to** — you use it to decide whether to switch Car Mode on. Listening to it through CarPlay is the only real test. |
 
-**Not sent in Car Mode:** radar charts, scheduled chart reports (replaced by a line saying the report is waiting, so it never disappears silently), the token footer and the monitor signature.
+**Not sent in Car Mode:** radar charts, and scheduled chart reports (replaced by a line saying the report is waiting, so it never disappears silently).
 
-**Keeps its picture:** a snapshot you asked for with `/rain` or `/storm`. You requested it, so you are looking at the screen — the caption is still converted, and the map link becomes its own label.
+**Not said in Car Mode:** anything describing the instrument rather than the weather — the token footer (`🔢 in N · out N`), the tools used (`🔧 …`), the monitor signature, coordinates, map links, record ids, fix age and accuracy, "non si sta muovendo", radar coverage, the open-event state, and the "nothing was changed" reassurance.
+
+**Always said:** every line that explains a failure — a blind monitor and why, a switched-off one, a stale feed, a position that no longer exists. Silence and calm must not sound the same.
+
+**Keeps its picture:** a snapshot you asked for with `/rain` or `/storm`. You requested it, so you are looking at the screen — the caption is still converted, and stripped of the coordinates, the map link and the fix diagnostics.
 
 **Not converted:** the output of `/info`, `/manage`, `/menu`, `/tasks`, `/monitors`, `/hamonitors`. They answer a button you just pressed.
 

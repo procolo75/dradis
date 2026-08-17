@@ -18,7 +18,7 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 - **Conversation history** with configurable depth
 - **Telegram error notifications** — all API failures are reported via Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
-- 🚗 **Car Mode** — every alert, report and answer rewritten as plain spoken prose so CarPlay can read it aloud: icons and markup stripped, links reduced to their label, units and compass points spelled out (`12 km/h` → *12 chilometri orari*, `O` → *ovest*), lines joined into sentences, charts not sent. Deterministic — no model call, no added latency, no tokens. Toggle with `/car`
+- 🚗 **Car Mode** — every alert, report and answer rewritten as plain spoken prose so CarPlay can read it aloud: icons, markup and links stripped, coordinates and record ids dropped, units and compass points spelled out (`12 km/h` → *12 chilometri orari*, `O` → *ovest*), lines joined into sentences, charts not sent. Deterministic — no model call, no added latency, no tokens. Toggle with `/car`
 
 ### Tools
 

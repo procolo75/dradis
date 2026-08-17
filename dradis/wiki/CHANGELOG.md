@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## [4.4.1] - 2026-08-17
+
+**Car Mode says nothing about the instrument.** 4.4.0 removed the icons and the markup and stopped there, so what reached the speaker still opened with *"Origine: posizione Telefono, fix appena aggiornato, più o meno 12 metri, non si sta muovendo"* and closed with *"Nessun evento aperto. Ho solo guardato: nessun avviso inviato, niente cambiato nel monitor."* Every one of those sentences answers **"is the instrument healthy"** — a question worth a whole block on screen and worth nothing at all through a speaker, where being told your phone is not moving *while you are driving* is not just noise, it is wrong. A `/rain` snapshot now reads as one line about the weather and stops.
+
+- **Fix — the diagnostics are dropped at the source, not filtered afterwards.** `format_caption` takes a `voice` flag. Coordinates, the map link, fix age and accuracy, radar coverage, the open-event state and the "nothing was changed" reassurance are whole LINES that only mean something on a screen; no amount of stripping icons turns them into speech, so they are never generated. It stays a parameter rather than a settings lookup, so `snapshot.py` still imports nothing that opens a socket.
+- **Fix — but never a failure.** Silence and calm must not sound the same. A blind monitor, a switched-off one, a stale feed and a position that no longer exists all keep their line in voice mode. Those are the reason you asked.
+- **Fix — a healthy status is not worth saying.** "Attivo" before every answer is a word you learn to talk over, and then you talk over the one time it says "Spento". Voice mode reports the status only when it is not the expected one — the rule `_format_source_health` already applied to the feed, now applied to the monitor.
+- **Fix — links go whole, label included.** Keeping the label was 4.4.0's design and it was wrong: every link DRADIS sends is a tap target, so alerts ended on a flat *"apri la mappa."* — an instruction the listener cannot follow, which sounds like information and is not. This also clears the seismic alert's two links with no per-monitor plumbing, because a line left holding only an icon is already discarded.
+- **Fix — coordinates and record ids are dropped wherever they appear.** A net under the change above, not a substitute for it: a monitor added later cannot quietly reintroduce them. Five decimals spoken digit by digit, twice, is the single worst thing on the list. The pair needs a comma and four decimals, so `12.3456 km` survives as a measurement; an id needs three digits, so a `#2` that means something in prose survives while INGV's `#31884` does not.
+- **Fix — removing something from the middle of a list no longer leaves the separator behind.** `14:32 · #31884` became `"14:32,"`, and the thunderstorm monitor's `📍 40.7967, 14.0735 | Forecast 2 days` began on a pipe. Doubles are collapsed and the edges trimmed before the sentence is terminated — in that order, because collapsing whitespace first leaves the gap the removal opened. The pipe now counts as a separator, which also makes a markdown table from the model read as a list rather than a row of "vertical bar".
+
+The token and tool footers needed nothing here: `reply_footer` has returned nothing in Car Mode since 4.4.0, on both the chat and the scheduled-task path, and `test_car_mode_gate.py` already pins it.
+
+Tests: 381 (was 367). New in `test_car_mode.py` (9), `test_snapshot.py` (5).
+
 ## [4.4.0] - 2026-08-17
 
 **🚗 Car Mode: alerts a car can actually read out loud.** Every DRADIS message is built to be LOOKED AT — an icon heading each line, `<b>` tags, abbreviated units, `·` and `—` between facts, and for weather a radar chart riding along as a photo. Behind the wheel that format collapses. CarPlay hands the notification to the speech engine, which announces emoji by name ("cloud with lightning and rain"), spells `45°` and `2/4` as symbols, reads a URL character by character, and — when a photo is attached — frequently says nothing beyond "Image". The alert that matters most became the one that could not be heard.
