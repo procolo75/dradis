@@ -221,3 +221,40 @@ async def get_backup_status():
         "credentials_configured": bool(opts.get("google_client_id") and opts.get("google_client_secret")),
         "authenticated": Path("/data/gdrive_backup_token.json").exists(),
     }
+
+
+# ── Car Mode ──────────────────────────────────────────────────────────────────
+
+# A realistic storm alert rather than a lorem-ipsum string: the point of the test
+# is to hear what the wording sounds like out loud, which a made-up sentence
+# cannot tell you. It carries one of every construction the sanitiser rewrites —
+# markup, a compound unit, a ratio, a bearing in degrees, a compass point and a
+# separator — so anything broken is audible in a single message.
+_CAR_MODE_SAMPLE = (
+    "⛈️ <b>Temporale nel raggio — Casa</b>\n"
+    "\U0001f4cd Fronte a <b>12 km</b> a O (270°)\n"
+    "\U0001f3af Anello 2/4 · entro 20 km\n"
+    "\U0001f9ed Rotta costante: ti arriva addosso\n"
+    "\U0001f697 In movimento a 80 km/h verso NE\n"
+    "\U0001f522 47 fulmini in 30 min (settore NE)"
+)
+
+
+@router.post("/api/carmode/test")
+async def carmode_test():
+    """Send the sample alert in Car Mode wording, whatever the toggle is set to.
+
+    Deliberately calls `to_spoken` rather than `for_car`: you test this to decide
+    whether to switch Car Mode on, so it has to work while it is still off.
+    """
+    import bot.state as _state
+    from car_mode import to_spoken
+
+    bot, chat_id = _state.get_bot_and_chat("default")
+    if not bot:
+        raise HTTPException(status_code=400, detail="No Telegram bot configured")
+    try:
+        await bot.send_message(chat_id=chat_id, text=to_spoken(_CAR_MODE_SAMPLE))
+        return {"ok": True, "message": "Test message sent"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

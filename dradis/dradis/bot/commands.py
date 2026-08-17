@@ -45,6 +45,7 @@ async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Model: {settings.get('model', _SETTINGS_DEFAULTS['model'])}",
         f"History: {'on' if settings.get('history_enabled', True) else 'off'} "
         f"({settings.get('history_depth', _SETTINGS_DEFAULTS['history_depth'])} exchanges)",
+        f"Car Mode: {'on' if settings.get('car_mode_enabled', False) else 'off'}",
     ]
 
     for key, label in [("ws_enabled", "Web Search"), ("weather_enabled", "Weather")]:

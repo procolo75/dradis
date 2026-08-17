@@ -23,6 +23,9 @@ from bot.scheduler import (
     _live_status_dispatcher,
 )
 from live_monitors.ha import ha_monitor_manager
+from live_monitors.rain_front import rain_front_monitor_manager
+from live_monitors.snapshot import format_caption
+from live_monitors.storm_front import storm_front_monitor_manager
 from web.store import (
     load_tasks,
     load_monitors,
@@ -33,6 +36,7 @@ from web.store import (
     toggle_monitor,
     toggle_live_monitor,
     toggle_ha_monitor,
+    set_car_mode,
 )
 
 COMMANDS = [
@@ -41,7 +45,10 @@ COMMANDS = [
     BotCommand("tasks",      "List and run tasks (all, including disabled)"),
     BotCommand("monitors",   "List and run monitors (all, including disabled)"),
     BotCommand("hamonitors", "List HA monitors and their status"),
+    BotCommand("rain",       "Radar snapshot: what a rain monitor sees right now"),
+    BotCommand("storm",      "Radar snapshot: what a storm monitor sees right now"),
     BotCommand("manage",     "Enable / disable tasks and monitors"),
+    BotCommand("car",        "Car Mode: plain spoken messages, no icons or charts"),
     BotCommand("gcalauth",   "Connect Google Calendar (OAuth2)"),
     BotCommand("gmailauth",  "Connect Gmail (OAuth2)"),
     BotCommand("gtasksauth",  "Connect Google Tasks (OAuth2)"),
@@ -95,15 +102,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _state.save_turn("assistant", text, history_depth)
 
     if text:
-        await update.message.reply_text(
-            _state.md_to_html(text) + footer,
-            parse_mode=ParseMode.HTML,
-        )
+        body, parse_mode = _state.for_car(_state.md_to_html(text) + footer)
     else:
-        await update.message.reply_text(
-            f"⚠️ Model <code>{html.escape(model)}</code> returned no text.{footer}",
-            parse_mode=ParseMode.HTML,
+        body, parse_mode = _state.for_car(
+            f"⚠️ Model <code>{html.escape(model)}</code> returned no text.{footer}"
         )
+    await update.message.reply_text(body, parse_mode=parse_mode)
 
 
 # ── Voice handler ─────────────────────────────────────────────────────────────
@@ -385,6 +389,178 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Al massimo {rings} avvisi di avvicinamento + 1 cessato "
                f"per temporale — Polling: 60s")
     await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+# ── /rain and /storm — on-demand snapshots ────────────────────────────────────
+#
+# These commands PERCEIVE WITHOUT DECIDING. They rebuild the frame with the same
+# builders a poll uses, but never call evaluate() or commit() on a live tracker:
+# the bounded-message invariant rests on `notified_ring`, so a diagnostic that
+# advanced it would silence the real alert half an hour later. Every caption ends
+# by saying so, because a test tool you cannot trust is worse than none.
+
+_SNAP_KINDS = {
+    "rain":  ("rain_front",  "🌧️", rain_front_monitor_manager),
+    "storm": ("storm_front", "🌩️", storm_front_monitor_manager),
+}
+
+# Telegram caps a photo CAPTION at 1024 characters — a quarter of a text message.
+# Overflowing it fails the send outright, so the caption is trimmed rather than
+# risking the picture.
+_TG_CAPTION_MAX = 1024
+
+
+def _snapshot_configs(kind: str) -> list[dict]:
+    wanted = _SNAP_KINDS[kind][0]
+    return _by_name([m for m in load_live_monitors() if m.get("type") == wanted])
+
+
+def _build_snapshot_keyboard(kind: str, configs: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for m in configs:
+        status = _live_status_dispatcher(m["id"])
+        badge = {"running": "🟢", "degraded": "🟠"}.get(status, "🔴")
+        rows.append([InlineKeyboardButton(
+            f"{badge} {m['name']} ({_live_monitor_detail(m)})",
+            callback_data=f"snap:{kind}:{m['id']}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _cmd_snapshot(update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    label = _SNAP_KINDS[kind][0].replace("_", " ")
+    configs = _snapshot_configs(kind)
+    if not configs:
+        await update.message.reply_text(
+            f"No {label} monitor configured. Add one from the Web UI.")
+        return
+
+    query = " ".join(context.args or []).strip().lower()
+    if query:
+        configs = [m for m in configs if query in (m.get("name") or "").lower()]
+        if not configs:
+            await update.message.reply_text(f"No {label} monitor matches “{query}”.")
+            return
+
+    if len(configs) == 1:
+        await _deliver_snapshot(update.message, kind, configs[0])
+        return
+    await update.message.reply_text(
+        f"Which {label} monitor?",
+        reply_markup=_build_snapshot_keyboard(kind, configs))
+
+
+async def cmd_rain(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _cmd_snapshot(update, context, "rain")
+
+
+async def cmd_storm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _cmd_snapshot(update, context, "storm")
+
+
+async def handle_snapshot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _state.ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    parts = query.data.split(":", 2)
+    await query.answer()
+    if len(parts) < 3:
+        return
+    _, kind, item_id = parts
+    cfg = next((m for m in load_live_monitors() if m["id"] == item_id), None)
+    if not cfg or kind not in _SNAP_KINDS:
+        await query.message.reply_text("❌ Monitor not found.")
+        return
+    await _deliver_snapshot(query.message, kind, cfg)
+
+
+async def _deliver_snapshot(message, kind: str, cfg: dict):
+    """Build the snapshot and send it as ONE message, picture plus caption."""
+    try:
+        snap = await _take_snapshot(kind, cfg)
+    except Exception as e:
+        await message.reply_text(f"❌ Snapshot failed: {html.escape(str(e))}")
+        return
+
+    # The picture survives Car Mode here, unlike an alert: you asked for this one,
+    # so you are looking at the phone. The caption is still spoken form, and the
+    # map link becomes its own label — reading a URL aloud is the worst case.
+    # Truncate AFTER rewriting: sanitising shortens the text, so a cut measured on
+    # the original would throw away words it did not need to.
+    caption, parse_mode = _state.for_car(format_caption(snap),
+                                         cfg.get("language", "it"))
+    if len(caption) > _TG_CAPTION_MAX:
+        caption = caption[:_TG_CAPTION_MAX - 1] + "…"
+    if snap.picture:
+        await message.reply_photo(photo=snap.picture, caption=caption,
+                                  parse_mode=parse_mode,
+                                  read_timeout=60, write_timeout=60)
+    else:
+        await message.reply_text(caption, parse_mode=parse_mode,
+                                 disable_web_page_preview=True)
+
+
+async def _take_snapshot(kind: str, cfg: dict):
+    now = time.time()
+    manager = _SNAP_KINDS[kind][2]
+    monitor = manager.get(cfg["id"])
+
+    if kind == "storm":
+        # No on-demand fallback exists: the strike buffer only fills while the
+        # subscription is up. A stopped monitor still reports its position, which
+        # is half of what the command is for.
+        from live_monitors.storm_front import StormFrontLiveMonitor
+        monitor = monitor or StormFrontLiveMonitor(cfg, None, _tz_name())
+        return await monitor.snapshot(now)
+
+    from live_monitors.radar import PRODUCT_RAIN, fetch_latest, radar_feed
+    from live_monitors.rain_front import RainFrontLiveMonitor
+    if monitor is not None and radar_feed.latest(PRODUCT_RAIN) is not None:
+        return await monitor.snapshot(now)
+    # Not running, or running but the shared feed has not delivered yet: fetch one
+    # image on demand, so the command is useful precisely while you are setting a
+    # monitor up. Constructing a monitor is side-effect free — the feed is only
+    # acquired in start(), which is not called.
+    grid, _lag = await fetch_latest(PRODUCT_RAIN)
+    monitor = monitor or RainFrontLiveMonitor(cfg, None, _tz_name())
+    return await monitor.snapshot(now, grid=grid)
+
+
+def _tz_name() -> str:
+    return _state.read_settings().get("timezone", "UTC") or "UTC"
+
+
+# ── /car ──────────────────────────────────────────────────────────────────────
+
+async def cmd_car(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Turn Car Mode on or off. No argument toggles; `on`/`off` are explicit.
+
+    A toggle is the right default because this command is used at the two moments
+    you know exactly what you want — getting in and getting out — and typing one
+    word is easier than remembering which state you left it in. The explicit
+    forms exist so a dictated "car off" cannot flip it back on by accident.
+    """
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+
+    arg = context.args[0].lower() if context.args else ""
+    if arg in ("on", "off"):
+        enabled = set_car_mode(arg == "on")
+    elif arg:
+        await update.message.reply_text("Usage: /car [on|off]")
+        return
+    else:
+        enabled = set_car_mode(not _state.read_settings().get("car_mode_enabled", False))
+
+    # Deliberately free of the markup and icons the rest of this file uses: this
+    # is the one reply guaranteed to be read while Car Mode is on.
+    msg = ("Car Mode on. Alerts will arrive as plain spoken text, "
+           "without icons, links or charts."
+           if enabled else
+           "Car Mode off. Alerts return to the full format, charts included.")
+    await update.message.reply_text(msg)
 
 
 # ── /manage ───────────────────────────────────────────────────────────────────

@@ -85,6 +85,10 @@ Both are enforced by tests, including an exhaustive sweep proving no combination
 
 **If the feed goes down** everything freezes: no alerts, and the all-clear countdown restarts on reconnect. A dead socket and a clear sky look identical if you only count strikes, so the monitor refuses to guess.
 
+### Checking it without waiting for a storm
+
+`/storm` on Telegram replies with the polar chart this monitor would send right now, plus where it thinks it is and how many strikes it is holding. Unlike `/rain` it needs the monitor to be running — lightning is only buffered while the subscription is up — and it changes nothing. See [Telegram-Commands](Telegram-Commands#rain-and-storm).
+
 ### Where to watch — a fixed place, or a phone
 
 **Where to watch** chooses where the radar is centred. `📌 A fixed place` (the default, and what every monitor configured before v4.1.0 inherits) uses the Location field and never consults the position manager. Selecting a position instead makes the monitor follow that phone — and the Location field disappears, because it is no longer used for anything.
@@ -354,6 +358,10 @@ One thing could **not** be inherited: how the *nearest edge* of the weather is f
 > On a real image over Arezzo, the nearest rain was **3.7 km** away and that method reported **14.7 km** — it would have placed the rain outside the innermost ring while the user was getting wet.
 >
 > The rain front takes the fifth-nearest raining pixel instead: still immune to a stray speckle, and within about a kilometre of the true edge everywhere it was tested.
+
+### Checking it without waiting for rain
+
+`/rain` on Telegram replies with the picture this monitor would send right now, and a caption saying where it believes it is — coordinates, a map link, the age of the fix, and the drift if it is measurable. It works even while the monitor is switched off, and it changes nothing. See [Telegram-Commands](Telegram-Commands#rain-and-storm).
 
 ### Example Configuration
 

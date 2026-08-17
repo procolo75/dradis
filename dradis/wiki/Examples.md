@@ -77,6 +77,39 @@ Sample alert (all clear):
 
 ---
 
+## Car Mode *(deterministic — no LLM, no token cost)*
+
+Send `/car` before setting off. Every alert, scheduled report and chat answer is rewritten so CarPlay can read it aloud, and charts are left out — a photo notification is announced as "Image", or not read at all.
+
+The same storm alert, before and after:
+
+```
+⛈️ Temporale nel raggio — Casa
+📍 Fronte a 12 km a O (270°)
+🎯 Anello 2/4 · entro 20 km
+🧭 Rotta costante: ti arriva addosso
+🚗 In movimento a 80 km/h verso NE
+🕐 14:32
+```
+
+```
+Temporale nel raggio, Casa. Fronte a 12 chilometri a ovest (270 gradi).
+Anello 2 su 4, entro 20 chilometri. Rotta costante: ti arriva addosso.
+In movimento a 80 chilometri orari verso nord-est. 14:32.
+```
+
+Note `O` → *ovest*. Spoken, the compass abbreviation for west is the Italian conjunction "or" — a bug invisible on screen and total in the car.
+
+Snapshots you ask for with `/rain` and `/storm` keep their picture: you requested those, so you are looking at the screen. Their caption is still converted, and the map link becomes its own label rather than a URL read character by character.
+
+Send `/car` again to switch back, or use `/car on` and `/car off` to be explicit. `/info` shows the current state.
+
+> Activation is manual by design. GPS speed cannot distinguish *stopped in traffic* from *parked and walked away* — physically the same signal — so an automatic trigger would switch off exactly when you are still driving.
+
+Configure in **Web UI → Settings → 🚗 Car Mode**, where a test button sends a sample alert in Car Mode wording whatever the toggle is set to.
+
+---
+
 ## Daily thunderstorm risk digest *(scheduled monitor)*
 
 Every morning DRADIS fetches atmospheric instability data for the next 2 days and sends a convective risk summary divided by time band — with no LLM call, no token cost, and deterministic output.

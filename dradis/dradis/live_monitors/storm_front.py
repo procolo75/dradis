@@ -49,6 +49,7 @@ from .blitzortung import BlitzortungFeed
 from .geo import direction_label, distance_km
 from .position import position_manager
 from .position_core import MAX_PLAUSIBLE_KMH
+from .snapshot import Snapshot, describe_origin, preview_alert
 from .storm_front_core import (
     CLEAR_DWELL_SEC, EVENT_IDLE, OBSERVE_FACTOR, POLL_INTERVAL_SEC, WINDOW_MIN,
     TRACK_CLOSING, TRACK_GRAZING,
@@ -405,6 +406,56 @@ class StormFrontLiveMonitor:
                         self.observe_radius_km, WINDOW_MIN * 60.0),
             now, feed_ok=False)
 
+    # ── Snapshot ──────────────────────────────────────────────────────────────
+
+    async def snapshot(self, now: float) -> Snapshot:
+        """What this monitor perceives right now — perception without decision.
+
+        Deliberately never calls `self._tracker.evaluate()` or `.commit()`.
+        Invariant A rests on `notified_ring`, so a diagnostic that advanced it
+        would silence the real storm half an hour later, and one that opened an
+        event would let a single cell emit a second full ladder of rings. The
+        tracker is read here and nowhere written; a test asserts its state is
+        identical before and after.
+
+        Unlike the rain front there is no on-demand fallback: the strike buffer
+        only fills while the MQTT subscription is up, so a stopped monitor has
+        nothing to show and the caller says so.
+        """
+        origin_info = describe_origin(self, now)
+        common = dict(
+            monitor_id=self.monitor_id, name=self.name, kind="storm",
+            language=self.language, tz_name=self.tz_name,
+            status=self.status(),
+            running=self.is_running(), origin=origin_info,
+            event_open=self._tracker.event_state != EVENT_IDLE,
+            notified_ring=self._tracker.notified_ring,
+            ring_count=self.ring_count, radius_km=self.radius_km,
+            feed_connected=self._feed.feed_ok(),
+        )
+        if not origin_info.usable:
+            return Snapshot(blind_reason=origin_info.reason or "position unusable",
+                            **common)
+        if not self.is_running():
+            return Snapshot(
+                blind_reason=("the monitor is stopped — lightning can only be "
+                              "buffered while connected, so there is nothing to "
+                              "show until it runs"), **common)
+
+        origin = (origin_info.lat, origin_info.lon)
+        strikes = list(self._feed.strikes(now))
+        frame = build_frame(strikes, origin, now, self.radius_km,
+                            self.observe_radius_km, WINDOW_MIN * 60.0)
+        alert = preview_alert(frame, self.edges, self.ring_count)
+        picture = await self._render_chart(alert, frame, strikes, now, origin=origin) \
+            if alert is not None else None
+
+        return Snapshot(
+            front_km=frame.dominant.front_km if frame.dominant else None,
+            front_bearing_deg=frame.dominant.bearing_deg if frame.dominant else None,
+            activity=frame.strikes_in_radius,
+            picture=picture, **common)
+
     def _origin_debug(self, origin: tuple[float, float]) -> str:
         if not self.position_id or self._motion is None:
             return ""
@@ -740,6 +791,15 @@ class StormFrontMonitorManager:
     def status(self, monitor_id: str) -> str:
         monitor = self._monitors.get(monitor_id)
         return monitor.status() if monitor else "stopped"
+
+    def get(self, monitor_id: str) -> StormFrontLiveMonitor | None:
+        """The running instance, or None. Symmetric with `PositionManager.get`.
+
+        Without it a caller wanting to ask a monitor what it perceives would have
+        to reach into `_monitors`, and an accessor is cheaper than a convention
+        everyone breaks.
+        """
+        return self._monitors.get(monitor_id)
 
 
 storm_front_monitor_manager = StormFrontMonitorManager()

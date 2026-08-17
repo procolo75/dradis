@@ -596,6 +596,24 @@ def field_motion(older: RadarGrid, newer: RadarGrid,
     )
 
 
+# ── Intensity ─────────────────────────────────────────────────────────────────
+#
+# Lives here rather than with the monitor so the snapshot layer can name an
+# intensity without importing the monitor that would import it back.
+
+_INTENSITY_IT = ((0.5, "pioviggine"), (2.0, "debole"), (10.0, "moderata"),
+                 (30.0, "forte"), (float("inf"), "nubifragio"))
+_INTENSITY_EN = ((0.5, "drizzle"), (2.0, "light"), (10.0, "moderate"),
+                 (30.0, "heavy"), (float("inf"), "torrential"))
+
+
+def intensity_label(mmh: float, lang: str) -> str:
+    for edge, label in (_INTENSITY_IT if lang == "it" else _INTENSITY_EN):
+        if mmh < edge:
+            return label
+    return ""
+
+
 # ── Encounter ─────────────────────────────────────────────────────────────────
 
 # Below this the two are drifting together and the closest-approach time runs off
@@ -671,4 +689,5 @@ __all__ = [
     "MOTION_BOX_KM", "MOTION_MIN_DT_SEC", "MOTION_MAX_DT_SEC", "MOTION_MAX_KMH",
     "FieldMotion", "field_motion",
     "MIN_RELATIVE_SPEED_KMH", "Encounter", "cpa", "velocity_components",
+    "intensity_label",
 ]

@@ -344,6 +344,34 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
 
+### Settings → Car Mode
+
+DRADIS messages are built to be **looked at**: an icon on every line, bold text, abbreviated units, `·` and `—` between facts, and for weather a radar chart attached as a photo. Behind the wheel that format breaks down. CarPlay hands the notification to the speech engine, which announces emoji by name ("cloud with lightning and rain"), spells `45°` and `2/4` as symbols, reads URLs character by character, and often says nothing beyond "Image" when a photo is attached.
+
+With **Car Mode** on, every alert, scheduled report and chat answer is rewritten as plain spoken prose:
+
+- icons and markup removed;
+- links reduced to their label, the URL dropped;
+- units spelled out — `12 km/h` → *12 chilometri orari*, `±12 m` → *più o meno 12 metri*;
+- compass points expanded — `O` → *ovest* (spoken, the abbreviation is the conjunction "or");
+- ratios turned into words — `Anello 2/4` → *Anello 2 su 4*;
+- lines joined into sentences.
+
+The conversion is deterministic: no model call, no added latency on an urgent alert, no tokens spent. Monitors keep using their own configured language.
+
+**What is not sent:** radar charts and scheduled chart reports. A picture is exactly what a driver cannot use, and a photo notification is the one CarPlay tends not to read at all. A chart-only scheduled report is replaced by a line saying it is waiting, so it never disappears silently. The token footer and the monitor signature are dropped rather than read aloud.
+
+**What keeps its picture:** snapshots you asked for with `/rain` and `/storm`. You requested those, so you are looking at the screen — the caption is still converted.
+
+**Not converted:** the output of `/info`, `/manage`, `/menu`, `/tasks`, `/monitors` and `/hamonitors`. They answer a button you just pressed.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Enabled | `off` | Turn Car Mode on. Also togglable from Telegram with `/car`. Takes effect on the next message — nothing needs reloading. |
+| Test message | — | Sends a sample storm alert in Car Mode wording to your default Telegram bot, **whatever the toggle is set to** — you use it to decide whether to switch Car Mode on. Listening to it through CarPlay is the only real test. |
+
+> Activation is manual by design. GPS speed cannot tell *stopped in traffic* from *parked and walked away* — physically the same signal — so an automatic trigger would switch off exactly when you are still driving.
+
 ### Settings → Telegram Bots
 
 Configure additional Telegram bots. Each monitor, live monitor, HA monitor, and task can independently choose which bot delivers its notifications — the default DRADIS bot (configured in the HA Configuration tab) is always available as the fallback.
@@ -984,6 +1012,22 @@ DRADIS transcribes the audio via Groq Whisper, interprets the request, creates t
 
 ---
 
+### Car Mode *(no LLM, no token cost)*
+> `/car`
+
+Send it before setting off. Every alert, scheduled report and chat answer is rewritten so CarPlay can read it aloud, and charts are left out — a photo notification is announced as "Image", or not read at all.
+
+```
+⛈️ Temporale nel raggio — Casa          Temporale nel raggio, Casa.
+📍 Fronte a 12 km a O (270°)      →     Fronte a 12 chilometri a ovest (270 gradi).
+🎯 Anello 2/4 · entro 20 km             Anello 2 su 4, entro 20 chilometri.
+🚗 In movimento a 80 km/h verso NE      In movimento a 80 chilometri orari verso nord-est.
+```
+
+Note `O` → *ovest*: spoken, the compass abbreviation for west is the Italian conjunction "or" — invisible on screen, total in the car. Send `/car` again to switch back. See [Settings → Car Mode](#settings--car-mode).
+
+---
+
 ### Weather query
 > *"What's the weather in Milan tomorrow?"*
 
@@ -1171,6 +1215,9 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/menu` | List all available commands |
 | `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
 | `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see 🟢 Running / 🟠 Degraded / 🔴 Stopped status). |
+| `/rain` | Snapshot of a 🌧️ Rain front monitor: the radar picture it would send right now, plus where it thinks it is. One monitor, straight to the picture; several, inline buttons; `/rain <name>` to pick one directly. Works even on a disabled monitor — the radar image is fetched on demand. **Changes nothing**: it perceives without deciding, so it can never suppress or duplicate a real alert. |
+| `/storm` | The same for a 🌩️ Storm front monitor. Lightning can only be buffered while the subscription is up, so a stopped monitor reports its position and configuration and says why it cannot show more. |
+| `/car` | Toggle 🚗 **Car Mode** — messages rewritten as plain spoken prose, with no icons, links or charts, so CarPlay can read them aloud. `/car on` and `/car off` set it explicitly, so a dictated command cannot flip it back by accident. State is shown by `/info` and persists across restarts. See [Settings → Car Mode](#settings--car-mode). |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
 | `/gmailauth` | Start Gmail OAuth2 authorization. Same flow as `/gcalauth` but authorizes Gmail read and send scopes. Send `/gmailauth <url>` as fallback if the automatic redirect fails. |
 | `/gtasksauth` | Start Google Tasks OAuth2 authorization. Same flow as `/gcalauth`. Send `/gtasksauth <url>` as fallback if the automatic redirect fails. |

@@ -118,6 +118,7 @@ class SettingsPayload(BaseModel):
     history_depth:        int  = 2
     startup_message:      str  = "✅ DRADIS online and ready."
     timezone:             str  = "UTC"
+    car_mode_enabled:     bool = False
     ws_enabled:           bool = False
     ws_provider:          str  = "openrouter"
     ws_model:             str  = "nvidia/nemotron-3-nano-30b-a3b:free"

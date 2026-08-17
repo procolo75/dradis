@@ -44,11 +44,15 @@ from bot.handlers import (
     cmd_monitors,
     cmd_ha_monitors,
     cmd_manage,
+    cmd_car,
+    cmd_rain,
+    cmd_storm,
     handle_task_callback,
     handle_monitor_callback,
     handle_ha_monitor_callback,
     handle_live_monitor_callback,
     handle_mgmt_callback,
+    handle_snapshot_callback,
 )
 from bot.commands import (
     cmd_info,
@@ -83,7 +87,10 @@ def build_telegram_app():
     app.add_handler(CommandHandler("tasks",      cmd_tasks))
     app.add_handler(CommandHandler("monitors",   cmd_monitors))
     app.add_handler(CommandHandler("hamonitors", cmd_ha_monitors))
+    app.add_handler(CommandHandler("rain",       cmd_rain))
+    app.add_handler(CommandHandler("storm",      cmd_storm))
     app.add_handler(CommandHandler("manage",     cmd_manage))
+    app.add_handler(CommandHandler("car",        cmd_car))
     app.add_handler(CommandHandler("gcalauth",   cmd_gcalauth))
     app.add_handler(CommandHandler("gmailauth",  cmd_gmailauth))
     app.add_handler(CommandHandler("gtasksauth",  cmd_gtasksauth))
@@ -93,6 +100,7 @@ def build_telegram_app():
     app.add_handler(CallbackQueryHandler(handle_ha_monitor_callback,   pattern=r"^ha:"))
     app.add_handler(CallbackQueryHandler(handle_live_monitor_callback, pattern=r"^live:"))
     app.add_handler(CallbackQueryHandler(handle_mgmt_callback,         pattern=r"^mgmt:"))
+    app.add_handler(CallbackQueryHandler(handle_snapshot_callback,     pattern=r"^snap:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     return app

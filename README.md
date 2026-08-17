@@ -18,6 +18,7 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 - **Conversation history** with configurable depth
 - **Telegram error notifications** — all API failures are reported via Telegram
 - **Model speed-test** — ranks models by tok/s, keeps top 5
+- 🚗 **Car Mode** — every alert, report and answer rewritten as plain spoken prose so CarPlay can read it aloud: icons and markup stripped, links reduced to their label, units and compass points spelled out (`12 km/h` → *12 chilometri orari*, `O` → *ovest*), lines joined into sentences, charts not sent. Deterministic — no model call, no added latency, no tokens. Toggle with `/car`
 
 ### Tools
 
@@ -41,6 +42,7 @@ The single agent calls these tools when relevant; each capability is enabled and
   - ☁️ **Google Drive Backup** — uploads all sensitive DRADIS config files to a dedicated "DRADIS Backup" Drive folder; `drive.file` scope only (no full Drive access)
 - **Live Monitors** — persistent push-based monitors that react to external events in real time:
   - 🌩️ **Storm front / CBDR** — persistent Blitzortung MQTT listener; every 60 s the last 10 min of strikes are binned into concentric rings × 12 sectors and each sector's leading edge drives a bounded ladder of alerts. A ring is announced at most once, so **one storm produces at most 4 messages plus an all-clear** — no periodic re-alerting, ever. Each message says whether the storm is on a **collision course** or **will pass by** (CBDR — constant bearing, decreasing range) and carries a polar radar; when the evidence is inconclusive it says so instead of inventing an ETA. State survives restarts; no cron, no LLM
+  - 🌧️ **Rain front** — reads the national weather radar (Dipartimento della Protezione Civile composite of 24 radars, Open Access, **no API key**) instead of a forecast model: where it is raining *now*, measured rather than predicted. Same bounded ring ladder as the storm front, with the field's drift and closest approach; the feed is a reference-counted singleton, so a second monitor watching another town costs nothing extra. No new dependencies — Pillow decodes the float32 GeoTIFF, numpy samples it
   - 🌍 **Seismic live** — polls INGV GOSSIP JSON API every 60 s; alerts on new events and Automatic→Revised promotions; quiet-hours support
   - ⚽ **Football Betting** — polls a live-odds API every 5 min; alerts when a losing team's next-goal odds beat the winning team's and are below a configurable maximum, inside configurable 2nd-half minute windows; provider fallback; timezone-aware quiet hours; no cron, no LLM
 - **HA Monitors** — monitor any Home Assistant entity via MQTT statestream; two alert modes:
@@ -51,7 +53,7 @@ The single agent calls these tools when relevant; each capability is enabled and
 
 ### Web UI
 
-- Vertical left sidebar with collapsible sections: Settings, Tools (Web Search, Weather, Calendar, Gmail, Tasks, URL Fetch, Voice), Tasks, Scheduled Monitors, Live Monitors, HA Monitors
+- Vertical left sidebar with collapsible sections: Settings (DRADIS, MQTT / Home Assistant, Position, Car Mode, Telegram Bots), Tools (Web Search, Weather, Calendar, Gmail, Tasks, URL Fetch, Voice), Tasks, Scheduled Monitors, Live Monitors, HA Monitors
 - All settings managed at runtime — no restart required
 - Live cron validation with next-fire preview
 - Live geocoding for monitors (city name → lat/lon)
@@ -96,6 +98,21 @@ The single agent calls these tools when relevant; each capability is enabled and
 > ```
 >
 > …with a polar radar attached to each message. Configure in Web UI → **Live Monitors** → `+` → Type: 🌩️ Storm front
+
+**Car Mode** *(deterministic — no LLM, no token cost)*
+> Send `/car` before setting off. Every alert, scheduled report and chat answer is rewritten so CarPlay can read it aloud, and charts are left out — a photo notification is announced as "Image", or not read at all.
+>
+> ```
+> ⛈️ Temporale nel raggio — Casa          Temporale nel raggio, Casa.
+> 📍 Fronte a 12 km a O (270°)      →     Fronte a 12 chilometri a ovest (270 gradi).
+> 🎯 Anello 2/4 · entro 20 km             Anello 2 su 4, entro 20 chilometri.
+> 🚗 In movimento a 80 km/h verso NE      In movimento a 80 chilometri orari verso nord-est.
+> ```
+>
+> Note `O` → *ovest*: spoken, the compass abbreviation for west is the Italian conjunction "or" — invisible on screen, total in the car. Snapshots you ask for with `/rain` and `/storm` keep their picture: you requested those, so you are looking at the screen. Send `/car` again to switch back. Configure in Web UI → **Settings** → 🚗 Car Mode
+
+**Radar snapshot on demand** *(no cron, no LLM)*
+> `/rain` and `/storm` show what a weather monitor sees right now — the chart it would attach to a real alert, plus where it believes it is, how fresh the data is, and why it is not alerting. It **perceives without deciding**: it never advances the monitor's state, so it can neither suppress nor duplicate a real alert. `/rain` works even on a disabled monitor, fetching one radar image on demand — useful precisely while you are still setting it up.
 
 **Seismic live alert** *(live monitor — INGV GOSSIP)*
 > DRADIS polls the INGV seismic API every 60 s for Campi Flegrei, Vesuvio, Ischia, and Golfo di Napoli. Sends an alert on new events and when Automatic events are promoted to Revised. Quiet-hours support.
@@ -153,7 +170,10 @@ The single agent calls these tools when relevant; each capability is enabled and
 | `/tasks` | List all tasks (✅ enabled / ⏸ disabled) as inline buttons — tap one to run it immediately |
 | `/monitors` | List all scheduled and live monitors — tap a scheduled one to run it; tap a live one for 🟢/🔴 status |
 | `/hamonitors` | List all HA monitors with 🟢/🔴 running status — tap one for details |
+| `/rain` | Radar snapshot: what a 🌧️ Rain front monitor sees right now. Works even on a disabled monitor — changes nothing |
+| `/storm` | The same for a 🌩️ Storm front monitor |
 | `/manage` | Toggle enable/disable for any task, monitor, live monitor, or HA monitor from Telegram |
+| `/car` | Toggle 🚗 Car Mode — plain spoken messages, no icons, links or charts. `/car on` / `/car off` set it explicitly |
 | `/gcalauth` | Connect Google Calendar (OAuth2) |
 | `/gmailauth` | Connect Gmail (OAuth2) |
 | `/gtasksauth` | Connect Google Tasks (OAuth2) |

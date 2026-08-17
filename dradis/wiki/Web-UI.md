@@ -31,6 +31,31 @@ Runtime settings for the DRADIS agent. Saved to `/data/dradis_settings.json`, ef
 
 ---
 
+## Settings → Car Mode
+
+DRADIS messages are built to be **looked at**: an icon on every line, bold text, abbreviated units, `·` and `—` between facts, and a radar chart attached to weather alerts. Behind the wheel that format breaks down — CarPlay announces emoji by name, spells `45°` and `2/4` as symbols, reads URLs character by character, and often says nothing beyond "Image" when a photo is attached.
+
+With Car Mode on, every alert, scheduled report and chat answer is rewritten as plain spoken prose: icons and markup removed, links reduced to their label, units spelled out (`12 km/h` → *12 chilometri orari*), compass points expanded (`O` → *ovest*), ratios turned into words (`Anello 2/4` → *Anello 2 su 4*), and lines joined into sentences. Monitors keep their own configured language.
+
+The conversion is deterministic — no model call, no added latency on an urgent alert, no tokens spent.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Enabled | `off` | Turn Car Mode on. Also togglable from Telegram with `/car`. Takes effect on the next message — nothing needs reloading. |
+| Test message | — | Sends a sample storm alert in Car Mode wording, **whatever the toggle is set to** — you use it to decide whether to switch Car Mode on. Listening to it through CarPlay is the only real test. |
+
+**Not sent in Car Mode:** radar charts, scheduled chart reports (replaced by a line saying the report is waiting, so it never disappears silently), the token footer and the monitor signature.
+
+**Keeps its picture:** a snapshot you asked for with `/rain` or `/storm`. You requested it, so you are looking at the screen — the caption is still converted, and the map link becomes its own label.
+
+**Not converted:** the output of `/info`, `/manage`, `/menu`, `/tasks`, `/monitors`, `/hamonitors`. They answer a button you just pressed.
+
+The sidebar dot shows whether Car Mode is still on.
+
+> Activation is manual by design. GPS speed cannot distinguish *stopped in traffic* from *parked and walked away* — physically the same signal — so an automatic trigger would switch off exactly when you are still driving.
+
+---
+
 ## Settings → MQTT / Home Assistant
 
 | Field | Default | Description |

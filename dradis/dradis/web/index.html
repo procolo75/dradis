@@ -313,6 +313,10 @@
           <span class="nav-icon">📍</span>
           <span class="nav-label">Position</span>
         </li>
+        <li class="nav-item" data-panel="carmode" id="nav-carmode">
+          <span class="nav-dot" id="carmode-dot"></span>
+          <span class="nav-label">Car Mode</span>
+        </li>
         <li class="nav-item" data-panel="bots" id="nav-bots">
           <span class="nav-icon">🤖</span>
           <span class="nav-label">Telegram Bots</span>
@@ -642,6 +646,58 @@
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-ws">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Car Mode -->
+    <div class="panel" id="panel-carmode">
+      <div class="form-card">
+        <h2>🚗 Car Mode</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          DRADIS messages are built to be looked at: an icon on every line, bold text,
+          abbreviated units and, for weather, a radar chart. Behind the wheel that format
+          breaks down — CarPlay announces emoji by name, spells <code>45°</code> and
+          <code>2/4</code> as symbols, reads URLs character by character, and a message
+          with a photo attached is often not read out at all.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          When enabled, every alert, scheduled report and chat answer is rewritten as plain
+          spoken prose: icons and markup removed, links reduced to their label, units spelled
+          out (<em>km/h → chilometri orari</em>), compass points expanded
+          (<em>O → ovest</em>), and lines joined into sentences. Charts are not sent.
+          Snapshots you ask for with <code>/rain</code> and <code>/storm</code> keep their
+          picture — you requested those, so you are looking at the screen.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          The conversion is deterministic — no model call, no added latency, no tokens spent.
+          Toggle it from Telegram at any time with <code>/car</code>.
+        </p>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="carmode-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Test message</label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn-icon" id="btn-carmode-test">Send test message</button>
+            <span id="carmode-test-result" style="font-size:0.85rem;color:var(--text-muted)"></span>
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+            Sends a sample storm alert to your Telegram in Car Mode wording, whatever the
+            toggle above is set to. Listening to it through CarPlay is the only real test.
+          </p>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-carmode">Save</button>
         </div>
       </div>
     </div>
@@ -2118,6 +2174,59 @@ document.getElementById("btn-save-ws").addEventListener("click", async () => {
   }
 });
 
+// ── Car Mode panel ────────────────────────────────────────────────────────────
+
+async function loadCarModeSettings() {
+  const s = await api("GET", "/api/settings");
+  document.getElementById("carmode-enabled").checked = !!s.car_mode_enabled;
+  const dot = document.getElementById("carmode-dot");
+  if (dot) dot.classList.toggle("on", !!s.car_mode_enabled);
+}
+
+document.getElementById("btn-carmode-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-carmode-test");
+  const result = document.getElementById("carmode-test-result");
+  btn.disabled = true;
+  result.textContent = "Sending…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("POST", "/api/carmode/test");
+    result.textContent = `✅ ${data.message}`;
+    result.style.color = "var(--success, #43a047)";
+  } catch (e) {
+    result.textContent = `❌ ${e.message || "Send failed"}`;
+    result.style.color = "var(--danger, #e53935)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-save-carmode").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-carmode");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    car_mode_enabled: document.getElementById("carmode-enabled").checked,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const dot = document.getElementById("carmode-dot");
+    if (dot) dot.classList.toggle("on", payload.car_mode_enabled);
+    showToast("Car Mode settings saved");
+  } catch (e) {
+    showToast(e.message || "Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("nav-carmode").addEventListener("click", async () => {
+  navigateTo("carmode", document.getElementById("nav-carmode"));
+  try { await loadCarModeSettings(); } catch {}
+});
+
 // ── Tools panel ───────────────────────────────────────────────────────────────
 
 async function loadToolsSettings() {
@@ -2924,6 +3033,12 @@ async function init() {
     await loadToolsSettings();
   } catch (e) {
     console.error("loadToolsSettings:", e);
+  }
+
+  try {
+    await loadCarModeSettings();
+  } catch (e) {
+    console.error("loadCarModeSettings:", e);
   }
 
   try {

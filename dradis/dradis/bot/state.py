@@ -25,6 +25,7 @@ from telegram.constants import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import core as agent_core
+from car_mode import to_spoken
 from web.store import SETTINGS_DEFAULTS, SETTINGS_FILE
 from agents.gcal    import GCAL_TOKEN_FILE, gcal_tools
 from agents.gmail   import GMAIL_TOKEN_FILE, gmail_tools
@@ -160,14 +161,53 @@ def history_messages() -> list[dict]:
 
 # ── Telegram helpers ──────────────────────────────────────────────────────────
 
+def car_mode_enabled(settings: dict | None = None) -> bool:
+    """Whether outgoing messages should be rewritten for a car to read aloud.
+
+    Pass `settings` when the caller already has them; otherwise they are read
+    fresh, as everywhere else in DRADIS. Nothing caches this, which is why
+    toggling Car Mode needs no reload of any component.
+    """
+    s = settings if settings is not None else read_settings()
+    return bool(s.get("car_mode_enabled"))
+
+
+def for_car(text: str, lang: str = "it", parse_mode: str | None = ParseMode.HTML,
+            settings: dict | None = None) -> tuple[str, str | None]:
+    """`(text, parse_mode)` to send — rewritten for speech when Car Mode is on.
+
+    This is the gate; `car_mode.to_spoken` is the voice. Keeping them apart is
+    what lets the formatter be tested without a settings file existing.
+
+    It returns the parse mode rather than just the text, and every caller unpacks
+    both, because getting that half wrong FAILS THE SEND. Sanitising resolves
+    entities back into characters, so an answer containing "a < b" arrives at
+    Telegram as a literal `<` — which, parsed as HTML, is an unclosed tag and a
+    rejected message. There is no markup left to parse by then, so Car Mode drops
+    the parse mode entirely and the text goes as plain text.
+    """
+    if not car_mode_enabled(settings):
+        return text, parse_mode
+    return to_spoken(text, lang), None
+
+
 async def send_telegram(text: str, bot_id: str = "default",
-                        parse_mode: str = ParseMode.HTML) -> bool:
+                        parse_mode: str = ParseMode.HTML,
+                        lang: str = "it") -> bool:
     """Send a Telegram message. Returns True on confirmed delivery, False otherwise.
     Callers that need to react to delivery failure (e.g. live monitors that gate
-    state flags on a successful send) must inspect the return value."""
+    state flags on a successful send) must inspect the return value.
+
+    Car Mode is applied HERE, so every path that ends in a plain text message —
+    live monitors, HA monitors, error notices — is covered without each caller
+    having to remember. Callers that bypass this function (a photo caption, a
+    chunked report) apply `for_car` themselves; none of them also route through
+    here, so nothing is sanitised twice.
+    """
     bot, chat_id = get_bot_and_chat(bot_id)
     if not bot:
         return False
+    text, parse_mode = for_car(text, lang, parse_mode)
     try:
         await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
         return True
@@ -413,6 +453,11 @@ def reply_footer(settings: dict, result) -> str:
     Returns a ready-to-append HTML fragment (leading blank line + <i>…</i>), or "".
     """
     if result is None:
+        return ""
+    # Car Mode drops the footer entirely rather than sanitising it: "in 1234, out
+    # 567" read aloud is diagnostics competing with an alert for the driver's
+    # attention. One check here covers both callers — chat and scheduled tasks.
+    if car_mode_enabled(settings):
         return ""
     lines: list[str] = []
     if settings.get("token_usage_enabled"):

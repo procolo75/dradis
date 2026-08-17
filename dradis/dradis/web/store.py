@@ -72,6 +72,7 @@ SETTINGS_KEYS = [
     "provider", "agent_instructions", "model", "fallback_provider", "fallback_model",
     "max_tokens", "token_usage_enabled", "tools_usage_enabled",
     "history_enabled", "history_depth", "startup_message", "timezone",
+    "car_mode_enabled",
     "ws_enabled", "ws_provider", "ws_model", "ws_instructions",
     "ws_fallback_provider", "ws_fallback_model",
     "read_url_enabled",
@@ -98,6 +99,7 @@ SETTINGS_DEFAULTS: dict = {
     "history_depth":        2,
     "startup_message":      "✅ DRADIS online and ready.",
     "timezone":             "UTC",
+    "car_mode_enabled":     False,
     "ws_enabled":           False,
     "ws_provider":          "openrouter",
     "ws_model":             "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -276,6 +278,20 @@ def toggle_ha_monitor(monitor_id: str) -> bool | None:
             _notify_ha_monitors_changed()
             return item["enabled"]
     return None
+
+
+def set_car_mode(enabled: bool) -> bool:
+    """Turn Car Mode on or off and persist it. Returns the new state.
+
+    Unlike the toggles above there is no _notify_*_changed() call: nothing caches
+    this flag. Every send site reads the settings fresh, so the next message is
+    already in the new format and no component needs reloading — which also means
+    this toggle cannot fail the way the v4.1.1 ones did.
+    """
+    settings = load_settings()
+    settings["car_mode_enabled"] = bool(enabled)
+    save_settings(settings)
+    return bool(enabled)
 
 
 def load_settings() -> dict:

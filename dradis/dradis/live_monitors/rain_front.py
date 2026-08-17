@@ -64,8 +64,9 @@ from .position_core import MAX_PLAUSIBLE_KMH
 from .radar import PRODUCT_HAIL, PRODUCT_RAIN, radar_feed
 from .radar_core import (
     Encounter, build_rain_frame, coverage_fraction, cpa, field_motion,
-    peak_in_disc, rain_points, sample, velocity_components,
+    intensity_label, peak_in_disc, rain_points, sample, velocity_components,
 )
+from .snapshot import Snapshot, describe_origin, preview_alert
 from .storm_front_core import (
     CBDR_CLOSING_KM, CBDR_GRAZING_KM, EVENT_IDLE, OBSERVE_FACTOR,
     POLL_INTERVAL_SEC, TRACK_CLOSING, TRACK_GRAZING, TRACK_UNKNOWN,
@@ -402,6 +403,111 @@ class RainFrontLiveMonitor:
             await self._dispatch(alert, frame, points, now,
                                  origin=origin, effective=effective,
                                  peak_mmh=peak, hail_percent=hail)
+
+    # ── Snapshot ──────────────────────────────────────────────────────────────
+
+    async def snapshot(self, now: float, *, grid=None) -> Snapshot:
+        """What this monitor perceives right now — perception without decision.
+
+        Deliberately never calls `self._tracker.evaluate()` or `.commit()`. The
+        bounded-message invariant rests on `notified_ring`, so a diagnostic that
+        advanced it would silence the real alert half an hour later, and one that
+        opened an event would let a single band emit a second full ladder. Both
+        are silent failures that would surface only during weather. The tracker
+        is read here and nowhere written; a test asserts its state is identical
+        before and after.
+
+        `grid` lets the caller inject a raster fetched on demand, which is what
+        makes the command work on a monitor that is not running.
+        """
+        origin_info = describe_origin(self, now)
+        common = dict(
+            monitor_id=self.monitor_id, name=self.name, kind="rain",
+            language=self.language, tz_name=self.tz_name,
+            status=self.status(),
+            running=self.is_running(), origin=origin_info,
+            event_open=self._tracker.event_state != EVENT_IDLE,
+            notified_ring=self._tracker.notified_ring,
+            ring_count=self.ring_count, radius_km=self.radius_km,
+            one_shot=grid is not None,
+        )
+        if not origin_info.usable:
+            return Snapshot(blind_reason=origin_info.reason or "position unusable",
+                            **common)
+
+        origin = (origin_info.lat, origin_info.lon)
+        one_shot = grid is not None
+        grid = grid or radar_feed.latest(PRODUCT_RAIN)
+        if grid is None:
+            return Snapshot(blind_reason="no radar image available yet", **common)
+
+        age = now - grid.t
+        coverage = coverage_fraction(grid, origin, self.observe_radius_km)
+        common.update(radar_t=grid.t, radar_age_sec=age, coverage=coverage)
+        if coverage < MIN_COVERAGE_FRACTION:
+            return Snapshot(
+                blind_reason=(f"only {coverage:.0%} of the watched area is visible "
+                              f"to the radar network"), **common)
+
+        # A raster fetched on demand comes alone, so there is no pair to correlate
+        # and no drift to report — said plainly rather than silently skipped.
+        frames = () if one_shot else radar_feed.frames(PRODUCT_RAIN)
+        field = (field_motion(frames[0], frames[1], origin)
+                 if len(frames) >= 2 else None)
+
+        effective = origin
+        if field is not None and 0 < age <= MAX_ADVECTION_SEC:
+            hours = age / 3600.0
+            effective = offset_km(origin[0], origin[1],
+                                  -field.north_kmh * hours, -field.east_kmh * hours)
+
+        points = rain_points(grid, effective, self.observe_radius_km, self.min_mmh)
+        frame = build_rain_frame(points, effective, now,
+                                 self.radius_km, self.observe_radius_km)
+        alert = preview_alert(frame, self.edges, self.ring_count)
+
+        encounter = None
+        if field is not None and frame.dominant is not None:
+            own_east, own_north = _velocity_of(origin_info)
+            encounter = cpa(frame.dominant.front_km,
+                            frame.track_bearing if frame.track_bearing is not None
+                            else frame.dominant.bearing_deg,
+                            field.east_kmh, field.north_kmh, own_east, own_north)
+            if encounter is not None and not encounter.approaching:
+                encounter = None
+
+        picture = await self._render_chart_bytes(grid, effective, now, alert, field,
+                                                 encounter)
+        return Snapshot(
+            front_km=frame.dominant.front_km if frame.dominant else None,
+            front_bearing_deg=frame.dominant.bearing_deg if frame.dominant else None,
+            activity=frame.strikes_in_radius,
+            peak_mmh=peak_in_disc(grid, effective, self.radius_km),
+            field_speed_kmh=field.speed_kmh if field else None,
+            field_bearing_deg=field.bearing_deg if field else None,
+            encounter_minutes=encounter.minutes if encounter else None,
+            encounter_miss_km=encounter.miss_km if encounter else None,
+            picture=picture, **common)
+
+    async def _render_chart_bytes(self, grid, origin, now, alert, field, encounter):
+        """Chart rendering for a snapshot, with the alert path's own guarantee:
+        a picture that fails must never take the message down with it."""
+        if not self._chart:
+            return None
+        try:
+            from .rain_front_chart import render_rain_radar
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    render_rain_radar, grid, origin, now, alert,
+                    radius_km=self.radius_km,
+                    observe_radius_km=self.observe_radius_km,
+                    edges=self.edges, motion=field, encounter=encounter,
+                    location=self._plain_location(), lang=self.language,
+                    tz=self._tz()),
+                timeout=CHART_TIMEOUT_SEC)
+        except Exception as e:
+            _LOGGER.warning("[RainFront] '%s' snapshot chart failed: %s", self.name, e)
+            return None
 
     def _own_velocity(self) -> tuple[float, float]:
         fix = self._fix
@@ -757,6 +863,13 @@ class RainFrontLiveMonitor:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _velocity_of(origin) -> tuple[float, float]:
+    """Observer velocity from an OriginInfo, as (east, north) km/h."""
+    if not origin.moving or origin.course_deg is None or origin.speed_kmh is None:
+        return 0.0, 0.0
+    return velocity_components(origin.speed_kmh, origin.course_deg)
+
+
 def _clamp_min_mmh(value) -> float:
     try:
         parsed = float(value)
@@ -765,19 +878,6 @@ def _clamp_min_mmh(value) -> float:
     if parsed <= 0:
         return DEFAULT_MIN_MMH
     return max(MIN_MMH_FLOOR, min(MIN_MMH_CEILING, parsed))
-
-
-_INTENSITY_IT = ((0.5, "pioviggine"), (2.0, "debole"), (10.0, "moderata"),
-                 (30.0, "forte"), (float("inf"), "nubifragio"))
-_INTENSITY_EN = ((0.5, "drizzle"), (2.0, "light"), (10.0, "moderate"),
-                 (30.0, "heavy"), (float("inf"), "torrential"))
-
-
-def intensity_label(mmh: float, lang: str) -> str:
-    for edge, label in (_INTENSITY_IT if lang == "it" else _INTENSITY_EN):
-        if mmh < edge:
-            return label
-    return ""
 
 
 # ── Manager ───────────────────────────────────────────────────────────────────
@@ -854,6 +954,15 @@ class RainFrontMonitorManager:
     def status(self, monitor_id: str) -> str:
         monitor = self._monitors.get(monitor_id)
         return monitor.status() if monitor else "stopped"
+
+    def get(self, monitor_id: str) -> RainFrontLiveMonitor | None:
+        """The running instance, or None. Symmetric with `PositionManager.get`.
+
+        Without it a caller wanting to ask a monitor what it perceives would have
+        to reach into `_monitors`, and an accessor is cheaper than a convention
+        everyone breaks.
+        """
+        return self._monitors.get(monitor_id)
 
 
 rain_front_monitor_manager = RainFrontMonitorManager()

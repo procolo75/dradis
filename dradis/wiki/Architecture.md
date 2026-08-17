@@ -14,6 +14,7 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 dradis/
 ├── main.py                  # Entry point — wires all components together
 ├── core.py                  # run_agent() tool-calling loop over the openai SDK (no agno)
+├── car_mode.py              # Pure sanitiser: any message → prose CarPlay can read aloud (no I/O)
 ├── agents/                  # each module exposes *_tools(settings) → tool specs
 │   ├── gcal.py              # Google Calendar tools + OAuth
 │   ├── gmail.py             # Gmail tools + OAuth
@@ -37,6 +38,7 @@ dradis/
 │   ├── rain_front_chart.py  # The actual radar crop attached to ring messages
 │   ├── radar.py             # Protezione Civile radar feed: shared singleton, refcounted, no API key
 │   ├── radar_core.py        # Pure raster maths: projection, sampling, field motion, CPA (no I/O)
+│   ├── snapshot.py          # /rain and /storm: perceive without deciding, and word the result
 │   ├── blitzortung.py       # Blitzortung MQTT feed: connection, strike buffer, health
 │   ├── geo.py               # Pure geo maths: Haversine, bearings, geohash topics
 │   ├── position.py          # Named positions: one MQTT listener serving them all (singleton)

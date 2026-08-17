@@ -41,7 +41,22 @@ async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML,
     bot, chat_id = _state.get_bot_and_chat(bot_id)
     if not bot:
         return
-    lines  = text.split("\n")
+    # Before splitting, never after: Car Mode collapses the report onto one line,
+    # so chunking the original would cut at offsets that no longer exist.
+    text, parse_mode = _state.for_car(text, parse_mode=parse_mode)
+    # A line longer than the Telegram limit cannot be placed by the loop below,
+    # which only ever cuts between lines — it would hand the whole thing to
+    # send_message and get the message rejected. Rare with the original layout,
+    # routine in Car Mode, where the entire report IS one line.
+    lines: list[str] = []
+    for line in text.split("\n"):
+        while len(line) > _TG_MAX_LEN:
+            cut = line.rfind(" ", 0, _TG_MAX_LEN)
+            if cut <= 0:
+                cut = _TG_MAX_LEN
+            lines.append(line[:cut])
+            line = line[cut:].lstrip()
+        lines.append(line)
     chunk  = ""
     first  = True
     for line in lines:
@@ -129,10 +144,11 @@ async def run_scheduled_task(task: dict):
     if text:
         bot, chat_id = _state.get_bot_and_chat(bot_id)
         if bot:
+            body, parse_mode = _state.for_car(_state.md_to_html(text) + footer)
             await bot.send_message(
                 chat_id=chat_id,
-                text=_state.md_to_html(text) + footer,
-                parse_mode=ParseMode.HTML,
+                text=body,
+                parse_mode=parse_mode,
             )
 
 
@@ -203,6 +219,16 @@ async def run_scheduled_monitor(monitor: dict):
         photos = result
 
     if photos:
+        # A chart monitor sends a picture and no words at all, so Car Mode has
+        # nothing to rewrite — but a picture is exactly what a driver cannot use.
+        # Say the report happened and leave it waiting: dropping it silently
+        # would be the one outcome the user could never notice.
+        if _state.car_mode_enabled():
+            await _state.send_telegram(
+                f"Report {monitor_name}: chart not sent while Car Mode is on.",
+                bot_id=bot_id,
+            )
+            return
         bot, chat_id = _state.get_bot_and_chat(bot_id)
         if bot:
             for i, photo in enumerate(photos):
@@ -269,10 +295,20 @@ async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: st
             try:
                 bot, chat_id = _state.get_bot_and_chat(bot_id)
                 if bot:
+                    # The signature names the monitor that spoke, which matters
+                    # on screen where several look alike. Read aloud it is a
+                    # trailing "DRADIS, Meteo" after every report, so Car Mode
+                    # drops it the same way it drops the token footer.
+                    signature = (
+                        "" if _state.car_mode_enabled()
+                        else f"\n\n<i>🤖 DRADIS · {html.escape(monitor_name)}</i>"
+                    )
+                    body, parse_mode = _state.for_car(
+                        _state.md_to_html(text) + signature)
                     await bot.send_message(
                         chat_id=chat_id,
-                        text=_state.md_to_html(text) + f"\n\n<i>🤖 DRADIS · {html.escape(monitor_name)}</i>",
-                        parse_mode=ParseMode.HTML,
+                        text=body,
+                        parse_mode=parse_mode,
                     )
             except Exception as e:
                 await _state._send_error_telegram(
@@ -314,7 +350,8 @@ def reload_live_monitors():
     tz_name  = settings.get("timezone", "UTC") or "UTC"
 
     def _make_send(cfg: dict):
-        bid = cfg.get("telegram_bot_id", "default")
+        bid  = cfg.get("telegram_bot_id", "default")
+        lang = cfg.get("language", "it")
 
         async def _send(text: str, photo: bytes | None = None) -> bool:
             # Propagate delivery status so callers (storm front monitor) can gate
@@ -323,8 +360,15 @@ def reload_live_monitors():
             # With a photo the text rides along as the CAPTION, so the picture and
             # its explanation are ONE Telegram message and one notification — two
             # separate sends would buzz the user's phone twice per ring.
-            if photo is None:
-                return await _state.send_telegram(text, bot_id=bid)
+            #
+            # In Car Mode the picture is dropped and the text goes on its own: a
+            # photo notification on CarPlay is announced as "Image" or not read
+            # at all, which turns the alert that matters most into the one the
+            # driver cannot hear. The chart has already been rendered by the time
+            # we get here — wasting it costs one render and keeps every monitor
+            # unaware of Car Mode, which is worth more than the saving.
+            if photo is None or _state.car_mode_enabled():
+                return await _state.send_telegram(text, bot_id=bid, lang=lang)
             bot, chat_id = _state.get_bot_and_chat(bid)
             if not bot:
                 return False
@@ -386,9 +430,10 @@ def reload_ha_monitors():
     ] if k in settings}
 
     def _make_send(cfg: dict):
-        bid = cfg.get("telegram_bot_id", "default")
+        bid  = cfg.get("telegram_bot_id", "default")
+        lang = cfg.get("language", "it")
         async def _send(text: str):
-            await _state.send_telegram(text, bot_id=bid)
+            await _state.send_telegram(text, bot_id=bid, lang=lang)
         return _send
 
     async def _llm(prompt: str, selected) -> str:
