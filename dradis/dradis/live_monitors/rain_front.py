@@ -63,8 +63,9 @@ from .position import position_manager
 from .position_core import MAX_PLAUSIBLE_KMH
 from .radar import PRODUCT_HAIL, PRODUCT_RAIN, radar_feed
 from .radar_core import (
-    Encounter, build_rain_frame, coverage_fraction, cpa, field_motion,
-    intensity_label, peak_in_disc, rain_points, sample, velocity_components,
+    DRIZZLE_MMH, Encounter, build_rain_frame, coverage_fraction, cpa,
+    field_motion, intensity_label, peak_in_disc, rain_points, sample,
+    velocity_components,
 )
 from .snapshot import Snapshot, describe_origin, preview_alert
 from .storm_front_core import (
@@ -101,6 +102,17 @@ MIN_COVERAGE_FRACTION = 0.4
 
 # Hail probability, in percent, worth adding a line for.
 HAIL_ALERT_PERCENT = 30.0
+
+# Radius of the disc read to answer "is it raining WHERE I AM", as opposed to
+# "has the front reached my innermost ring", which is a question about geometry
+# and was being answered as if it were this one.
+#
+# Not the single pixel under the observer. The picture is 10-15 minutes old, and
+# it is only carried forward when the drift cleared its own gate — which at
+# drizzle intensities it usually does not, that being exactly when this check
+# matters. Two kilometres covers the position error plus ten minutes of
+# unresolved drift, which at the half-pixel floor is about one kilometre.
+OVERHEAD_RADIUS_KM = 2.0
 
 # The field is only advected when the motion estimate passed its own gate, so this
 # is a bound against a pathological age, not against a bad velocity.
@@ -412,10 +424,12 @@ class RainFrontLiveMonitor:
 
         if alert is not None and notify:
             peak = peak_in_disc(grid, effective, self.radius_km)
+            overhead = peak_in_disc(grid, effective, OVERHEAD_RADIUS_KM)
             hail = self._hail_at(effective, frame)
             await self._dispatch(alert, frame, points, now,
                                  origin=origin, effective=effective,
-                                 peak_mmh=peak, hail_percent=hail)
+                                 peak_mmh=peak, hail_percent=hail,
+                                 overhead_mmh=overhead)
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
 
@@ -496,6 +510,7 @@ class RainFrontLiveMonitor:
             front_bearing_deg=frame.dominant.bearing_deg if frame.dominant else None,
             activity=frame.strikes_in_radius,
             peak_mmh=peak_in_disc(grid, effective, self.radius_km),
+            overhead_mmh=peak_in_disc(grid, effective, OVERHEAD_RADIUS_KM),
             field_speed_kmh=field.speed_kmh if field else None,
             field_bearing_deg=field.bearing_deg if field else None,
             encounter_minutes=encounter.minutes if encounter else None,
@@ -600,14 +615,15 @@ class RainFrontLiveMonitor:
                         origin: tuple[float, float],
                         effective: tuple[float, float],
                         peak_mmh: float | None,
-                        hail_percent: float | None) -> None:
+                        hail_percent: float | None,
+                        overhead_mmh: float | None = None) -> None:
         if self._is_silenceable(alert) and self._in_quiet_hours():
             _LOGGER.info("[RainFront] '%s' alert suppressed by quiet hours", self.name)
             self._tracker.commit(alert, now)
             self._save_state()
             return
 
-        text = self._format(alert, peak_mmh, hail_percent, now)
+        text = self._format(alert, peak_mmh, hail_percent, now, overhead_mmh)
         photo = await self._render_chart(alert, frame, points, now, effective)
 
         try:
@@ -687,20 +703,39 @@ class RainFrontLiveMonitor:
                       "🟠 <b>Rain nearby", "🔵 <b>Rain overhead"]
 
     def _format(self, alert, peak_mmh: float | None,
-                hail_percent: float | None, now: float) -> str:
+                hail_percent: float | None, now: float,
+                overhead_mmh: float | None = None) -> str:
         if isinstance(alert, ClearAlert):
             return self._fmt_clear(alert, now)
-        return self._fmt_ring(alert, peak_mmh, hail_percent, now)
+        return self._fmt_ring(alert, peak_mmh, hail_percent, now, overhead_mmh)
 
-    def _head(self, alert: RingAlert) -> str:
+    def _is_overhead(self, overhead_mmh: float | None) -> bool:
+        """Whether the radar shows rain WHERE THE OBSERVER IS.
+
+        The innermost ring is a fifth of the radius — 4 km at radius 20 — so
+        reaching it says the front is close, not that anything is falling on you.
+        The message used to claim the second from the first, and announced
+        "Pioggia su di te" over a dry pavement.
+
+        `None` is the radar seeing nothing there, which is not the same as no
+        rain and must not be read as either an absence or a presence: with no
+        measurement the claim is simply not made.
+
+        The bar is `min_mmh` rather than a constant of its own, so "it is raining
+        where I am" means exactly what "this rain is worth telling you about"
+        means in the same message.
+        """
+        return overhead_mmh is not None and overhead_mmh >= self.min_mmh
+
+    def _head(self, alert: RingAlert, overhead: bool = False) -> str:
         heads = self._RING_HEADS_IT if self.language == "it" else self._RING_HEADS_EN
-        if alert.is_innermost:
+        if alert.is_innermost and overhead:
             head = heads[-1]
         else:
             head = heads[min(alert.ring - 1, len(heads) - 2)]
         return f"{head} — {self._loc()}</b>"
 
-    def _track_line(self, alert: RingAlert) -> str:
+    def _track_line(self, alert: RingAlert, overhead: bool = False) -> str:
         """The verdict, worded to say WHICH instrument produced it.
 
         A measured closest approach carries a time and a miss distance; an
@@ -728,7 +763,10 @@ class RainFrontLiveMonitor:
                     f"🧭 Closest approach in {minutes} min, by an amount still "
                     f"too close to call")
 
-        if alert.is_innermost and alert.track != TRACK_GRAZING:
+        # Measured overhead, not merely inside the innermost ring: see
+        # `_is_overhead`. Without that measurement the ordinary verdict below
+        # answers, and it names the distance instead of asserting a ground truth.
+        if alert.is_innermost and overhead and alert.track != TRACK_GRAZING:
             return "🧭 Sei sotto la pioggia" if it else "🧭 You are under the rain"
         if alert.track == TRACK_CLOSING:
             return ("🧭 Rotta costante: ti arriva addosso" if it
@@ -802,10 +840,12 @@ class RainFrontLiveMonitor:
                 else f"📡 Radar at {clock} ({age} min ago)")
 
     def _fmt_ring(self, alert: RingAlert, peak_mmh: float | None,
-                  hail_percent: float | None, now: float) -> str:
+                  hail_percent: float | None, now: float,
+                  overhead_mmh: float | None = None) -> str:
         it = self.language == "it"
         heading = direction_label(alert.bearing_deg, self.language)
-        lines = [self._head(alert)]
+        overhead = self._is_overhead(overhead_mmh)
+        lines = [self._head(alert, overhead)]
         lines.append(
             (f"📍 Fronte a <b>{alert.front_km:.0f} km</b> a {heading} "
              f"({alert.bearing_deg:.0f}°)") if it else
@@ -817,6 +857,16 @@ class RainFrontLiveMonitor:
                  f"({intensity_label(peak_mmh, self.language)})") if it else
                 (f"🌧️ Peak intensity {peak_mmh:.1f} mm/h "
                  f"({intensity_label(peak_mmh, self.language)})"))
+        if peak_mmh is not None and peak_mmh < DRIZZLE_MMH:
+            # Why the pavement can be dry while the radar is right. A return this
+            # weak evaporates on the way down more often than not, and near a
+            # coast it competes with sea clutter, so the alert says so instead of
+            # letting the user find out by looking out of the window.
+            lines.append(
+                ("🌂 Solo pioviggine sul radar: a queste intensità può evaporare "
+                 "prima di toccare terra" if it else
+                 "🌂 Drizzle-level echo only: at this intensity it often "
+                 "evaporates before reaching the ground"))
         if hail_percent is not None and hail_percent >= HAIL_ALERT_PERCENT:
             lines.append((f"🧊 Probabilità di grandine {hail_percent:.0f}%" if it
                           else f"🧊 Hail probability {hail_percent:.0f}%"))
@@ -825,7 +875,7 @@ class RainFrontLiveMonitor:
              f"{alert.ring_edge_km:.0f} km") if it else
             (f"🎯 Ring {alert.ring}/{alert.ring_count} · within "
              f"{alert.ring_edge_km:.0f} km"))
-        lines.append(self._track_line(alert))
+        lines.append(self._track_line(alert, overhead))
         lines.append(self._field_line(alert))
         motion_line = self._motion_line(alert)
         if motion_line:

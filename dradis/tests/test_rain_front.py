@@ -421,6 +421,55 @@ class MessageTest(unittest.TestCase):
         self.assertIn("Anello 2/4", text)
         self.assertIn("Radar delle", text)
 
+    def test_the_innermost_ring_alone_does_not_claim_rain_on_you(self):
+        """THE alert that failed in the field: the innermost ring is a fifth of
+        the radius — 4 km at radius 20 — and reaching it says the front is close,
+        not that anything is falling on you. It announced 'Pioggia su di te' over
+        a dry pavement, with the radar echo genuinely there and genuinely aloft."""
+        mon = monitor()
+        mon._grid_t = T0
+        text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=3.0,
+                                      is_innermost=True), 4.0, None, T0,
+                           0.0)                        # nothing over the observer
+        self.assertNotIn("su di te", text)
+        self.assertNotIn("Sei sotto la pioggia", text)
+        self.assertIn("3 km", text)
+
+    def test_rain_measured_overhead_is_stated_as_such(self):
+        mon = monitor()
+        mon._grid_t = T0
+        text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=1.0,
+                                      is_innermost=True), 4.0, None, T0,
+                           3.2)                        # measured where you are
+        self.assertIn("Pioggia su di te", text)
+        self.assertIn("Sei sotto la pioggia", text)
+
+    def test_no_coverage_overhead_is_not_read_as_either_answer(self):
+        """`None` is the radar seeing nothing there. It must not become a claim,
+        and it must not become a denial of one."""
+        mon = monitor()
+        mon._grid_t = T0
+        text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=3.0,
+                                      is_innermost=True), 4.0, None, T0, None)
+        self.assertNotIn("Sei sotto la pioggia", text)
+
+    def test_overhead_below_the_monitors_own_threshold_does_not_count(self):
+        """Otherwise the two halves of one message would disagree about what
+        counts as rain."""
+        mon = monitor(min_mmh=2.0)
+        mon._grid_t = T0
+        text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=1.0,
+                                      is_innermost=True), 4.0, None, T0, 1.5)
+        self.assertNotIn("Sei sotto la pioggia", text)
+
+    def test_drizzle_says_it_may_never_reach_the_ground(self):
+        mon = monitor()
+        mon._grid_t = T0
+        drizzle = mon._format(ring_alert(), 0.4, None, T0)
+        heavier = mon._format(ring_alert(), 4.0, None, T0)
+        self.assertIn("evaporare", drizzle)
+        self.assertNotIn("evaporare", heavier)
+
     def test_hail_appears_only_above_the_threshold(self):
         mon = monitor()
         mon._grid_t = T0

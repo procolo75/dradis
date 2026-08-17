@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## [4.4.3] - 2026-08-17
+
+**"Pioggia su di te" was a claim about the ground that nobody had measured.** The alert fired, the Protezione Civile map agreed that there was an echo over the position, and the pavement was dry. Nothing measured was wrong; the sentence was. The innermost ring is a fifth of the radius — **4 km** at a 20 km radius — so reaching it says the front is close, not that anything is falling on you, and the monitor had no idea what the radar showed at the observer's own position although it already reads exactly that for hail.
+
+- **Feat — the overhead claim is now measured where you are.** Each alert reads the strongest intensity within **2 km of the fix** (`peak_in_disc`, already in use), and *"🔵 Pioggia su di te"* and *"🧭 Sei sotto la pioggia"* require it to reach the monitor's own `min_mmh`. Otherwise the message keeps the innermost ring, keeps the distance, and simply stops asserting the part it cannot see. No alert is suppressed: what changes is what the message claims, not what it reports.
+- **Feat — 2 km, not the single pixel under you, and the radar's own cadence is why.** The composite arrives every 5 minutes carrying a picture ~10 minutes old, and it is only advected forward when the drift cleared its gate — which at drizzle intensities it usually does not, that being precisely when this check matters. Two kilometres absorbs the position error plus ten minutes of unresolved drift, which at the half-pixel floor of 4.4.2 is about one kilometre.
+- **Feat — drizzle says what drizzle is worth.** Below **0.5 mm/h** the alert carries one extra line: *"🌂 Solo pioviggine sul radar: a queste intensità può evaporare prima di toccare terra"*. At that intensity virga is routine and, along a coast, sea clutter and anomalous propagation add echoes of their own. The threshold is `DRIZZLE_MMH`, which is now also the first bucket edge of the intensity table — one number, not two.
+- **Feat — `/rain` answers "is it raining on me right now".** The snapshot caption gains *"☂️ Su di te: 2.4 mm/h"*, from the same measurement the alert gates on, so the diagnostic and the alert cannot disagree.
+- **Fix — a standstill is not a heading in the snapshot either.** `format_caption` switched on `field_speed_kmh is None`, so the confidently-measured standstill introduced in 4.4.2 rendered as *"🌬️ Pioggia verso N a 0 km/h"*. It now reads *"Pioggia stazionaria"*, the same rule the alert formatter already applied.
+- **Reuse — `None` stays "I cannot see there".** Where the radar has no coverage over the observer, the overhead reading is `None` and no claim is made in either direction. `sample()` documents that distinction; this is the second caller to depend on it.
+
+Left out deliberately, and worth recording: `CONFIRM_POLLS = 2` at a 60-second poll means two polls almost always read the **same** raster, so for rain the confirmation costs a minute and adds no evidence — for lightning it does add some, a minute of new strikes being new data. Requiring two *distinct radar frames* before opening a drizzle-level event is the change that would actually filter virga and clutter, at the cost of up to five minutes on genuine drizzle. The decision here was to keep every alert and fix only what the message asserts.
+
+Tests: 430 (was 422). New in `test_rain_front.py` (5), `test_snapshot.py` (3).
+
 ## [4.4.2] - 2026-08-17
 
 **The same alert twice, and a message that argued with itself.** One rain event produced both faults in an hour. Every ring message arrived in duplicate — two copies of each, two minutes apart, sharing a single radar frame — and one of them read *"📍 Fronte a 19 km a NO"*, *"🧭 Rotta costante: ti arriva addosso"* and *"🌬️ La pioggia si muove verso NO a 3 km/h"* one under the other. Rain that sits to the north-west and travels north-west is leaving. The rain arrived, so the verdict was right and the drift was the lie.

@@ -200,6 +200,7 @@ class Snapshot:
     radar_age_sec: float | None = None
     coverage: float | None = None
     peak_mmh: float | None = None
+    overhead_mmh: float | None = None    # strongest reading within 2 km of the fix
     field_speed_kmh: float | None = None
     field_bearing_deg: float | None = None
     encounter_minutes: float | None = None
@@ -405,9 +406,18 @@ def _format_rain(snap, it: bool, voice: bool = False) -> list[str]:
                     else f" · peak {snap.peak_mmh:.1f} mm/h ({label})")
         lines.append((f"🌧️ Fronte a {snap.front_km:.0f} km a {heading}{peak}" if it
                       else f"🌧️ Front {snap.front_km:.0f} km to {heading}{peak}"))
+    # "Is it raining on me right now" is the question this command exists to
+    # answer, and until now it was the one thing the caption did not say.
+    if snap.overhead_mmh is not None and snap.overhead_mmh > 0:
+        lines.append((f"☂️ Su di te: {snap.overhead_mmh:.1f} mm/h" if it
+                      else f"☂️ Overhead: {snap.overhead_mmh:.1f} mm/h"))
     if snap.field_speed_kmh is None:
         lines.append("🌬️ Movimento della pioggia non misurabile" if it
                      else "🌬️ Rain movement not measurable")
+    elif snap.field_speed_kmh < 1.0:
+        # A confidently measured standstill carries no bearing worth printing;
+        # switching on `is None` alone printed "verso N a 0 km/h".
+        lines.append("🌬️ Pioggia stazionaria" if it else "🌬️ Rain is stationary")
     else:
         heading = direction_label(snap.field_bearing_deg, "it" if it else "en")
         lines.append((f"🌬️ Pioggia verso {heading} a {snap.field_speed_kmh:.0f} km/h"

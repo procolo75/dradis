@@ -329,6 +329,26 @@ So the measurement has to pass a test: the best match must stand clearly above t
 
 **On scattered convection this test fails often.** That is the honest answer rather than a shortcoming, and it is why the Storm front's bearing-drift method remains as the fallback: it needs no speed measurement at all, only the rotation of a bearing, which a moving observer supplies by itself. When neither can answer, the alert gives you distance and direction and no time at all.
 
+#### "It is raining on you" is a measurement, not a ring
+
+The innermost ring is a fifth of the radius — **4 km** with a 20 km radius — so a front reaching it is close, not overhead. Until 4.4.3 the alert said *"🔵 Pioggia su di te"* and *"🧭 Sei sotto la pioggia"* on that basis alone, and it was possible to receive it under a dry sky with the radar picture perfectly correct.
+
+Now each alert also reads **the strongest intensity within 2 km of where you are**, and those two lines require it to reach the same threshold you set for the monitor. Otherwise the message keeps the ring, keeps the distance, and says nothing about your pavement:
+
+```
+🟠 Pioggia vicina — Casa
+📍 Fronte a 3 km a NO (308°)
+🌧️ Intensità massima 0.4 mm/h (pioviggine)
+🌂 Solo pioviggine sul radar: a queste intensità può evaporare prima di toccare terra
+🎯 Anello 4/4 · entro 4 km
+```
+
+**Why 2 km and not the pixel you are standing on.** The picture is 10–15 minutes old and is carried forward only when the drift was measurable — which at drizzle intensities it usually is not, and that is exactly when this check matters. Two kilometres covers the position error plus ten minutes of unresolved drift.
+
+**Why drizzle gets a line of its own.** Below 0.5 mm/h the echo evaporates before reaching the ground more often than not (*virga*), and along a coast sea clutter and anomalous propagation add returns that were never rain. The radar is not wrong and neither are you: the alert now says so instead of leaving you to work it out from a dry window.
+
+`/rain` reports the same reading — *"☂️ Su di te: 2.4 mm/h"* — so the diagnostic and the alert cannot tell you different things.
+
 #### And it will not report a drift it cannot resolve
 
 The image is 1 km per pixel and the pictures are 5 minutes apart, so **one pixel of movement is 12 km/h**. Anything slower than half a pixel between two frames is not a slow drift, it is a pattern that did not move: the best match sat where it started, and the direction attached to it comes entirely from the arithmetic that estimates fractions of a pixel — which always returns a number, including for noise.

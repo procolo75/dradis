@@ -617,9 +617,16 @@ def field_motion(older: RadarGrid, newer: RadarGrid,
 # Lives here rather than with the monitor so the snapshot layer can name an
 # intensity without importing the monitor that would import it back.
 
-_INTENSITY_IT = ((0.5, "pioviggine"), (2.0, "debole"), (10.0, "moderata"),
+# The top of the drizzle bucket, named because it is not only a label boundary.
+# Below it the radar's answer and the ground's answer routinely differ: a return
+# this weak evaporates on the way down more often than not, and along a coast it
+# competes with sea clutter and anomalous propagation. Anything the monitor says
+# about the ground at this intensity has to be said with that in it.
+DRIZZLE_MMH = 0.5
+
+_INTENSITY_IT = ((DRIZZLE_MMH, "pioviggine"), (2.0, "debole"), (10.0, "moderata"),
                  (30.0, "forte"), (float("inf"), "nubifragio"))
-_INTENSITY_EN = ((0.5, "drizzle"), (2.0, "light"), (10.0, "moderate"),
+_INTENSITY_EN = ((DRIZZLE_MMH, "drizzle"), (2.0, "light"), (10.0, "moderate"),
                  (30.0, "heavy"), (float("inf"), "torrential"))
 
 
@@ -706,5 +713,5 @@ __all__ = [
     "MOTION_MIN_PIXELS",
     "FieldMotion", "field_motion",
     "MIN_RELATIVE_SPEED_KMH", "Encounter", "cpa", "velocity_components",
-    "intensity_label",
+    "DRIZZLE_MMH", "intensity_label",
 ]

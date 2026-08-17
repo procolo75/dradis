@@ -493,6 +493,24 @@ class CaptionTest(unittest.TestCase):
         self.assertIn("non misurabile", unmeasured)
         self.assertNotIn("min,", unmeasured)
 
+    def test_a_standstill_is_not_dressed_as_a_heading(self):
+        """A confidently measured standstill carries speed 0 and bearing 0, which
+        the `is None` test let through as 'verso N a 0 km/h'."""
+        text = format_caption(snap(front_km=12.0, front_bearing_deg=225.0,
+                                   field_speed_kmh=0.0, field_bearing_deg=0.0))
+        self.assertIn("stazionaria", text)
+        self.assertNotIn("0 km/h", text)
+
+    def test_the_caption_answers_whether_it_is_raining_on_you(self):
+        text = format_caption(snap(front_km=3.0, front_bearing_deg=225.0,
+                                   peak_mmh=4.0, overhead_mmh=2.4))
+        self.assertIn("Su di te: 2.4 mm/h", text)
+
+    def test_nothing_overhead_is_not_reported_as_zero(self):
+        text = format_caption(snap(front_km=3.0, front_bearing_deg=225.0,
+                                   peak_mmh=4.0, overhead_mmh=0.0))
+        self.assertNotIn("Su di te", text)
+
     def test_storm_wording_counts_strikes(self):
         text = format_caption(snap(kind="storm", front_km=18.0,
                                    front_bearing_deg=315.0, activity=22))
