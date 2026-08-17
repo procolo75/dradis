@@ -7,6 +7,7 @@ Reload helpers for live monitors and HA monitors.
 
 import asyncio
 import html
+import time
 import traceback
 
 from apscheduler.triggers.cron import CronTrigger
@@ -353,9 +354,11 @@ def reload_live_monitors():
         bid  = cfg.get("telegram_bot_id", "default")
         lang = cfg.get("language", "it")
 
-        async def _send(text: str, photo: bytes | None = None) -> bool:
+        async def _send(text: str, photo: bytes | None = None) -> bool | None:
             # Propagate delivery status so callers (storm front monitor) can gate
-            # state flags on a confirmed send.
+            # state flags on a confirmed send. Three states, not two: see
+            # `state.classify_send_failure` for why a timed-out photo upload must
+            # not be reported as "not delivered".
             #
             # With a photo the text rides along as the CAPTION, so the picture and
             # its explanation are ONE Telegram message and one notification — two
@@ -371,15 +374,22 @@ def reload_live_monitors():
                 return await _state.send_telegram(text, bot_id=bid, lang=lang)
             bot, chat_id = _state.get_bot_and_chat(bid)
             if not bot:
-                return False
+                return _state.REFUSED
+            started = time.monotonic()
             try:
+                # All four timeouts are given explicitly. Only read and write were
+                # set before, so a pool timeout — which never reaches Telegram at
+                # all — arrived as the same `TimedOut` as a read timeout on an
+                # upload that did, and the two demand opposite answers.
                 await bot.send_photo(chat_id=chat_id, photo=photo, caption=text,
                                      parse_mode=ParseMode.HTML,
-                                     read_timeout=60, write_timeout=60)
-                return True
+                                     connect_timeout=20, pool_timeout=20,
+                                     read_timeout=60, write_timeout=120)
+                return _state.DELIVERED
             except Exception as e:
-                print(f"[DRADIS] send_photo(bot_id={bid!r}) error: {e}")
-                return False
+                print(f"[DRADIS] send_photo(bot_id={bid!r}) {type(e).__name__} "
+                      f"after {time.monotonic() - started:.1f}s: {e}")
+                return _state.classify_send_failure(e)
         return _send
 
     # Every step is isolated. These run in sequence on one call, so an exception

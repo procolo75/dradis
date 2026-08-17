@@ -20,7 +20,7 @@ import numpy as np
 
 from dradis.live_monitors.geo import distance_km, offset_km
 from dradis.live_monitors.radar_core import (
-    MOTION_MAX_KMH, NODATA_THRESHOLD,
+    MOTION_MAX_KMH, MOTION_MIN_PIXELS, NODATA_THRESHOLD,
     GeoTransform, RadarGrid, RadarGridError,
     build_rain_frame, coverage_fraction, cpa, field_motion, latlon_to_pixel,
     parse_geotransform, peak_in_disc, pixel_to_latlon, rain_points,
@@ -336,6 +336,25 @@ class FieldMotionTest(unittest.TestCase):
                               grid(self.field.copy(), T0 + 300.0), ORIGIN)
         self.assertIsNotNone(motion)
         self.assertAlmostEqual(motion.speed_kmh, 0.0, places=3)
+
+    def test_a_sub_pixel_drift_is_a_standstill_not_a_direction(self):
+        """The peak is found on the integer grid; anything under half a pixel is
+        the parabolic fit's opinion, and it always has one. A quarter-pixel blend
+        used to come out as a few km/h WITH A COMPASS BEARING — which is how a
+        rain front 19 km to the NW was reported as drifting NW, away from an
+        observer it then rained on."""
+        blended = 0.75 * self.field + 0.25 * self.shifted(0, 1)
+        motion = field_motion(grid(self.field, T0),
+                              grid(blended.astype(np.float32), T0 + 300.0), ORIGIN)
+        self.assertIsNotNone(motion)
+        self.assertEqual(motion.speed_kmh, 0.0)
+        self.assertEqual(motion.bearing_deg, 0.0)
+
+    def test_the_floor_is_half_a_pixel_per_frame(self):
+        """1 km per pixel over 300 s is 12 km/h, so the floor sits at 6 km/h —
+        derived from the raster, not hard-coded, and comfortably below the 24 km/h
+        of the smallest displacement the tests above recover."""
+        self.assertEqual(MOTION_MIN_PIXELS, 0.5)
 
     def test_unrelated_fields_yield_no_measurement(self):
         """Two independent fields correlate at noise level. Reporting a velocity

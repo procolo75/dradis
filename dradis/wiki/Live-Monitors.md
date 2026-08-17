@@ -329,6 +329,33 @@ So the measurement has to pass a test: the best match must stand clearly above t
 
 **On scattered convection this test fails often.** That is the honest answer rather than a shortcoming, and it is why the Storm front's bearing-drift method remains as the fallback: it needs no speed measurement at all, only the rotation of a bearing, which a moving observer supplies by itself. When neither can answer, the alert gives you distance and direction and no time at all.
 
+#### And it will not report a drift it cannot resolve
+
+The image is 1 km per pixel and the pictures are 5 minutes apart, so **one pixel of movement is 12 km/h**. Anything slower than half a pixel between two frames is not a slow drift, it is a pattern that did not move: the best match sat where it started, and the direction attached to it comes entirely from the arithmetic that estimates fractions of a pixel — which always returns a number, including for noise.
+
+Below that floor the monitor reports a standstill and no compass direction at all:
+
+```
+🌬️ Pioggia stazionaria
+```
+
+That line used to read *"La pioggia si muove verso NO a 3 km/h"*, printed under a front 19 km to the north-west that was closing — a drift pointing exactly away from the observer it then rained on.
+
+**A still field and an advancing front are not a contradiction.** A large mass of light rain can sit almost motionless while its nearest edge grows towards you, and the two lines then say so together:
+
+```
+🌬️ Pioggia stazionaria
+⏱️ Da 19 a 11 km in 14 min
+```
+
+The ⏱️ line measures the distance between you and the rain, which is what you asked about; the 🌬️ line measures the body of the rain against the ground. When the drift *is* resolved and does point away while the front keeps closing, the alert states the two as one fact instead of two:
+
+```
+🌬️ Il grosso della pioggia deriva verso NO a 20 km/h, ma il fronte continua ad avvicinarsi
+```
+
+The verdict on the 🧭 line stays with the bearing-drift method in that case. A ring descent is measured against *you*; the drift is measured against the previous picture, and only one of those two answers the question you asked.
+
 ### The picture attached to each alert
 
 The Storm front draws a diagram of strikes, because lightning has no image of its own. Here the measurement **is** the image: the radar around you, coloured by intensity, with the rings drawn on it, the nearest edge of the rain marked, an arrow showing which way it is drifting, and a cross where it will come closest to you.

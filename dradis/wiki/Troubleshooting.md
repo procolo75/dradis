@@ -35,6 +35,30 @@
 
 ---
 
+## The same live-monitor alert arrived twice
+
+Fixed in 4.4.2. Both copies were composed by the same monitor at two consecutive polls: the first send had in fact been delivered, but Telegram's answer never came back before the timeout, so the alert was recorded as undelivered and sent again a minute or two later.
+
+**How to tell a retry from anything else, from the messages alone.** Compare the `⏱️` line of the two copies:
+
+| What you see | What it means |
+|---|---|
+| `⏱️ Da 19 a 11 km in 14 min` in one, `… in 16 min` in the other | A retry. That figure counts from the last *confirmed* delivery, so a larger value in the second copy proves the first was never recorded as sent. |
+| The identical `⏱️` value in both | Two separate monitors, each keeping its own books. Check the monitor list for a duplicate watching the same position. |
+
+The same `📡 Radar delle 21:35` in both copies tells you only that no new image had arrived between them — every image is used for about five minutes, so it proves nothing either way.
+
+In the log a retry looked like this:
+
+```
+[DRADIS] send_photo(bot_id='default') TimedOut after 60.1s: Timed out
+[RainFront] 'Casa' alert NOT delivered — state held, retry next poll
+```
+
+Since 4.4.2 a timeout logs `delivery UNCONFIRMED — committed anyway` instead and no second message is sent. The `NOT delivered … retry next poll` line now appears only when the send genuinely failed — a rejected message, a blocked bot, an unreachable network — where retrying is the right answer.
+
+---
+
 ## Live monitor shows 🔴 Stopped
 
 - Check the add-on log for MQTT connection errors.

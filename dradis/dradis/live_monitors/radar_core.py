@@ -464,6 +464,20 @@ MOTION_PSR_EXCLUDE_PX = 3
 # A field that appears to move faster than this was not tracked, it was mismatched.
 MOTION_MAX_KMH = 180.0
 
+# ...and a field that appears to move slower than half a pixel per frame did not
+# move at all. The correlation peak is found on the integer grid; everything below
+# one pixel comes from the parabolic fit, which always returns SOMETHING because a
+# peak with any asymmetry at all has a sub-pixel maximum. At 1 km per pixel and
+# 300 s between products, one pixel is 12 km/h — so a "3 km/h" reading is a
+# quarter of a pixel, i.e. a correlation peak that sat squarely at zero shift with
+# a direction supplied entirely by the interpolation.
+#
+# This is not a cosmetic threshold. On 17 Aug 2026 a rain front 19 km to the NW
+# was reported as "moving NW at 3 km/h" — away from the observer — in the same
+# message that correctly said it was heading straight for them. The rain arrived.
+# The verdict was right and the drift line was noise with a compass bearing on it.
+MOTION_MIN_PIXELS = 0.5
+
 
 @dataclass(frozen=True)
 class FieldMotion:
@@ -583,9 +597,11 @@ def field_motion(older: RadarGrid, newer: RadarGrid,
     speed = km / (dt / 3600.0)
     if speed > MOTION_MAX_KMH:
         return None
-    if km < 1e-6:
+    if km < MOTION_MIN_PIXELS * older.gt.pixel_m / 1000.0:
         # A confidently measured standstill. Not the same as "no measurement":
-        # the caller may legitimately report that the rain is not moving.
+        # the caller may legitimately report that the rain is not moving. The
+        # floor is derived from the raster rather than fixed in km/h, so it stays
+        # correct if the product's resolution or its cadence ever changes.
         return FieldMotion(0.0, 0.0, psr, dt)
 
     return FieldMotion(
@@ -687,6 +703,7 @@ __all__ = [
     "sample", "rain_points", "peak_in_disc", "coverage_fraction",
     "FRONT_RANK", "MIN_PIXELS_SECTOR", "build_rain_frame",
     "MOTION_BOX_KM", "MOTION_MIN_DT_SEC", "MOTION_MAX_DT_SEC", "MOTION_MAX_KMH",
+    "MOTION_MIN_PIXELS",
     "FieldMotion", "field_motion",
     "MIN_RELATIVE_SPEED_KMH", "Encounter", "cpa", "velocity_components",
     "intensity_label",

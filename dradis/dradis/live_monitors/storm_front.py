@@ -489,10 +489,16 @@ class StormFrontLiveMonitor:
         except Exception as e:
             _LOGGER.error("[StormFront] '%s' send error: %s", self.name, e)
             return
-        if not ok:
+        # Only a REFUSED send is retried; an UNCONFIRMED one is committed as if it
+        # had arrived. See `state.classify_send_failure` — retrying a send whose
+        # answer merely got lost is what duplicates an alert on the user's phone.
+        if ok is False:
             _LOGGER.warning("[StormFront] '%s' alert NOT delivered — state held, "
                             "retry next poll", self.name)
             return
+        if ok is None:
+            _LOGGER.warning("[StormFront] '%s' delivery UNCONFIRMED — committed "
+                            "anyway, the alert will not be sent again", self.name)
 
         self._tracker.commit(alert, now)
         self._save_state()

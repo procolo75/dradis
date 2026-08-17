@@ -159,12 +159,27 @@ class TrackVerdictTest(unittest.TestCase):
 
     def test_a_closest_approach_already_past_defers_to_the_inherited_verdict(self):
         """Receding rain cannot explain a descending ring, so the measured reading
-        is discarded rather than reported as a negative time."""
+        is discarded rather than reported as a negative time. The rain that duly
+        arrived on 17 Aug 2026 while the drift pointed away is why this stands."""
         tracker = RF.RainFrontTracker(30.0, 4)
         tracker.set_motion(FieldMotion(40.0, 90.0, 8.0, 300.0))
         verdict, _, _ = tracker.track_verdict(T0, 90.0, 20.0)   # rain east, going east
         self.assertEqual(verdict, TRACK_UNKNOWN)
         self.assertIsNone(tracker.last_encounter)
+
+    def test_the_disagreement_is_recorded_even_though_it_is_not_acted_on(self):
+        """Discarded for the verdict, kept for the wording: the message must not
+        state the drift and the approach as two unrelated facts."""
+        tracker = RF.RainFrontTracker(30.0, 4)
+        tracker.set_motion(FieldMotion(40.0, 90.0, 8.0, 300.0))
+        tracker.track_verdict(T0, 90.0, 20.0)
+        self.assertTrue(tracker.last_receding)
+
+    def test_rain_coming_at_you_is_not_recorded_as_receding(self):
+        tracker = RF.RainFrontTracker(30.0, 4)
+        tracker.set_motion(FieldMotion(40.0, 90.0, 8.0, 300.0))
+        tracker.track_verdict(T0, 270.0, 20.0)      # rain west, coming east
+        self.assertFalse(tracker.last_receding)
 
     def test_the_observer_velocity_enters_the_verdict(self):
         """Driving into stationary rain must read as a collision course."""
@@ -362,6 +377,26 @@ class MessageTest(unittest.TestCase):
         mon._field = FieldMotion(0.2, 0.0, 9.0, 300.0)
         self.assertIn("stazionaria", mon._field_line())
 
+    def test_a_drift_that_points_away_is_tied_to_the_approach(self):
+        """THE message that failed in the field: 'front 19 km to the NW' over
+        'heading straight for you' over 'moving NW' — the last two cannot both be
+        read as standalone facts. The drift now hangs off the approach."""
+        mon = monitor()
+        mon._field = FieldMotion(20.0, 315.0, 8.0, 300.0)       # drifting NW
+        mon._tracker.set_motion(mon._field)
+        mon._tracker.track_verdict(T0, 315.0, 19.0)             # rain NW, going NW
+        line = mon._field_line(ring_alert(track=TRACK_CLOSING, bearing_deg=315.0))
+        self.assertIn("ma il fronte continua ad avvicinarsi", line)
+
+    def test_a_drift_that_agrees_with_the_approach_is_stated_plainly(self):
+        mon = monitor()
+        mon._field = FieldMotion(20.0, 90.0, 8.0, 300.0)        # drifting east
+        mon._tracker.set_motion(mon._field)
+        mon._tracker.track_verdict(T0, 270.0, 19.0)             # rain west, coming east
+        line = mon._field_line(ring_alert(track=TRACK_CLOSING))
+        self.assertIn("si muove verso", line)
+        self.assertNotIn("fronte continua", line)
+
     def test_the_own_motion_line_is_absent_when_parked(self):
         mon = monitor()
         mon._fix = Fix(moving=False)
@@ -416,6 +451,73 @@ class MessageTest(unittest.TestCase):
         mon = monitor(location="Casa & <Orto>")
         self.assertIn("&amp;", mon._loc())
         self.assertNotIn("<Orto>", mon._loc())
+
+
+# ── Delivery ──────────────────────────────────────────────────────────────────
+
+class DeliveryTest(unittest.IsolatedAsyncioTestCase):
+    """Which delivery outcomes advance the notification bookkeeping.
+
+    The field failure this pins down: on 17 Aug 2026 every ring alert of one event
+    arrived TWICE, the two copies two minutes apart and sharing a single radar
+    frame. The photo upload had timed out after Telegram had already delivered it;
+    the monitor read that as "not delivered", held its state and sent the whole
+    alert again at the next poll. An unconfirmed send is now committed: at worst
+    one message is lost, which is what the deeper rings are for.
+    """
+
+    def _monitor(self, send):
+        mon = monitor()
+        mon._send = send
+        mon._grid_t = T0
+        return mon
+
+    async def _dispatch(self, mon, ring: int = 2):
+        await mon._dispatch(ring_alert(ring=ring), None, [], T0,
+                            origin=ORIGIN, effective=ORIGIN,
+                            peak_mmh=2.0, hail_percent=None)
+
+    async def test_a_confirmed_send_commits(self):
+        async def confirmed(text, photo=None):
+            return True
+
+        mon = self._monitor(confirmed)
+        await self._dispatch(mon)
+        self.assertEqual(mon._tracker.notified_ring, 2)
+
+    async def test_an_unconfirmed_send_commits_and_is_never_repeated(self):
+        sent = []
+
+        async def unconfirmed(text, photo=None):
+            sent.append(text)
+            return None
+
+        mon = self._monitor(unconfirmed)
+        await self._dispatch(mon)
+        self.assertEqual(mon._tracker.notified_ring, 2)
+        # The tracker only re-offers an alert while current_ring > notified_ring.
+        self.assertEqual(len(sent), 1)
+
+    async def test_a_refused_send_is_held_and_retried(self):
+        sent = []
+
+        async def refused(text, photo=None):
+            sent.append(text)
+            return False
+
+        mon = self._monitor(refused)
+        await self._dispatch(mon)
+        await self._dispatch(mon)
+        self.assertEqual(mon._tracker.notified_ring, 0)
+        self.assertEqual(len(sent), 2)
+
+    async def test_a_send_that_raises_is_held(self):
+        async def boom(text, photo=None):
+            raise RuntimeError("telegram down")
+
+        mon = self._monitor(boom)
+        await self._dispatch(mon)
+        self.assertEqual(mon._tracker.notified_ring, 0)
 
 
 # ── Manager ───────────────────────────────────────────────────────────────────

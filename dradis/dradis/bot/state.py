@@ -22,6 +22,7 @@ from pathlib import Path
 from groq import Groq as GroqClient
 from telegram import Bot as _TelegramBot
 from telegram.constants import ParseMode
+from telegram.error import TimedOut
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import core as agent_core
@@ -191,12 +192,44 @@ def for_car(text: str, lang: str = "it", parse_mode: str | None = ParseMode.HTML
     return to_spoken(text, lang), None
 
 
+# ── Delivery outcome ──────────────────────────────────────────────────────────
+#
+# THREE outcomes, not two, and the third one is the whole point.
+#
+# A send that raises `TimedOut` did not fail to deliver — it failed to be
+# ANSWERED. The request went out, and with a photo upload it has very often been
+# accepted and forwarded to the chat by the time the read timeout expires. A
+# caller told `False` retries at its next poll, and the user's phone buzzes twice
+# with the same alert. That is not a hypothesis: a rain front event on 17 Aug 2026
+# delivered every one of its ring messages twice, two minutes apart, each pair
+# sharing one radar frame, and the `⏱️` line of the second copy proved the first
+# had never been committed.
+#
+# So the ambiguity is reported as ambiguity. `UNCONFIRMED` means "assume it
+# arrived": at worst one message is lost, out of a ring ladder that still has the
+# deeper rings and the all-clear behind it. Every other failure — no bot, bad
+# HTML, blocked chat, rate limit, refused connection — genuinely delivered
+# nothing and stays `REFUSED`, so those are still retried.
+DELIVERED   = True
+REFUSED     = False
+UNCONFIRMED = None
+
+
+def classify_send_failure(exc: BaseException) -> bool | None:
+    """`UNCONFIRMED` if the message may well have arrived, `REFUSED` if it cannot
+    have. `TimedOut` is checked as itself rather than as the `NetworkError` it
+    subclasses: a refused connection is a certainty, a timeout is not."""
+    return UNCONFIRMED if isinstance(exc, TimedOut) else REFUSED
+
+
 async def send_telegram(text: str, bot_id: str = "default",
                         parse_mode: str = ParseMode.HTML,
-                        lang: str = "it") -> bool:
-    """Send a Telegram message. Returns True on confirmed delivery, False otherwise.
+                        lang: str = "it") -> bool | None:
+    """Send a Telegram message. `DELIVERED` on a confirmed send, `REFUSED` when
+    nothing was delivered, `UNCONFIRMED` when the answer never came back.
     Callers that need to react to delivery failure (e.g. live monitors that gate
-    state flags on a successful send) must inspect the return value.
+    state flags on a successful send) must inspect the return value — and must
+    treat `UNCONFIRMED` as delivered, or they will duplicate the message.
 
     Car Mode is applied HERE, so every path that ends in a plain text message —
     live monitors, HA monitors, error notices — is covered without each caller
@@ -206,14 +239,18 @@ async def send_telegram(text: str, bot_id: str = "default",
     """
     bot, chat_id = get_bot_and_chat(bot_id)
     if not bot:
-        return False
+        return REFUSED
     text, parse_mode = for_car(text, lang, parse_mode)
+    started = time.monotonic()
     try:
         await bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
-        return True
+        return DELIVERED
     except Exception as ex:
-        print(f"[DRADIS] send_telegram(bot_id={bot_id!r}) error: {ex}")
-        return False
+        # The class and the elapsed time are the diagnosis: a 60 s TimedOut and a
+        # 0.3 s BadRequest used to print the same line and mean opposite things.
+        print(f"[DRADIS] send_telegram(bot_id={bot_id!r}) {type(ex).__name__} "
+              f"after {time.monotonic() - started:.1f}s: {ex}")
+        return classify_send_failure(ex)
 
 
 async def _send_error_telegram(msg: str, bot_id: str = "default") -> None:

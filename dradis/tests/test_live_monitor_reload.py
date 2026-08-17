@@ -102,6 +102,29 @@ class MonitorLabelTest(unittest.TestCase):
         self.assertEqual(self.detail({"type": "football_betting"}), "⚽ live")
 
 
+class DeliveryOutcomeTest(unittest.TestCase):
+    """A timeout is not a refusal.
+
+    The live monitors gate their notification bookkeeping on this classification:
+    `REFUSED` is retried at the next poll, `UNCONFIRMED` is committed as delivered.
+    Getting a timed-out photo upload into the first class is what sent every ring
+    alert of one rain event twice on 17 Aug 2026.
+    """
+
+    def test_a_timeout_is_unconfirmed(self):
+        from telegram.error import TimedOut
+        self.assertIs(scheduler._state.classify_send_failure(TimedOut()),
+                      scheduler._state.UNCONFIRMED)
+
+    def test_everything_else_is_refused(self):
+        from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter
+        for exc in (BadRequest("unclosed tag"), Forbidden("bot was blocked"),
+                    NetworkError("connection refused"), RetryAfter(30)):
+            with self.subTest(error=type(exc).__name__):
+                self.assertIs(scheduler._state.classify_send_failure(exc),
+                              scheduler._state.REFUSED)
+
+
 class Recorder:
     def __init__(self, name, boom=False):
         self.name, self.boom, self.calls = name, boom, []

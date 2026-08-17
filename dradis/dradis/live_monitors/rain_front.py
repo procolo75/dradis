@@ -156,6 +156,12 @@ class RainFrontTracker(StormFrontTracker):
         self._field = None                  # FieldMotion | None
         self._own = (0.0, 0.0)              # observer velocity, (east, north) km/h
         self.last_encounter: Encounter | None = None
+        # A measured encounter whose closest approach is already behind us. Kept
+        # apart from `last_encounter`, which every consumer reads as "an approach
+        # is coming": a receding one has no time and no miss distance to quote,
+        # but the message must still not claim a drift and an approach as if they
+        # were two unrelated facts.
+        self.last_receding = False
 
     def set_motion(self, field, own_east_kmh: float = 0.0,
                    own_north_kmh: float = 0.0) -> None:
@@ -165,12 +171,19 @@ class RainFrontTracker(StormFrontTracker):
     def track_verdict(self, now: float, bearing: float,
                       front_km: float) -> tuple[str, float | None, bool]:
         self.last_encounter = None
+        self.last_receding = False
         if self._field is not None:
             encounter = cpa(front_km, bearing,
                             self._field.east_kmh, self._field.north_kmh,
                             self._own[0], self._own[1])
             # A closest approach already in the past cannot explain a ring that is
-            # descending; the inherited reading is the safer answer there.
+            # descending; the inherited reading is the safer answer there, and the
+            # rain that arrived on 17 Aug 2026 while the drift said otherwise is
+            # the evidence for keeping it that way. The disagreement is recorded
+            # rather than resolved — a stratiform mass genuinely can drift one way
+            # while its leading edge advances by growth, and the ring descent is
+            # measured against the observer, which the drift is not.
+            self.last_receding = encounter is not None and not encounter.approaching
             if encounter is not None and encounter.approaching:
                 self.last_encounter = encounter
                 if encounter.miss_km <= CBDR_CLOSING_KM:
@@ -602,10 +615,17 @@ class RainFrontLiveMonitor:
         except Exception as e:
             _LOGGER.error("[RainFront] '%s' send error: %s", self.name, e)
             return
-        if not ok:
+        # Only a REFUSED send is retried. An UNCONFIRMED one — the answer never
+        # came back, typically a timed-out photo upload — is committed as if it
+        # had arrived, because retrying it is what put the same ring message on
+        # the user's phone twice, two minutes apart, sharing one radar frame.
+        if ok is False:
             _LOGGER.warning("[RainFront] '%s' alert NOT delivered — state held, "
                             "retry next poll", self.name)
             return
+        if ok is None:
+            _LOGGER.warning("[RainFront] '%s' delivery UNCONFIRMED — committed "
+                            "anyway, the alert will not be sent again", self.name)
 
         self._tracker.commit(alert, now)
         self._save_state()
@@ -742,7 +762,16 @@ class RainFrontLiveMonitor:
         return (f"🚗 In movimento a {fix.speed_kmh:.0f} km/h verso {heading}" if it
                 else f"🚗 Moving at {fix.speed_kmh:.0f} km/h towards {heading}")
 
-    def _field_line(self) -> str:
+    def _field_line(self, alert: RingAlert | None = None) -> str:
+        """Where the body of the rain is drifting.
+
+        Below half a pixel per frame `field_motion` reports a standstill and no
+        bearing at all, so this can no longer print a direction the radar never
+        resolved. What remains is the case where the drift is genuinely measured
+        and genuinely points away while the front is closing: both are true, and
+        stating them as two independent facts is what made a message contradict
+        itself. The drift is subordinated to the approach instead.
+        """
         it = self.language == "it"
         if self._field is None:
             return ("🌬️ Movimento della pioggia non misurabile" if it
@@ -750,9 +779,15 @@ class RainFrontLiveMonitor:
         if self._field.speed_kmh < 1.0:
             return "🌬️ Pioggia stazionaria" if it else "🌬️ Rain is stationary"
         heading = direction_label(self._field.bearing_deg, self.language)
-        return (f"🌬️ La pioggia si muove verso {heading} a "
-                f"{self._field.speed_kmh:.0f} km/h" if it else
-                f"🌬️ Rain moving {heading} at {self._field.speed_kmh:.0f} km/h")
+        speed = self._field.speed_kmh
+        if (alert is not None and self._tracker.last_receding
+                and alert.track != TRACK_GRAZING):
+            return (f"🌬️ Il grosso della pioggia deriva verso {heading} a "
+                    f"{speed:.0f} km/h, ma il fronte continua ad avvicinarsi" if it
+                    else f"🌬️ The bulk of the rain drifts {heading} at "
+                         f"{speed:.0f} km/h, but the front keeps closing")
+        return (f"🌬️ La pioggia si muove verso {heading} a {speed:.0f} km/h" if it
+                else f"🌬️ Rain moving {heading} at {speed:.0f} km/h")
 
     def _radar_line(self, now: float) -> str:
         """The age of the measurement, always. The product is published about ten
@@ -791,7 +826,7 @@ class RainFrontLiveMonitor:
             (f"🎯 Ring {alert.ring}/{alert.ring_count} · within "
              f"{alert.ring_edge_km:.0f} km"))
         lines.append(self._track_line(alert))
-        lines.append(self._field_line())
+        lines.append(self._field_line(alert))
         motion_line = self._motion_line(alert)
         if motion_line:
             lines.append(motion_line)
