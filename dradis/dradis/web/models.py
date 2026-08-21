@@ -60,6 +60,7 @@ class LiveMonitorPayload(BaseModel):
     quiet_start:     str       = ""
     quiet_end:       str       = ""
     windows:         list[str] = ["55-65", "75-81"]
+    # Football: the odds cap gates the "55-65" window only — see live_monitors/football.py.
     max_odds:        float     = 2.0
     telegram_bot_id: str       = "default"
     # Storm front and rain front — how many approach updates a single event may

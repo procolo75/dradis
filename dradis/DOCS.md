@@ -810,7 +810,7 @@ Polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse
 2. Match minute falls inside a configured **minute window** (default: 55′–65′ and/or 75′–81′)
 3. **Goal difference == 1** (exactly one team ahead)
 4. The **losing team's next-goal odds are lower** than the winning team's — a market signal that the losing team is expected to equalise
-5. The **losing team's next-goal odds are below the configured maximum** (default `2.0`) — filters out long-shot signals
+5. **Only in the 55′–65′ window:** the losing team's next-goal odds are also **below the configured maximum** (default `2.0`) — filters out long-shot signals early in the half. In the 75′–81′ window condition 4 alone is enough.
 
 **Provider fallback:** the API is queried via `provider1` → `provider2` → `provider3` → `provider4`; the first successful response wins.
 
@@ -828,7 +828,7 @@ Negele Arsi Ketema vs Hawassa Kenema SC
 | Field | Description |
 |-------|-------------|
 | Minute windows | Checkboxes for 55′–65′ and 75′–81′ (both enabled by default). More windows coming in a future release. |
-| Maximum odds | Alert only when the losing team's next-goal odds are below this value (default `2.0`). The 🔍 Test API table honours the same cap. |
+| Maximum odds (55′–65′ only) | Alert only when the losing team's next-goal odds are below this value (default `2.0`). Applies to the 55′–65′ window and is ignored in 75′–81′; the field is disabled in the UI when 55′–65′ is unchecked. The 🔍 Test API table honours the same rule. |
 | API pause | Time range during which API calls are suppressed (default 23:00–07:00). Leave blank to disable. |
 
 **🔍 Test API button:** fetches all current live matches and renders them in a table with columns: minute, league, home, away, score, next-goal odds (home / away), and a 🔔 signal flag. Matches that meet all alert conditions are highlighted in green; matches in a window with 1-goal difference but without the odds signal are highlighted in yellow.

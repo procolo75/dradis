@@ -474,7 +474,7 @@ Polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse
 2. Match minute falls inside a configured **minute window** (e.g. 55′–65′ or 75′–81′)
 3. **Goal difference == 1** (one team leads by exactly one goal)
 4. The **losing team's next-goal odds are lower** than the winning team's — the market expects the trailing team to score next
-5. The **losing team's next-goal odds are below the configured maximum** (default `2.0`) — filters out long-shot signals
+5. **Only in the 55′–65′ window:** the losing team's next-goal odds are also **below the configured maximum** (default `2.0`) — filters out long-shot signals while there is still time for the price to mean nothing. In the 75′–81′ window condition 4 alone is enough.
 
 This combination identifies matches where the statistics and betting market both suggest the losing team has the momentum to equalise — a classically exploitable live-betting signal.
 
@@ -485,7 +485,7 @@ This combination identifies matches where the statistics and betting market both
 | Field | Description |
 |-------|-------------|
 | Minute windows | Select one or both: **55′–65′** and **75′–81′**. Both are enabled by default. Additional windows are planned for a future release. |
-| Maximum odds | Alert only when the losing team's next-goal odds are below this value (default `2.0`). The 🔍 Test API table honours the same cap. |
+| Maximum odds (55′–65′ only) | Alert only when the losing team's next-goal odds are below this value (default `2.0`). It gates the **55′–65′** window only and is ignored in **75′–81′**; the field is disabled in the Web UI when 55′–65′ is unchecked. The 🔍 Test API table honours the same rule. |
 | API pause | Time range during which API calls are suppressed (default 23:00–07:00, evaluated in the configured timezone). Avoids unnecessary API usage overnight. Leave blank to disable. |
 
 ### Provider Fallback

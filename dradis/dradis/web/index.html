@@ -4353,11 +4353,11 @@ function renderLiveMonitorForm(monitor) {
           <label><input type="checkbox" class="lm-window" value="55-65" ${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "checked" : ""}> 55'–65'</label>
           <label><input type="checkbox" class="lm-window" value="75-81" ${(monitor.windows||["55-65","75-81"]).includes("75-81") ? "checked" : ""}> 75'–81'</label>
         </div>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Alert when losing team's next-goal odds &lt; winning team's next-goal odds AND below the maximum odds below. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Alert when the losing team's next-goal odds &lt; the winning team's next-goal odds. In the 55'–65' window the losing team's odds must also be below the maximum below; in 75'–81' the comparison alone is enough. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
 
-        <div class="form-group" style="margin-top:12px">
-          <label for="lm-max-odds">Maximum odds <span style="font-weight:400;color:var(--text-muted)">— alert only if the losing team's next-goal odds are under this value</span></label>
-          <input type="number" id="lm-max-odds" min="1" step="0.1" value="${monitor.max_odds ?? 2.0}" style="width:100px">
+        <div class="form-group" id="lm-max-odds-block" style="margin-top:12px${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "" : ";opacity:0.5"}">
+          <label for="lm-max-odds">Maximum odds (55'–65' only) <span style="font-weight:400;color:var(--text-muted)">— alert only if the losing team's next-goal odds are under this value. Ignored for the 75'–81' window.</span></label>
+          <input type="number" id="lm-max-odds" min="1" step="0.1" value="${monitor.max_odds ?? 2.0}" style="width:100px" ${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "" : "disabled"}>
         </div>
 
         <div style="margin-top:12px">
@@ -4551,6 +4551,18 @@ function renderLiveMonitorForm(monitor) {
       out.style.color = "var(--danger)";
     }
   });
+
+  // The odds cap only gates the 55'-65' window, so it is dead weight when that
+  // window is off — show it as such rather than letting it read as a global gate.
+  const earlyWindowBox = panel.querySelector('.lm-window[value="55-65"]');
+  if (earlyWindowBox) {
+    earlyWindowBox.addEventListener("change", () => {
+      const input = document.getElementById("lm-max-odds");
+      const block = document.getElementById("lm-max-odds-block");
+      if (input) input.disabled = !earlyWindowBox.checked;
+      if (block) block.style.opacity = earlyWindowBox.checked ? "" : "0.5";
+    });
+  }
 
   panel.querySelectorAll(".fp-provider-btn").forEach(btn => {
     btn.addEventListener("click", async () => {

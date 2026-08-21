@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## [4.4.4] - 2026-08-21
+
+**The maximum-odds cap was written for one window and applied to both.** It was added to keep the football monitor away from long shots: alert only when the trailing side's next-goal price is under `2.0`. That is a sound rule at the 55th minute, when there is still half an hour for a short price to mean nothing. At the 78th it is the wrong question — with three minutes left, the market putting the trailing side ahead *is* the signal, and a price of 3.00 there says something a price of 3.00 at minute 57 does not. The cap sat after the window check and never looked at which window had matched, so every late alert whose price cleared 2.00 was dropped without a trace.
+
+- **Fix — the cap gates 55′–65′ only.** `_poll` now reads `window == WINDOW_EARLY` before applying `max_odds`; in 75′–81′ the single condition *losing team's next-goal odds < winning team's next-goal odds* decides on its own. The window labels became the constants `WINDOW_EARLY` / `WINDOW_LATE` so the rule names the window instead of repeating a string literal.
+- **Fix — the 🔍 Test API table agreed with the old rule, so it lied twice.** `_normalise_for_ui` kept its own copy of the condition, capped in both windows and with the minute bounds hardcoded a second time. It now derives the bounds from `_ALL_WINDOWS` and applies the same per-window rule, so a green 🔔 in the table is a match that would actually have alerted.
+- **Fix — the ALERT log line no longer claims a gate it never evaluated.** It printed `(max_odds=2.0)` on every alert; on a 75′–81′ hit it now reads `(no odds cap in this window)`.
+- **Feat — the Web UI stops presenting the field as global.** **Maximum odds** is relabelled *(55′–65′ only)*, its help text says it is ignored in 75′–81′, and the input is disabled and dimmed when the 55′–65′ window is unchecked — where it has nothing left to gate. The value is still saved and still sent to the test endpoint: the backend, not the form, decides per window whether to use it.
+
+Left out deliberately: the two copies of the signal rule — the poll's and the table's — were made to agree rather than merged. They read different shapes (a normalised match with a chosen window, versus a raw feed entry that must report both windows to the table), and the honest fix is a shared predicate taking odds and a window label. The new test file pins them against each other in the meantime, which is what would have caught this in the first place.
+
+Also worth recording: the window bounds are exclusive on both sides, so *55′–65′* fires at minutes 56–64 and *75′–81′* at 76–80. That is unchanged and now pinned by a test, because it is the kind of thing that gets "fixed" by accident.
+
+Tests: 441 (was 430). New file `test_football_signal.py` (11).
+
 ## [4.4.3] - 2026-08-17
 
 **"Pioggia su di te" was a claim about the ground that nobody had measured.** The alert fired, the Protezione Civile map agreed that there was an echo over the position, and the pavement was dry. Nothing measured was wrong; the sentence was. The innermost ring is a fifth of the radius — **4 km** at a 20 km radius — so reaching it says the front is close, not that anything is falling on you, and the monitor had no idea what the radar showed at the observer's own position although it already reads exactly that for hail.

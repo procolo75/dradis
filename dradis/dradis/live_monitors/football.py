@@ -10,6 +10,7 @@ Alert conditions (all must be true):
   - match minute inside a configured window ("55-65" and/or "75-81")
   - goal difference == 1
   - losing team's next-goal odds < winning team's next-goal odds
+  - in the "55-65" window only: losing team's next-goal odds < max_odds
 
 Providers are tried in order (provider1→4); first successful response wins.
 Deduplication: one alert per (match_id + window). Key is pruned only when the
@@ -34,9 +35,12 @@ POLL_INTERVAL_SEC = 300
 _BASE_URL  = "https://football-betting-odds1.p.rapidapi.com"
 _PROVIDERS = ["provider1", "provider2", "provider3", "provider4"]
 
+WINDOW_EARLY = "55-65"   # the only window the max-odds cap applies to
+WINDOW_LATE  = "75-81"
+
 _ALL_WINDOWS: dict[str, tuple[int, int]] = {
-    "55-65": (55, 65),
-    "75-81": (75, 81),
+    WINDOW_EARLY: (55, 65),
+    WINDOW_LATE:  (75, 81),
 }
 
 
@@ -219,9 +223,13 @@ class FootballLiveMonitor:
 
             if losing_odds >= winning_odds:
                 continue
-            # Skip long-shot bets: the losing team's next-goal odds must be below
-            # the configured cap (default 2.0) for the signal to be worth an alert.
-            if losing_odds >= self._max_odds:
+            # The cap is a 55-65 rule only. Early in the second half there is still
+            # time for a long-shot price to be nothing more than a long shot, so the
+            # signal is only worth an alert when the trailing side is short-priced.
+            # By 75-81 the market's own preference for the trailing side is the whole
+            # signal, and capping it there would drop valid late alerts.
+            capped = window == WINDOW_EARLY
+            if capped and losing_odds >= self._max_odds:
                 continue
             n_signal += 1
 
@@ -237,8 +245,8 @@ class FootballLiveMonitor:
             )
             print(
                 f"[FootballMonitor] '{self.name}' ALERT {alert_key} "
-                f"{losing_team} next={losing_odds:.2f} < {winning_team} next={winning_odds:.2f} "
-                f"(max_odds={self._max_odds})"
+                f"{losing_team} next={losing_odds:.2f} < {winning_team} next={winning_odds:.2f}"
+                + (f" (max_odds={self._max_odds})" if capped else " (no odds cap in this window)")
             )
             try:
                 await self._send(msg)
@@ -329,15 +337,17 @@ def _normalise_for_ui(match_id: str, obj: dict, provider: str, max_odds: float =
     diff           = m["home_score"] - m["away_score"]
     is_second_half = m["period_id"] == "3"
     minute         = m["minutes"]
-    in_55_65       = is_second_half and 55 < minute < 65
-    in_75_81       = is_second_half and 75 < minute < 81
+    lo_e, hi_e     = _ALL_WINDOWS[WINDOW_EARLY]
+    lo_l, hi_l     = _ALL_WINDOWS[WINDOW_LATE]
+    in_55_65       = is_second_half and lo_e < minute < hi_e
+    in_75_81       = is_second_half and lo_l < minute < hi_l
     signal = False
-    if is_second_half and (in_55_65 or in_75_81) and abs(diff) == 1 and ng_home is not None and ng_away is not None:
-        # Losing team's next-goal odds must beat the winning team's AND be below the cap.
-        if diff > 0 and ng_away < ng_home and ng_away < max_odds:
-            signal = True
-        elif diff < 0 and ng_home < ng_away and ng_home < max_odds:
-            signal = True
+    if (in_55_65 or in_75_81) and abs(diff) == 1 and ng_home is not None and ng_away is not None:
+        losing_odds  = ng_away if diff > 0 else ng_home
+        winning_odds = ng_home if diff > 0 else ng_away
+        # Same rule as the poll: the cap only gates the early window.
+        if losing_odds < winning_odds:
+            signal = in_75_81 or losing_odds < max_odds
     return {
         "id":         m["id"],
         "league":     m["country_leagues"],
