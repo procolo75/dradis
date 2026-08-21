@@ -356,6 +356,7 @@ With **Car Mode** on, every alert, scheduled report and chat answer is rewritten
 - units spelled out — `12 km/h` → *12 chilometri orari*, `±12 m` → *più o meno 12 metri*;
 - compass points expanded — `O` → *ovest* (spoken, the abbreviation is the conjunction "or");
 - ratios turned into words — `Anello 2/4` → *Anello 2 su 4*;
+- dates spelled out — `21/08/2026 14:32` → *21 agosto 2026 14:32*. A ratio and a date are the same characters, so the day-month form is only read as a date when a clock follows it (`21/08 14:32`); `Anello 2/4` stays a ratio;
 - lines joined into sentences.
 
 The conversion is deterministic: no model call, no added latency on an urgent alert, no tokens spent. Monitors keep using their own configured language.

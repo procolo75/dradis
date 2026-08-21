@@ -35,7 +35,7 @@ Runtime settings for the DRADIS agent. Saved to `/data/dradis_settings.json`, ef
 
 DRADIS messages are built to be **looked at**: an icon on every line, bold text, abbreviated units, `·` and `—` between facts, and a radar chart attached to weather alerts. Behind the wheel that format breaks down — CarPlay announces emoji by name, spells `45°` and `2/4` as symbols, reads URLs character by character, and often says nothing beyond "Image" when a photo is attached.
 
-With Car Mode on, every alert, scheduled report and chat answer is rewritten as plain spoken prose: icons, markup and links removed, coordinates and record ids dropped, units spelled out (`12 km/h` → *12 chilometri orari*), compass points expanded (`O` → *ovest*), ratios turned into words (`Anello 2/4` → *Anello 2 su 4*), and lines joined into sentences. Monitors keep their own configured language.
+With Car Mode on, every alert, scheduled report and chat answer is rewritten as plain spoken prose: icons, markup and links removed, coordinates and record ids dropped, units spelled out (`12 km/h` → *12 chilometri orari*), compass points expanded (`O` → *ovest*), ratios turned into words (`Anello 2/4` → *Anello 2 su 4*), dates spelled out (`21/08/2026 14:32` → *21 agosto 2026 14:32*), and lines joined into sentences. Monitors keep their own configured language.
 
 The conversion is deterministic — no model call, no added latency on an urgent alert, no tokens spent.
 

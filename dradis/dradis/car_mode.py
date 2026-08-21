@@ -61,7 +61,7 @@ _IDENT_RE = re.compile(r"#\d{3,}")
 # selectors and ZWJ that hold composed emoji together.
 #
 # `°` (U+00B0) and `·` (U+00B7) are NOT in any of these ranges, on purpose: they
-# are meaningful text and step 6 turns them into words.
+# are meaningful text and step 7 turns them into words.
 # Written as codepoints rather than literals on purpose: half of what has to be
 # matched here is invisible in an editor (the variation selectors and the ZWJ),
 # and a range typed as characters is a range nobody can review.
@@ -83,7 +83,49 @@ _EMOJI_RE = re.compile(
     "[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _EMOJI_RANGES) + "]+"
 )
 
-# ── Step 6: units ─────────────────────────────────────────────────────────────
+# ── Step 6: dates ─────────────────────────────────────────────────────────────
+# A date is digits with a slash between them, which is exactly what the ratio
+# rule below is looking for: `%d/%m/%Y %H:%M` — the stamp on every seismic and
+# thunderstorm report — was read out as "21 su 08 su 2026", a fraction of a
+# fraction. Dates are therefore consumed FIRST, and spelled out in words, which
+# is the same choice this module makes everywhere else: what the speech engine
+# would have to guess at, it is handed already decided.
+#
+# The month name is what disambiguates the two forms. `21/08/2026` is a date and
+# nothing else, but `2/4` on its own is genuinely ambiguous — "Anello 2/4" and
+# "2 April" are the same six characters — so the day-month form is only read as a
+# date when a clock follows it, which is the one shape DRADIS actually emits
+# (`%d/%m %H:%M`). Everything else stays a ratio.
+_MONTHS = {
+    "it": ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+           "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"],
+    "en": ["January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December"],
+}
+
+_DATE_FULL_RE  = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
+_DATE_DAY_MONTH_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})\b(?=\s+\d{1,2}:\d{2}\b)")
+
+
+def _dates_to_words(text: str, lang: str) -> str:
+    """Rewrite `d/m/Y` and `d/m` (before a clock) as spoken dates."""
+    months = _MONTHS.get(lang, _MONTHS["it"])
+
+    def spell(match: re.Match) -> str:
+        day, month = int(match.group(1)), int(match.group(2))
+        # Out of range means it was never a date — hand it back untouched and let
+        # the ratio rule have it. Nothing here guesses at `%m/%d`: every date
+        # DRADIS prints is day-first.
+        if not (1 <= day <= 31 and 1 <= month <= 12):
+            return match.group(0)
+        spoken = f"{day} {months[month - 1]}"
+        return f"{spoken} {match.group(3)}" if match.lastindex == 3 else spoken
+
+    text = _DATE_FULL_RE.sub(spell, text)
+    return _DATE_DAY_MONTH_RE.sub(spell, text)
+
+
+# ── Step 7: units ─────────────────────────────────────────────────────────────
 # ORDER IS SUBSTANCE HERE. `km/h` must be consumed before `km`, or the compound
 # unit comes out as "chilometri/h" — the exact kind of half-converted string that
 # reads worse than the original. The list is applied in sequence for that reason;
@@ -102,7 +144,8 @@ _UNITS = {
         (re.compile(r"°C\b"),                    " gradi"),
         (re.compile(r"°"),                       " gradi"),
         (re.compile(r"%"),                       " per cento"),
-        # "Anello 2/4" is a ratio, not a date: only between digits.
+        # Only between digits, and only on what step 6 left behind: by here every
+        # date is already words, so a surviving digit/digit really is a ratio.
         (re.compile(r"(?<=\d)\s*/\s*(?=\d)"),    " su "),
     ],
     "en": [
@@ -118,7 +161,7 @@ _UNITS = {
         (re.compile(r"°C\b"),                    " degrees"),
         (re.compile(r"°"),                       " degrees"),
         (re.compile(r"%"),                       " percent"),
-        (re.compile(r"(?<=\d)\s*/\s*(?=\d)"),    " of "),
+        (re.compile(r"(?<=\d)\s*/\s*(?=\d)"),    " of "),   # see the "it" note above
     ],
 }
 
@@ -193,14 +236,17 @@ def to_spoken(text: str, lang: str = "it") -> str:
     text = _IDENT_RE.sub("", text)
     # 5.
     text = _EMOJI_RE.sub("", text)
-    # 6.
+    # 6. Before the units, because the ratio rule in there cannot tell a date from
+    #    a fraction and would win the race.
+    text = _dates_to_words(text, lang)
+    # 7.
     text = _SEPARATORS.sub(", ", text)
     for pattern, replacement in units:
         text = pattern.sub(replacement, text)
     for pattern, replacement in _COMPASS_RE.get(lang, _COMPASS_RE["it"]):
         text = pattern.sub(replacement, text)
 
-    # 7. Each surviving line was a standalone fact; as a sentence it needs an end,
+    # 8. Each surviving line was a standalone fact; as a sentence it needs an end,
     #    or the speech engine runs two of them together into nonsense.
     sentences = []
     for line in text.split("\n"):

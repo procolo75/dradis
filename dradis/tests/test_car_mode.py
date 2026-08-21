@@ -145,6 +145,54 @@ class UnitsTest(unittest.TestCase):
         self.assertEqual(to_spoken("picco 24 mm/h"), "picco 24 millimetri all'ora.")
 
 
+class DatesTest(unittest.TestCase):
+    """A date is digits with a slash in it, and so is a ratio.
+
+    The bug this pins: the ratio rule reached the timestamp first and every
+    seismic and thunderstorm report announced itself as "21 su 08 su 2026".
+    """
+
+    def test_a_full_date_becomes_words(self):
+        self.assertEqual(to_spoken("21/08/2026 14:32"), "21 agosto 2026 14:32.")
+
+    def test_a_full_date_in_english(self):
+        self.assertEqual(to_spoken("21/08/2026 14:32", "en"), "21 August 2026 14:32.")
+
+    def test_the_leading_zero_of_a_day_is_dropped(self):
+        # "05" spoken is "zero five"; the day is a number, not a field width.
+        self.assertEqual(to_spoken("05/01/2026 09:05"), "5 gennaio 2026 09:05.")
+
+    def test_a_day_and_month_before_a_clock_is_a_date(self):
+        # `monitors/seismic.py` stamps its rows with `%d/%m %H:%M`.
+        self.assertEqual(to_spoken("21/08 14:32"), "21 agosto 14:32.")
+
+    def test_a_ratio_is_still_a_ratio(self):
+        # The whole reason the day-month form needs a clock behind it: without
+        # one, "2/4" is the ring count, not the second of April.
+        self.assertEqual(to_spoken("Anello 2/4"), "Anello 2 su 4.")
+        self.assertEqual(to_spoken("Anello 2/4, entro 20 km"),
+                         "Anello 2 su 4, entro 20 chilometri.")
+
+    def test_a_ratio_separated_from_a_clock_is_still_a_ratio(self):
+        self.assertEqual(to_spoken("Anello 2/4 alle 14:32"),
+                         "Anello 2 su 4 alle 14:32.")
+        self.assertEqual(to_spoken("Anello 2/4 · 14:32"),
+                         "Anello 2 su 4, 14:32.")
+
+    def test_an_impossible_month_is_not_a_date(self):
+        self.assertEqual(to_spoken("rapporto 3/13/2026"), "rapporto 3 su 13 su 2026.")
+
+    def test_a_timezone_name_keeps_its_slash_out_of_the_ratio_rule(self):
+        # "(Europe/Rome)" — a slash between letters was never the ratio rule's
+        # business, and the date rule must not make it so.
+        self.assertEqual(to_spoken("21/08/2026 14:32 (Europe/Rome)"),
+                         "21 agosto 2026 14:32 (Europe/Rome).")
+
+    def test_a_spoken_date_survives_a_second_pass(self):
+        once = to_spoken("🕐 21/08/2026 14:32")
+        self.assertEqual(to_spoken(once), once)
+
+
 class CompassTest(unittest.TestCase):
     """`geo.direction_label` returns abbreviations; one of them is a disaster."""
 
