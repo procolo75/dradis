@@ -11,7 +11,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 | [Architecture](Architecture) | How DRADIS is structured internally |
 | [Tools](Tools) | Web Search, Weather, Google Calendar, Gmail, Google Tasks, URL Fetch, Voice |
 | [Tasks](Tasks) | LLM-powered recurring tasks with cron scheduling |
-| [Monitors](Monitors) | Scheduled monitors: Thunderstorm, Rain, Weather Charts, Seismic, Google Drive Backup |
+| [Monitors](Monitors) | Scheduled monitors: Thunderstorm, Rain, Weather Charts, Seismic, Civil Protection alerts (Campania), Google Drive Backup |
 | [Live-Monitors](Live-Monitors) | Persistent push monitors: Storm front, Rain front, Seismic live, Football Betting |
 | [HA-Monitors](HA-Monitors) | Home Assistant entity monitors via MQTT |
 | [Web-UI](Web-UI) | Web UI reference — all panels and fields, including 🚗 Car Mode |
