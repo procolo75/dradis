@@ -140,6 +140,30 @@ The Telegram message lists each 15-minute slot with the expected precipitation i
 
 ---
 
+## Civil Protection alert *(scheduled monitor)*
+
+Get the Campania alert bulletin every afternoon — today's and tomorrow's together — but only when at least one zone is yellow or worse on either day. Green days are silent.
+
+| Field | Value |
+|-------|-------|
+| Monitor type | 🚨 Civil Protection alert (Campania) |
+| Alert from level | 🟡 Giallo |
+| Cron | `30 14 * * *` |
+
+```
+🚨 Allerta Protezione Civile — Campania
+🕐 22/08/2026 10:40 (Europe/Rome)
+
+📅 OGGI — dal 21/08/2026 14:00 al 22/08/2026 14:00
+Avviso n. 72 del 2026 · emesso 21/08/2026 11:00
+🟡 GIALLO — Zona 1 · Piana campana, Napoli, Isole, Area Vesuviana
+   ↳ Idrogeologico per temporali
+🟢 Verdi: 4, 6, 7, 8
+
+📅 DOMANI — dal 22/08/2026 14:00 al 23/08/2026 14:00
+Bollettino non ancora emesso.
+```
+
 ## Daily appointments digest *(scheduled task)*
 
 Every morning DRADIS sends a Telegram message with your Google Calendar events for the day.

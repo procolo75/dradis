@@ -29,7 +29,8 @@ dradis/
 ├── monitors/
 │   ├── thunderstorm.py      # Thunderstorm risk monitor (Open-Meteo, no LLM)
 │   ├── rain.py              # Rain alert monitor (Open-Meteo, no LLM)
-│   └── seismic.py           # Seismic report monitor (INGV GOSSIP, no LLM)
+│   ├── seismic.py           # Seismic report monitor (INGV GOSSIP, no LLM)
+│   └── campania_alert.py    # Civil Protection alert monitor (Campania, today + tomorrow, no LLM)
 ├── live_monitors/
 │   ├── storm_front.py       # Storm front live monitor — lifecycle, persistence, formatting
 │   ├── storm_front_core.py  # Pure decision core: ring/sector grid, front, CBDR, event machine (no I/O)

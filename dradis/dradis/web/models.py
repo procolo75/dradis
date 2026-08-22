@@ -37,6 +37,7 @@ class MonitorPayload(BaseModel):
     hours_ahead:     int   = 2
     seismic_area:    str   = "flegrei"
     time_range:      str   = "last_24h"
+    min_level:       int   = 2
     alert_mode:      str   = "direct"
     instructions:    str   = ""
     cape_sat:        float     = 1200.0

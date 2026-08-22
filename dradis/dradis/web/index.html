@@ -3754,11 +3754,12 @@ function renderMonitorForm(monitor) {
       <div class="form-group">
         <label for="m-type">Monitor type</label>
         <select id="m-type">
-          <option value="thunderstorm"  ${monitor.type === "thunderstorm"  ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
-          <option value="rain"          ${monitor.type === "rain"          ? "selected" : ""}>🌧️ Rain alert (Open-Meteo)</option>
-          <option value="weather_chart" ${monitor.type === "weather_chart" ? "selected" : ""}>📊 Weather Charts (Open-Meteo)</option>
-          <option value="seismic"       ${monitor.type === "seismic"       ? "selected" : ""}>🌍 Seismic report (INGV GOSSIP)</option>
-          <option value="backup"        ${monitor.type === "backup"        ? "selected" : ""}>☁️ Google Drive Backup</option>
+          <option value="thunderstorm"   ${monitor.type === "thunderstorm"   ? "selected" : ""}>⛈️ Thunderstorm risk (Open-Meteo)</option>
+          <option value="rain"           ${monitor.type === "rain"           ? "selected" : ""}>🌧️ Rain alert (Open-Meteo)</option>
+          <option value="weather_chart"  ${monitor.type === "weather_chart"  ? "selected" : ""}>📊 Weather Charts (Open-Meteo)</option>
+          <option value="seismic"        ${monitor.type === "seismic"        ? "selected" : ""}>🌍 Seismic report (INGV GOSSIP)</option>
+          <option value="campania_alert" ${monitor.type === "campania_alert" ? "selected" : ""}>🚨 Civil Protection alert (Campania)</option>
+          <option value="backup"         ${monitor.type === "backup"         ? "selected" : ""}>☁️ Google Drive Backup</option>
         </select>
         <small id="m-type-desc" style="margin-top:4px;display:block;color:var(--text-muted)"></small>
       </div>
@@ -3791,6 +3792,30 @@ function renderMonitorForm(monitor) {
           <option value="since_year_start" ${(monitor.time_range || "last_24h") === "since_year_start" ? "selected" : ""}>Da inizio anno</option>
           <option value="last_year"        ${(monitor.time_range || "last_24h") === "last_year"        ? "selected" : ""}>Ultimo anno</option>
         </select>
+      </div>
+
+      <div class="form-group" id="fg-min-level">
+        <label for="m-min-level">Alert from level</label>
+        <select id="m-min-level" style="width:220px">
+          <option value="2" ${String(monitor.min_level ?? 2) === "2" ? "selected" : ""}>🟡 Giallo</option>
+          <option value="3" ${String(monitor.min_level ?? 2) === "3" ? "selected" : ""}>🟠 Arancione</option>
+          <option value="4" ${String(monitor.min_level ?? 2) === "4" ? "selected" : ""}>🔴 Rosso</option>
+          <option value="1" ${String(monitor.min_level ?? 2) === "1" ? "selected" : ""}>🟢 Sempre (anche verde)</option>
+        </select>
+        <small style="color:var(--text-muted)">
+          The report always covers <b>both today's and tomorrow's bulletin</b>, and nothing is sent
+          while every zone stays below this level on both days. Tomorrow's bulletin is usually
+          published in the afternoon; until then it is shown as not yet issued. All eight alert
+          zones of Campania:
+          <b>1</b> Piana campana, Napoli, Isole, Area Vesuviana ·
+          <b>2</b> Alto Volturno e Matese ·
+          <b>3</b> Penisola sorrentino-amalfitana, Monti di Sarno e Monti Picentini ·
+          <b>4</b> Alta Irpinia e Sannio ·
+          <b>5</b> Tusciano e Alto Sele ·
+          <b>6</b> Piana Sele e Alto Cilento ·
+          <b>7</b> Tanagro ·
+          <b>8</b> Basso Cilento.
+        </small>
       </div>
 
       <div class="form-group">
@@ -3971,13 +3996,14 @@ function renderMonitorForm(monitor) {
 
   // Type-specific field visibility
   const _TYPE_DESCS = {
-    thunderstorm:  "Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.",
-    rain:          "Checks 15-minute precipitation forecast for the next N hours. Sends an alert only if rain is expected. No LLM used.",
-    weather_chart: "Generates a multi-model PNG chart with hourly Open-Meteo data (temperature, rain, wind, humidity, geopotential…) and sends it to Telegram as an image. No LLM used.",
-    seismic:       "Fetches earthquake events from INGV GOSSIP for the selected area and time range. Returns a summary with event count, depth statistics and a list of recent events. No LLM used.",
-    backup:        "Uploads DRADIS config files (options.json, tokens, settings) to a 'DRADIS Backup' folder on Google Drive. Requires /backupauth. No LLM used.",
+    thunderstorm:   "Fetches atmospheric instability data and computes an hourly thunderstorm risk score (0–10). No LLM used.",
+    rain:           "Checks 15-minute precipitation forecast for the next N hours. Sends an alert only if rain is expected. No LLM used.",
+    weather_chart:  "Generates a multi-model PNG chart with hourly Open-Meteo data (temperature, rain, wind, humidity, geopotential…) and sends it to Telegram as an image. No LLM used.",
+    seismic:        "Fetches earthquake events from INGV GOSSIP for the selected area and time range. Returns a summary with event count, depth statistics and a list of recent events. No LLM used.",
+    campania_alert: "Reads the civil-protection alert bulletin of Regione Campania (all 8 alert zones) straight from the Centro Funzionale REST API. Sends nothing while every zone is below the chosen level. No LLM used.",
+    backup:         "Uploads DRADIS config files (options.json, tokens, settings) to a 'DRADIS Backup' folder on Google Drive. Requires /backupauth. No LLM used.",
   };
-  const _TYPES_WITHOUT_LOCATION = new Set(["seismic", "backup"]);
+  const _TYPES_WITHOUT_LOCATION = new Set(["seismic", "backup", "campania_alert"]);
   function applyTypeVisibility(type) {
     document.getElementById("fg-days").style.display            = (type === "thunderstorm" || type === "weather_chart") ? "" : "none";
     document.getElementById("fg-calibration").style.display     = type === "thunderstorm"              ? "" : "none";
@@ -3985,6 +4011,7 @@ function renderMonitorForm(monitor) {
     document.getElementById("fg-location").style.display        = _TYPES_WITHOUT_LOCATION.has(type)   ? "none" : "";
     document.getElementById("fg-seismic-area").style.display    = type === "seismic"                  ? "" : "none";
     document.getElementById("fg-time-range").style.display      = type === "seismic"                  ? "" : "none";
+    document.getElementById("fg-min-level").style.display       = type === "campania_alert"           ? "" : "none";
     document.getElementById("fg-weather-models").style.display  = type === "weather_chart"            ? "" : "none";
     document.getElementById("fg-chart-variables").style.display = type === "weather_chart"            ? "" : "none";
     document.getElementById("m-type-desc").textContent          = _TYPE_DESCS[type] || "";
@@ -4044,6 +4071,7 @@ async function saveMonitor() {
     hours_ahead:  parseInt(document.getElementById("m-hours-ahead").value, 10) || 2,
     seismic_area: document.getElementById("m-seismic-area")?.value || "flegrei",
     time_range:   document.getElementById("m-time-range")?.value   || "last_24h",
+    min_level:    parseInt(document.getElementById("m-min-level")?.value, 10) || 2,
     alert_mode:   document.getElementById("m-alert-mode").value,
     instructions: document.getElementById("m-alert-mode").value === "llm"
                     ? (document.getElementById("m-instructions")?.value.trim() || "")
@@ -4104,6 +4132,7 @@ async function duplicateMonitor() {
       hours_ahead:     src.hours_ahead,
       seismic_area:    src.seismic_area    || "flegrei",
       time_range:      src.time_range      || "last_24h",
+      min_level:       src.min_level       || 2,
       alert_mode:      src.alert_mode      || "direct",
       instructions:    src.instructions    || "",
       weather_models:  src.weather_models  || [],

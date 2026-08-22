@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## [4.6.0] - 2026-08-22
+
+**A task was pointed at a page that does not exist.** `centrofunzionale.regione.campania.it` is an Angular single-page app: the HTML it serves is an empty shell and the bulletin is drawn client-side, so `read_url` could only ever come back with `Caricamento in corso...`. No HTML fetcher was going to see that page — not the one fixed in v4.5.0, not any other, and not the plain-text second reading added in v4.5.1 either: an empty shell has no text in either mode. The site's own JavaScript bundle calls a public, unauthenticated REST backend that returns the bulletin already structured, and that is the thing worth reading.
+
+**Which changes what the feature is.** Structured data has nothing in it for a model to interpret, so this is a monitor in Direct Telegram mode at zero tokens, not a scheduled task spending a turn to retell a JSON document.
+
+- **Feat — a Civil Protection alert monitor for Campania.** New scheduled monitor type `campania_alert` (`monitors/campania_alert.py`), reporting the alert level of all eight Campania alert zones with no LLM and no API key. It reads **today's and tomorrow's bulletin on every run**, concurrently — the question it answers is *is there an alert*, and half an answer to that is worse than none. Tomorrow is also the actionable half: today's window is already running by the time anyone reads the message. The threshold spans both days, so an orange tomorrow reports even when today is entirely green, and nothing is sent while every zone stays below the configured level (🟡 Giallo by default) on both — the same contract as the rain monitor, so a quiet day stays quiet instead of becoming a daily "all clear" nobody asked for. Tomorrow is fetched tolerantly and today is not: an alert that exists must reach the phone even when the other endpoint is down, so tomorrow's failure is carried into the message while today's is the monitor failing. The bulletin repeats the identical `fenomeni` and `scenari` paragraph on every zone in alert, so within each day they are de-duplicated and printed once. The zone *names* are carried in the module because the API returns only the number — they live nowhere but the site's JS bundle, which is also why a test pins them.
+- **Fix — the report survives being read aloud.** Two details found only by running Car Mode over the output. `Avviso n. 72/2026` is a slash between digits, which is the ratio rule from v4.4.4 doing exactly what it was written to do — spoken as *"72 su 2026"* — so the notice number is now spelled out (`Avviso n. 72 del 2026`). And the API writes its timestamps clock-first (`11:00 - 21/08/2026`), which is the one shape the date rule cannot recognise, because it only reads a slashed group as a date when a clock *follows* it; `_stamp()` swaps them to `21/08/2026 11:00`, correct on screen and correct out loud.
+
+Left out deliberately: `fenomeni` and `scenari` stay in Italian even when the monitor's language is English. They are the region's official wording and there is no LLM in this path to translate them — inventing a translation of a civil-protection scenario is worse than leaving the source text alone.
+
+Tests: 574 (was 541). New file `test_campania_alert.py` (33), no network — every case feeds the runner bulletins shaped like the ones the API returns, for both days at once.
+
 ## [4.5.1] - 2026-08-22
 
 **v4.5.0 taught the runtime that Groq's 8K is a minute and not a request, and the pacing works — you can watch it wait in the log. The task failed anyway.** Four times over, and only the last of the four is about tokens.

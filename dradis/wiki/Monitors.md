@@ -19,7 +19,7 @@ Click `+` in the **Scheduled Monitors** sidebar header.
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Green dot in sidebar when active. |
-| Monitor type | **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts**, **🌍 Seismic report**, or **☁️ Google Drive Backup**. |
+| Monitor type | **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts**, **🌍 Seismic report**, **🚨 Civil Protection alert** (Campania, today + tomorrow), or **☁️ Google Drive Backup**. |
 | Response language | 🇮🇹 Italiano (default) or 🇬🇧 English. |
 | Location | City name — resolved to coordinates via Open-Meteo geocoding. Live hint shows coordinates as you type. Not used for seismic type (uses area checkboxes instead). |
 | Cron expression | 5-part cron with live validation and next-fire preview. |
@@ -211,6 +211,66 @@ Cron:       0 8 * * *
 ```
 
 ---
+
+## 🚨 Civil Protection Alert Monitor (Campania)
+
+Reports the alert level of all eight alert zones of Regione Campania, from the bulletins issued by the **Centro Funzionale Multirischi di Protezione Civile** — **today's and tomorrow's, always both**. No API key, no LLM.
+
+Both days rather than a choice between them: the question this monitor answers is *is there an alert*, and half an answer to that is worse than none. Tomorrow is also the actionable half — today's window is already running by the time anyone reads the message.
+
+**Why not just read the website.** `centrofunzionale.regione.campania.it` is an Angular single-page app: the HTML it serves is an empty shell and the bulletin is drawn client-side, so `read_url` gets back `Caricamento in corso...` and nothing more. The page's own JavaScript bundle calls a public, unauthenticated REST backend that returns the bulletin already structured, and that is what this monitor reads. Nothing parses HTML, images or PDF.
+
+**If every zone is below the configured level on both days, no message is sent.** A single zone reaching the level on either day is enough to fire, so an orange tomorrow reports even when today is entirely green. Tomorrow's bulletin is empty for most of every morning; the report says so in place rather than hiding the day.
+
+**Tomorrow is fetched tolerantly, today is not.** If the *tomorrow* endpoint fails, the error is reported inside the message and today's alert still goes out. If the *today* endpoint fails, that is the monitor failing and the scheduler says so.
+
+**Alert levels:**
+
+| Level | Meaning |
+|---|---|
+| 1 | 🟢 Verde — nessuna allerta |
+| 2 | 🟡 Giallo — criticità ordinaria |
+| 3 | 🟠 Arancione — criticità moderata |
+| 4 | 🔴 Rosso — criticità elevata |
+
+**Alert zones:**
+
+| # | Zone |
+|---|---|
+| 1 | Piana campana, Napoli, Isole, Area Vesuviana |
+| 2 | Alto Volturno e Matese |
+| 3 | Penisola sorrentino-amalfitana, Monti di Sarno e Monti Picentini |
+| 4 | Alta Irpinia e Sannio |
+| 5 | Tusciano e Alto Sele |
+| 6 | Piana Sele e Alto Cilento |
+| 7 | Tanagro |
+| 8 | Basso Cilento |
+
+**Configuration:**
+
+| Field | Description |
+|---|---|
+| Alert from level | Minimum level, on either day, that triggers a message (default 🟡 Giallo). |
+| Language | 🇮🇹 Italiano / 🇬🇧 English. |
+| Cron | Suggested `30 14 * * *`, just after the bulletin takes effect and around when tomorrow's is published. |
+
+**Example output:**
+
+```
+🚨 Allerta Protezione Civile — Campania
+🕐 22/08/2026 10:40 (Europe/Rome)
+
+📅 OGGI — dal 21/08/2026 14:00 al 22/08/2026 14:00
+Avviso n. 72 del 2026 · emesso 21/08/2026 11:00
+🟡 GIALLO — Zona 1 · Piana campana, Napoli, Isole, Area Vesuviana
+   ↳ Idrogeologico per temporali
+🟢 Verdi: 4, 6, 7, 8
+
+📅 DOMANI — dal 22/08/2026 14:00 al 23/08/2026 14:00
+Bollettino non ancora emesso.
+```
+
+The bulletin repeats the same phenomena and scenario text on every zone in alert, so within each day they are de-duplicated and printed once.
 
 ---
 

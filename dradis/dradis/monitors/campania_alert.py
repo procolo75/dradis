@@ -1,0 +1,250 @@
+"""
+monitors/campania_alert.py
+──────────────────────────
+LLM-free monitor: reads the civil-protection alert bulletins issued by the Centro
+Funzionale Multirischi of Regione Campania — today's and tomorrow's, always both —
+and sends a Telegram alert only when one of the eight alert zones reaches the
+configured level on either day.
+
+Both days, not one or the other: the question this monitor answers is "is there an
+alert", and half an answer to that is worse than none. Tomorrow's bulletin is also
+the actionable one — today's window is already running by the time it is read.
+
+Why an API and not the website: centrofunzionale.regione.campania.it is an
+Angular single-page app. The HTML it serves is an empty shell — the bulletin is
+drawn client-side — so read_url (and any other HTML fetcher) gets back
+"Caricamento in corso..." and nothing else. The page's own JavaScript bundle
+calls a public, unauthenticated REST backend that returns the bulletin already
+structured, which is what this monitor reads. Nothing here parses HTML or PDF.
+
+Levels, as the region defines them:
+  1 : 🟢 VERDE      — nessuna allerta
+  2 : 🟡 GIALLO     — criticità ordinaria
+  3 : 🟠 ARANCIONE  — criticità moderata
+  4 : 🔴 ROSSO      — criticità elevata
+"""
+
+import asyncio
+import html
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import httpx
+
+_BASE_URL = ("https://centrofunzionale.regione.campania.it"
+             "/CentroFunzionalePortaleRest/rest/bollettinometeo")
+
+_ENDPOINTS = {
+    "today":    f"{_BASE_URL}/findLastBollettino",
+    "tomorrow": f"{_BASE_URL}/findBollettinoDomani",
+}
+
+# The API returns the zone as a bare number; the names live only in the site's
+# JavaScript bundle, so they are carried here.
+ZONES = {
+    1: "Piana campana, Napoli, Isole, Area Vesuviana",
+    2: "Alto Volturno e Matese",
+    3: "Penisola sorrentino-amalfitana, Monti di Sarno e Monti Picentini",
+    4: "Alta Irpinia e Sannio",
+    5: "Tusciano e Alto Sele",
+    6: "Piana Sele e Alto Cilento",
+    7: "Tanagro",
+    8: "Basso Cilento",
+}
+
+_LEVELS = {
+    1: ("🟢", "VERDE",     "GREEN"),
+    2: ("🟡", "GIALLO",    "YELLOW"),
+    3: ("🟠", "ARANCIONE", "ORANGE"),
+    4: ("🔴", "ROSSO",     "RED"),
+}
+
+# The bulletin repeats the same scenario text on every zone in alert. Printed
+# once it is context; printed eight times it is the whole message.
+_SCENARIOS_MAX_CHARS = 900
+
+_STRINGS = {
+    "it": {
+        "title":       "🚨 <b>Allerta Protezione Civile — Campania</b>",
+        "today":       "📅 <b>OGGI</b>",
+        "tomorrow":    "📅 <b>DOMANI</b>",
+        # "n. 72/2026" is a slash between digits, which Car Mode reads aloud as
+        # the ratio "72 su 2026". Spelled out, it survives being spoken.
+        "notice":      "Avviso n. {n} del {year} · emesso {issued}",
+        "validity":    "dal {start} al {end}",
+        "green":       "🟢 Verdi: {zones}",
+        "all_green":   "🟢 Nessuna allerta su tutte le zone.",
+        "not_issued":  "<i>Bollettino non ancora emesso.</i>",
+        "unavailable": "<i>Bollettino non raggiungibile: {reason}</i>",
+        "phenomena":   "<b>Fenomeni previsti</b>",
+        "scenarios":   "<b>Scenari di evento</b>",
+        "signature":   "Firmato: {who}",
+        "footer":      "<i>Monitor DRADIS · Centro Funzionale Campania · nessun LLM utilizzato</i>",
+    },
+    "en": {
+        "title":       "🚨 <b>Civil Protection Alert — Campania</b>",
+        "today":       "📅 <b>TODAY</b>",
+        "tomorrow":    "📅 <b>TOMORROW</b>",
+        "notice":      "Notice no. {n} of {year} · issued {issued}",
+        "validity":    "from {start} to {end}",
+        "green":       "🟢 Green: {zones}",
+        "all_green":   "🟢 No alert on any zone.",
+        "not_issued":  "<i>Bulletin not published yet.</i>",
+        "unavailable": "<i>Bulletin unreachable: {reason}</i>",
+        "phenomena":   "<b>Expected phenomena</b>",
+        "scenarios":   "<b>Event scenarios</b>",
+        "signature":   "Signed: {who}",
+        "footer":      "<i>DRADIS Monitor · Centro Funzionale Campania · no LLM used</i>",
+    },
+}
+
+
+async def _fetch_bulletin(day: str) -> dict:
+    """Fetch the raw bulletin JSON for 'today' or 'tomorrow'."""
+    url = _ENDPOINTS.get(day, _ENDPOINTS["today"])
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url, headers={"Accept": "application/json"})
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _level_label(level: int, lang: str) -> str:
+    emoji, it_name, en_name = _LEVELS.get(level, _LEVELS[1])
+    return f"{emoji} {en_name if lang == 'en' else it_name}"
+
+
+def _stamp(raw) -> str:
+    """Turn the API's "HH:MM - DD/MM/YYYY" into "DD/MM/YYYY HH:MM".
+
+    Not cosmetics: Car Mode only reads a slashed group as a date, rather than as
+    a ratio, when a clock follows it — and the API puts the clock in front.
+    """
+    text = str(raw or "").strip()
+    if " - " in text:
+        left, _, right = text.partition(" - ")
+        if ":" in left and "/" in right:
+            return f"{right.strip()} {left.strip()}"
+    return text
+
+
+def _dedup(values) -> list[str]:
+    """Keep the distinct non-empty strings, in the order the zones list them."""
+    out: list[str] = []
+    for v in values:
+        v = (v or "").strip()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _max_level(data) -> int:
+    """Highest zone level in a bulletin; 1 when it holds nothing to report."""
+    if not isinstance(data, dict):
+        return 1
+    zones = data.get("bollettinoMeteoBindList") or []
+    return max((z.get("livello") or 1) for z in zones) if zones else 1
+
+
+def _day_block(data, s: dict, heading: str, lang: str) -> list[str]:
+    """Render one day's bulletin: heading, validity, zones, phenomena, scenarios."""
+    lines = [heading]
+
+    # A failed fetch for one day must not cost the other day's alert, so it is
+    # reported in place instead of raising. See run_campania_alert_monitor.
+    if isinstance(data, BaseException):
+        reason = f"{type(data).__name__}: {data}" if str(data) else type(data).__name__
+        lines.append(s["unavailable"].format(reason=html.escape(reason)))
+        return lines
+
+    validity = s["validity"].format(
+        start=html.escape(_stamp(data.get("dataDa")) or "?"),
+        end=html.escape(_stamp(data.get("dataA")) or "?"))
+    lines[0] = f"{heading} — {validity}"
+
+    zones = data.get("bollettinoMeteoBindList") or []
+    if not zones:
+        lines.append(s["not_issued"])
+        return lines
+
+    if data.get("numeroAvviso") is not None:
+        lines.append(s["notice"].format(
+            n=data["numeroAvviso"], year=data.get("anno", ""),
+            issued=html.escape(_stamp(data.get("dataEmissione")) or "?")))
+
+    alerted = sorted((z for z in zones if (z.get("livello") or 1) > 1),
+                     key=lambda z: (-(z.get("livello") or 1), z.get("zona") or 0))
+    green   = sorted(z.get("zona") for z in zones if (z.get("livello") or 1) <= 1)
+
+    if not alerted:
+        lines.append(s["all_green"])
+        return lines
+
+    for z in alerted:
+        num   = z.get("zona")
+        name  = html.escape(ZONES.get(num, f"Zona {num}"))
+        label = _level_label(z.get("livello") or 1, lang)
+        risks = html.escape((z.get("tipoRischi") or "").strip())
+        line  = f"{label} — <b>Zona {num}</b> · {name}"
+        lines.append(line + (f"\n   ↳ {risks}" if risks else ""))
+
+    if green:
+        lines.append(s["green"].format(zones=", ".join(str(n) for n in green)))
+
+    phenomena = _dedup(z.get("fenomeni") for z in alerted)
+    if phenomena:
+        lines += ["", s["phenomena"]]
+        lines += [html.escape(p) for p in phenomena]
+
+    scenarios = _dedup(z.get("scenari") for z in alerted)
+    if scenarios:
+        text = "\n".join(scenarios)
+        if len(text) > _SCENARIOS_MAX_CHARS:
+            text = text[:_SCENARIOS_MAX_CHARS].rstrip() + "…"
+        lines += ["", s["scenarios"], html.escape(text)]
+
+    signer = (data.get("firmaBollettino") or "").strip()
+    if signer:
+        lines.append(s["signature"].format(who=html.escape(signer)))
+
+    return lines
+
+
+def _format_report(today, tomorrow, tz_name: str, lang: str) -> str:
+    s = _STRINGS.get(lang, _STRINGS["it"])
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+
+    lines = [
+        s["title"],
+        f"🕐 {datetime.now(tz).strftime('%d/%m/%Y %H:%M')} ({tz_name})",
+        "",
+    ]
+    lines += _day_block(today, s, s["today"], lang)
+    lines += [""]
+    lines += _day_block(tomorrow, s, s["tomorrow"], lang)
+    lines += ["", s["footer"]]
+    return "\n".join(lines)
+
+
+async def run_campania_alert_monitor(monitor: dict, tz_name: str = "UTC") -> str:
+    lang      = monitor.get("language", "it")
+    min_level = max(1, min(int(monitor.get("min_level", 2)), 4))
+
+    # Tomorrow is fetched tolerantly and today is not. A civil-protection alert
+    # that exists today must reach the phone even if the other endpoint is down,
+    # so its failure is carried into the message; today's failure is the monitor
+    # failing, and the scheduler says so.
+    today, tomorrow = await asyncio.gather(
+        _fetch_bulletin("today"),
+        _fetch_bulletin("tomorrow"),
+        return_exceptions=True,
+    )
+    if isinstance(today, BaseException):
+        raise today
+
+    if max(_max_level(today), _max_level(tomorrow)) < min_level:
+        return ""
+
+    return _format_report(today, tomorrow, tz_name, lang)

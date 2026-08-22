@@ -94,6 +94,7 @@ It is sent as its own message, ahead of the reply, and unlike the `🔢`/`🔧` 
 | `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability + pressure-level data, computes multiplicative TRS (0.0–1.0) in Python |
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
+| `monitors/campania_alert.py` | Civil Protection alert monitor (Campania) — LLM-free, reads today's and tomorrow's bulletin from the Centro Funzionale REST API, reports the 8 alert zones on each, silent below the configured level |
 | `monitors/weather_chart.py` | Weather Charts monitor — LLM-free, fetches hourly Open-Meteo forecasts for up to 5 models, generates one PNG chart per variable and returns `list[bytes]` |
 | `live_monitors/storm_front.py` | Storm front live monitor — LLM-free; feed lifecycle, persistence, quiet hours, message formatting; `StormFrontLiveMonitor` + `StormFrontMonitorManager` singleton |
 | `live_monitors/storm_front_core.py` | Pure decision core — ring/sector grid, per-sector front, CBDR verdict, event machine. No I/O, fully unit-tested |
@@ -523,11 +524,12 @@ Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. 
 |-------|-------------|
 | Name | Display name shown in the sidebar. |
 | Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
-| Monitor type | Type of data source: **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts** (all Open-Meteo, no API key required), **🌍 Seismic report** (INGV GOSSIP), or **☁️ Google Drive Backup**. |
+| Monitor type | Type of data source: **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts** (all Open-Meteo, no API key required), **🌍 Seismic report** (INGV GOSSIP), **🚨 Civil Protection alert** (Centro Funzionale Campania, today + tomorrow), or **☁️ Google Drive Backup**. |
 | Response language | Language of the Telegram report: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
 | Location | City name or geographic description (e.g. *Bacoli*, *Naples*, *Rome*). Resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and coordinates as you type. |
 | Forecast days | *(Thunderstorm only)* Number of days to fetch (1–7, default 2). |
 | Hours ahead | *(Rain alert only)* How many hours ahead to check for rain (1–24, default 2). |
+| Alert from level | *(Civil Protection alert only)* Minimum zone level, on either day, that triggers a message: 🟡 Giallo (default), 🟠 Arancione, 🔴 Rosso, or 🟢 Sempre. |
 | Alert mode | **Direct Telegram** (default): sends the report immediately without consuming tokens. **LLM**: passes the generated report to the full DRADIS agent together with custom instructions — the agent can send Telegram messages, emails, create tasks, etc. |
 | DRADIS Instructions | *(LLM mode only)* Instructions for the agent: what to do with the report. If empty, the agent sends the report to Telegram. |
 | Schedule preset | Dropdown of common schedules. |
@@ -646,6 +648,59 @@ When rain is detected, the Telegram message lists every 15-minute slot in the wi
 | Hours ahead | How far ahead to look for rain (1–24, default 2). |
 | Language | 🇮🇹 Italiano / 🇬🇧 English. |
 | Cron | How often to check (e.g. `0 * * * *` = every hour). |
+
+#### Civil Protection alert monitor (Campania)
+
+Reads the alert bulletins issued by the **Centro Funzionale Multirischi di Protezione Civile della Regione Campania** — **today's and tomorrow's, always both** — and reports the alert level of all eight alert zones on each. No API key, no LLM.
+
+Both days rather than a choice between them: the question this monitor answers is *is there an alert*, and half an answer to that is worse than none. Tomorrow is also the actionable half — today's window is already running by the time anyone reads the message.
+
+**Why an API and not the website.** `centrofunzionale.regione.campania.it` is an Angular single-page app: the HTML it serves is an empty shell and the bulletin is drawn client-side, so `read_url` — and any other HTML fetcher — gets back `Caricamento in corso...` and nothing else. The page's own JavaScript bundle calls a public, unauthenticated REST backend that returns the bulletin already structured, and that is what this monitor reads. Nothing here parses HTML, images or PDF.
+
+**Endpoints** (base `https://centrofunzionale.regione.campania.it/CentroFunzionalePortaleRest/rest/bollettinometeo`), both fetched concurrently on every run:
+
+| Bulletin | Endpoint |
+|---|---|
+| Oggi | `findLastBollettino` |
+| Domani | `findBollettinoDomani` |
+
+The bulletin is issued in the morning and is valid from 14:00 to 14:00 the following day. `findBollettinoDomani` returns an empty zone list until tomorrow's bulletin is published; the report says so in place — the validity window is known even before the bulletin is issued.
+
+**Tomorrow is fetched tolerantly, today is not.** If the *tomorrow* endpoint fails, the error is reported inside the message and today's alert still goes out — an alert that exists must reach the phone even when the other half of the request is down. If the *today* endpoint fails, that is the monitor failing and the scheduler says so.
+
+**Alert levels** (as defined by the region):
+
+| Level | Meaning |
+|---|---|
+| 1 | 🟢 Verde — nessuna allerta |
+| 2 | 🟡 Giallo — criticità ordinaria |
+| 3 | 🟠 Arancione — criticità moderata |
+| 4 | 🔴 Rosso — criticità elevata |
+
+**Alert zones.** The API returns the zone as a bare number; the names live only in the site's JavaScript bundle and are carried in `monitors/campania_alert.py`:
+
+| # | Zone |
+|---|---|
+| 1 | Piana campana, Napoli, Isole, Area Vesuviana |
+| 2 | Alto Volturno e Matese |
+| 3 | Penisola sorrentino-amalfitana, Monti di Sarno e Monti Picentini |
+| 4 | Alta Irpinia e Sannio |
+| 5 | Tusciano e Alto Sele |
+| 6 | Piana Sele e Alto Cilento |
+| 7 | Tanagro |
+| 8 | Basso Cilento |
+
+**If every zone is below the configured level on both days, no Telegram message is sent** — same contract as the rain alert monitor. A single zone reaching the level on either day is enough to fire, so an orange tomorrow reports even when today is entirely green.
+
+When it does fire, the message carries one block per day: the validity window, the notice number and issue time, one line per zone in alert with its risk type, and the green zones compacted into a single line. The bulletin repeats the same `fenomeni` and `scenari` text on every zone in alert, so within each day they are de-duplicated and printed once (scenarios truncated at 900 characters).
+
+**Configuration:**
+
+| Field | Description |
+|---|---|
+| Alert from level | Minimum level, on either day, that triggers a message (default 🟡 Giallo). |
+| Language | 🇮🇹 Italiano / 🇬🇧 English. |
+| Cron | Suggested `30 14 * * *` — just after the bulletin takes effect and around when tomorrow's is published. |
 
 ---
 
@@ -1159,6 +1214,32 @@ Check every hour whether rain is expected in the next 2 hours. No notification i
 | Cron | `0 * * * *` |
 
 The Telegram message lists each 15-minute slot with the expected precipitation in mm (🔵 rainy / ⚪ dry) and the total at the end.
+
+---
+
+### Civil Protection alert *(scheduled monitor)*
+
+Get the Campania alert bulletin every afternoon — today's and tomorrow's together — but only when at least one zone is yellow or worse on either day. Green days are silent.
+
+| Field | Value |
+|-------|-------|
+| Monitor type | 🚨 Civil Protection alert (Campania) |
+| Alert from level | 🟡 Giallo |
+| Cron | `30 14 * * *` |
+
+```
+🚨 Allerta Protezione Civile — Campania
+🕐 22/08/2026 10:40 (Europe/Rome)
+
+📅 OGGI — dal 21/08/2026 14:00 al 22/08/2026 14:00
+Avviso n. 72 del 2026 · emesso 21/08/2026 11:00
+🟡 GIALLO — Zona 1 · Piana campana, Napoli, Isole, Area Vesuviana
+   ↳ Idrogeologico per temporali
+🟢 Verdi: 4, 6, 7, 8
+
+📅 DOMANI — dal 22/08/2026 14:00 al 23/08/2026 14:00
+Bollettino non ancora emesso.
+```
 
 ---
 

@@ -21,11 +21,12 @@ from web.store import (
     load_ha_monitors,
     load_positions,
 )
-from monitors.thunderstorm  import run_thunderstorm_monitor
-from monitors.rain          import run_rain_monitor
-from monitors.seismic       import run_seismic_monitor
-from monitors.weather_chart import run_weather_chart_monitor
-from backup.gdrive          import run_backup_monitor
+from monitors.thunderstorm   import run_thunderstorm_monitor
+from monitors.rain           import run_rain_monitor
+from monitors.seismic        import run_seismic_monitor
+from monitors.weather_chart  import run_weather_chart_monitor
+from monitors.campania_alert import run_campania_alert_monitor
+from backup.gdrive           import run_backup_monitor
 from live_monitors.storm_front import storm_front_monitor_manager
 from live_monitors.rain_front import rain_front_monitor_manager
 from live_monitors.position   import position_manager
@@ -90,11 +91,12 @@ async def _send_chunked(text: str, parse_mode: str = ParseMode.HTML,
 
 
 _MONITOR_RUNNERS = {
-    "thunderstorm":  run_thunderstorm_monitor,
-    "rain":          run_rain_monitor,
-    "seismic":       run_seismic_monitor,
-    "weather_chart": run_weather_chart_monitor,
-    "backup":        run_backup_monitor,
+    "thunderstorm":   run_thunderstorm_monitor,
+    "rain":           run_rain_monitor,
+    "seismic":        run_seismic_monitor,
+    "weather_chart":  run_weather_chart_monitor,
+    "campania_alert": run_campania_alert_monitor,
+    "backup":         run_backup_monitor,
 }
 
 
