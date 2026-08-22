@@ -13,48 +13,15 @@ temperatures in Celsius" shaped a web search too. Attaching fewer tools was not 
 fix, because ordinary chat attaches all of them.
 """
 
-import builtins
-import json
 import sys
-import tempfile
-import types
 import unittest
 from pathlib import Path
 
-# bot.state reads /data/options.json at import time and raises without it, so the
-# file is faked for the duration of the import and nothing else.
-_OPTIONS = Path(tempfile.mktemp(suffix="-options.json"))
-_OPTIONS.write_text(json.dumps({
-    "telegram_bot_token": "test", "telegram_allowed_chat_id": 1,
-    "tavily_api_key": "test-key",
-}))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-if "aiomqtt" not in sys.modules:
-    sys.modules["aiomqtt"] = types.ModuleType("aiomqtt")
+from tests.addon_import import import_bot_state                   # noqa: E402
 
-_real_open = builtins.open
-
-
-def _patched_open(path, *args, **kwargs):
-    if str(path) == "/data/options.json":
-        return _real_open(_OPTIONS, *args, **kwargs)
-    return _real_open(path, *args, **kwargs)
-
-
-# `bot.state` uses the same absolute imports the running add-on does (`from
-# agents.… import …`), so its own directory has to be importable.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "dradis"))
-
-builtins.open = _patched_open
-try:
-    import bot.state as st                                        # noqa: E402
-except ImportError as e:
-    # Unlike the rest of the suite, this module pulls in the LLM and Google SDKs.
-    # They are present in the add-on image; skip rather than fail for anyone
-    # running the tests with only the light dependencies installed.
-    raise unittest.SkipTest(f"bot.state dependencies unavailable: {e}")
-finally:
-    builtins.open = _real_open
+st = import_bot_state()
 
 
 def settings(**overrides) -> dict:

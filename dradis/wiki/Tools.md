@@ -17,7 +17,7 @@ Powered by [Tavily](https://tavily.com) (query-based search) and [Jina Reader](h
 | Tool | Trigger | Backend |
 |------|---------|---------|
 | `search_web` | A question that needs current information | Tavily — up to 5 results, content trimmed to ~800 chars each |
-| `read_url` | The user provides a specific http/https URL | Jina Reader — page text as markdown (max 8 000 chars) |
+| `read_url` | The user provides a specific http/https URL | Jina Reader — page text as markdown, trimmed to the model's remaining budget |
 
 **Settings:** Enabled · Test connection · Additional instructions.
 
@@ -89,6 +89,10 @@ Token at `/data/google_tasks_token.json`.
 ## URL Fetch
 
 `read_url` fetches any page's text via Jina Reader (free, no key). Enable it under **Web UI → Tools → URL Fetch**.
+
+The anonymous Jina tier is rate-limited, so a fetch fails from time to time. When it does, `read_url` raises a tool failure and you get a `⚠️` Telegram notice naming the HTTP status — it does *not* hand Jina's error page to the model as though it were the article. That mattered twice over: the model would either summarise the error as if it were content, or call `read_url` again, and on an 8K-per-minute budget that extra round was often what pushed the task over the ceiling.
+
+How much of a page survives is decided by the runtime, not by the tool: 12 000 characters at the source, then trimmed to what is left of the model's context window and of the minute's token budget. The same article therefore keeps far more of itself on a large-context model than on an 8K one, and a trimmed page is marked `[… content truncated to fit the model budget …]` so the model reports a partial read instead of inventing the rest.
 
 ---
 

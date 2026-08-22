@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from core import ToolError
+
 GCAL_TOKEN_FILE   = Path("/data/google_calendar_token.json")
 GCAL_SCOPES       = ["https://www.googleapis.com/auth/calendar"]
 GCAL_REDIRECT_URI = "http://localhost:8099/gcalauth/callback"
@@ -112,7 +114,6 @@ def _sync_create_raw_event(title: str, start_dt: str, end_dt: str, description: 
 
 def gcal_tools(settings: dict) -> list[dict]:
     """Return the Google Calendar tool specs."""
-    _not_auth_msg = "Google Calendar not authenticated. Send /gcalauth to connect."
 
     async def create_calendar_event(
         title: str,
@@ -129,7 +130,7 @@ def gcal_tools(settings: dict) -> list[dict]:
             None, _sync_create_raw_event, title, start_datetime, end_datetime, description
         )
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Calendar not authenticated. Send /gcalauth to connect.")
         return result
 
     async def delete_calendar_event(event_id: str) -> str:
@@ -141,7 +142,7 @@ def gcal_tools(settings: dict) -> list[dict]:
         loop   = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _sync_delete_event, event_id)
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Calendar not authenticated. Send /gcalauth to connect.")
         return result
 
     async def get_calendar_events(days_ahead: int = 7) -> str:
@@ -151,7 +152,7 @@ def gcal_tools(settings: dict) -> list[dict]:
         loop = asyncio.get_running_loop()
         raw  = await loop.run_in_executor(None, _sync_get_raw_events, days_ahead)
         if raw == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Calendar not authenticated. Send /gcalauth to connect.")
         return raw
 
     return [

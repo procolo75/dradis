@@ -70,7 +70,8 @@ GEMINI_MODELS = [
 
 SETTINGS_KEYS = [
     "provider", "agent_instructions", "model", "fallback_provider", "fallback_model",
-    "max_tokens", "token_usage_enabled", "tools_usage_enabled",
+    "max_tokens", "temperature", "tool_call_limit",
+    "token_usage_enabled", "tools_usage_enabled", "tool_errors_enabled",
     "history_enabled", "history_depth", "startup_message", "timezone",
     "car_mode_enabled",
     "ws_enabled", "ws_provider", "ws_model", "ws_instructions",
@@ -93,8 +94,15 @@ SETTINGS_DEFAULTS: dict = {
     "agent_instructions":   "You are DRADIS, a versatile AI assistant.",
     "model":                "nvidia/nemotron-3-nano-30b-a3b:free",
     "max_tokens":           2048,
+    # Left at the provider default (~1.0) the model would answer in one round on
+    # one run and call another tool on the next, from the same prompt — and on an
+    # 8K budget that coin flip is the difference between a task that works and one
+    # that is refused. Low, not zero: zero makes some providers loop on a tool.
+    "temperature":          0.2,
+    "tool_call_limit":      3,
     "token_usage_enabled":  False,
     "tools_usage_enabled":  False,
+    "tool_errors_enabled":  True,
     "history_enabled":      True,
     "history_depth":        2,
     "startup_message":      "✅ DRADIS online and ready.",
@@ -552,8 +560,11 @@ def available_tool_catalogue(settings: dict) -> list[dict]:
             out.append({"capability": cid, "capability_label": label,
                         "name": t["name"], "description": t["description"]})
     if settings.get("read_url_enabled"):
+        # Same string the model is given, rather than a second one that drifts:
+        # the Web UI was describing a tool nobody had.
+        from bot.state import READ_URL_TOOL
         out.append({"capability": "read_url", "capability_label": "Read URL",
-                    "name": "read_url", "description": "Fetch a web page's text by URL."})
+                    "name": "read_url", "description": READ_URL_TOOL["description"]})
     return out
 
 

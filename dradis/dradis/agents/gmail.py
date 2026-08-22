@@ -3,6 +3,8 @@ import base64
 from email.message import EmailMessage
 from pathlib import Path
 
+from core import ToolError
+
 GMAIL_TOKEN_FILE   = Path("/data/google_gmail_token.json")
 GMAIL_SCOPES       = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -132,7 +134,6 @@ def _sync_send_email(to: str, subject: str, body: str) -> str:
 
 def gmail_tools(settings: dict) -> list[dict]:
     """Return the Gmail tool specs. Requires a valid OAuth token to be useful."""
-    _not_auth_msg = "Gmail not authenticated. Send /gmailauth to connect."
 
     async def search_emails(query: str, max_results: int = 10) -> str:
         """Search Gmail emails using Gmail query syntax (e.g. 'from:user@example.com subject:invoice').
@@ -141,7 +142,7 @@ def gmail_tools(settings: dict) -> list[dict]:
         loop = asyncio.get_running_loop()
         raw  = await loop.run_in_executor(None, _sync_search_emails, query, max_results)
         if raw == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Gmail not authenticated. Send /gmailauth to connect.")
         return raw
 
     async def send_email(to: str, subject: str, body: str) -> str:
@@ -152,7 +153,7 @@ def gmail_tools(settings: dict) -> list[dict]:
         loop   = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _sync_send_email, to, subject, body)
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Gmail not authenticated. Send /gmailauth to connect.")
         return result
 
     async def get_emails(max_results: int = 10) -> str:
@@ -162,7 +163,7 @@ def gmail_tools(settings: dict) -> list[dict]:
         loop = asyncio.get_running_loop()
         raw  = await loop.run_in_executor(None, _sync_get_emails, max_results)
         if raw == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Gmail not authenticated. Send /gmailauth to connect.")
         return raw
 
     async def get_unread_emails(max_results: int = 10) -> str:
@@ -172,7 +173,7 @@ def gmail_tools(settings: dict) -> list[dict]:
         loop = asyncio.get_running_loop()
         raw  = await loop.run_in_executor(None, _sync_get_unread_emails, max_results)
         if raw == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Gmail not authenticated. Send /gmailauth to connect.")
         return raw
 
     return [

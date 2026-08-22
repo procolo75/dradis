@@ -23,8 +23,11 @@ Runtime settings for the DRADIS agent. Saved to `/data/dradis_settings.json`, ef
 | Conversation history | `true` | Prepend the last N exchanges as context. |
 | Conversation history depth | `2` | Past exchanges kept in context (resets on restart). |
 | Max completion tokens | `2048` | Caps the reply (`max_tokens`) so prompt+reply fit the context window. Keep 2048 for Groq 8K. |
+| Sampling temperature | `0.2` | Low keeps the number of tool rounds — and so the token cost of a task — the same on every run. |
+| Max tool rounds | `3` | How many times the model may call tools before it must answer. Every round re-sends the whole conversation. |
 | Log token usage | `off` | When on, appends `🔢 in N · out N` to every chat and task reply. |
 | Log tools used | `off` | When on, appends `🔧 tool1, tool2` (the tools DRADIS called that turn) to every chat and task reply. |
+| Report tool failures | `on` | Sends a `⚠️` Telegram message naming any tool that failed, ahead of the reply. Not suppressed in Car Mode. |
 | Timezone | `UTC` | Timezone for all cron expressions. |
 
 **Model loading by provider:** OpenRouter 🔄 fetches free ≥30B tool-calling models (⚡ speed-tests, keeps top 5); OpenAI fetches the GPT-4o family; GitHub Models / Gemini use fixed presets; Groq 🔄 fetches its LLM models (Whisper excluded).

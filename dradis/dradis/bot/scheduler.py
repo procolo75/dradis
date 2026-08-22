@@ -139,6 +139,12 @@ async def run_scheduled_task(task: dict):
             _state._fallback_msg(fb_reason, task_name), bot_id=bot_id,
         )
 
+    # Ahead of the answer, not after it: by the time the reply has been read the
+    # damage of trusting it is done.
+    tool_errors = _state._tool_errors_msg(settings, result, task_name)
+    if tool_errors:
+        await _state._send_error_telegram(tool_errors, bot_id=bot_id)
+
     text   = (result.content or "").strip()
     footer = _state.reply_footer(settings, result)
 

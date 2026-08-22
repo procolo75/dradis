@@ -113,8 +113,11 @@ class SettingsPayload(BaseModel):
     agent_instructions:   str  = "You are DRADIS, a versatile AI assistant."
     model:                str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     max_tokens:           int  = 2048
+    temperature:          float = 0.2
+    tool_call_limit:      int  = 3
     token_usage_enabled:  bool = False
     tools_usage_enabled:  bool = False
+    tool_errors_enabled:  bool = True
     history_enabled:      bool = True
     history_depth:        int  = 2
     startup_message:      str  = "✅ DRADIS online and ready."

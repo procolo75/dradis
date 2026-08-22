@@ -41,7 +41,29 @@ The single agent runs on the main model (**Settings → DRADIS**). On an API err
 
 ### Token budget & observability
 
-`max_tokens` (**Settings → DRADIS → Max completion tokens**, default 2048) caps every reply. Each run logs the exact billed `prompt_tokens`. Enable **Settings → DRADIS → Log token usage** to append `🔢 in N · out N` to every chat and task reply. Enable **Settings → DRADIS → Log tools used** to append `🔧 tool1, tool2` (the tools DRADIS called that turn) — useful to see which capabilities each chat or task exercised.
+The limit that actually bites on a free tier is not the context window — it is **tokens-per-minute**, a rolling 60-second budget that counts *every* request a turn makes, prompt and completion, summed. Groq's free tier allows 8000. A turn re-sends the whole conversation on each tool round, so a task that reads a web page and then calls one more tool can spend 10 000 tokens across three rounds and be refused, while the identical task on the identical page passes when the model happens to answer a round earlier.
+
+DRADIS keeps itself inside that budget rather than discovering it from a rejection:
+
+- **`max_tokens`** (**Settings → DRADIS → Max completion tokens**, default 2048) caps every reply. Providers reserve it from the window, so on an 8K model the prompt must fit in the remaining ~6K.
+- **Sampling temperature** (default `0.2`) fixes how many tool rounds a prompt costs. Left at the provider default (~1.0) the same prompt answers in one round on one run and calls another tool on the next — on an 8K budget that is the difference between a task that works and one that is refused.
+- **Max tool rounds** (default `3`) bounds the worst case. Every round re-sends the transcript, so this multiplies the cost of a task.
+- Tool results are **trimmed to fit** what is left of the window and of the minute, with `[… content truncated to fit the model budget …]` appended so the model knows it has part of a page rather than all of one.
+- Requests are **paced**: if the next call would not fit in the rolling minute, the runtime waits for the budget to free up instead of being refused. A rate-limited call is retried once after the delay the provider asks for, and the fallback model waits too when it sits on the provider that just refused — the ceiling belongs to the API key, not the model.
+- Each round logs `round=N prompt=… completion=… cumulative=… tpm_used=…`, which distinguishes "the page was too big" from "too many rounds" from "the fetch failed and was retried".
+
+Enable **Settings → DRADIS → Log token usage** to append `🔢 in N · out N` to every chat and task reply. Enable **Settings → DRADIS → Log tools used** to append `🔧 tool1, tool2` (the tools DRADIS called that turn) — useful to see which capabilities each chat or task exercised.
+
+### Tool failures
+
+A tool that cannot do its job raises `ToolError`. The message still reaches the model — a failed tool is not a failed turn — and it is also recorded on the result, so **Settings → DRADIS → Report tool failures** (default *on*) can put it in front of you:
+
+```
+⚠️ Task Rassegna stampa: tool failure — the answer below may be incomplete.
+• read_url: HTTP 429 from r.jina.ai reading https://example.com/article
+```
+
+It is sent as its own message, ahead of the reply, and unlike the `🔢`/`🔧` footer it survives Car Mode. Token counts are diagnostics and can be dropped; a failed tool decides whether the answer under it can be trusted at all.
 
 **Extensibility**: adding a capability means writing a `X_tools(settings)` builder in `agents/X.py` and registering it in `bot/state.py:_capability_tool_groups()` and `web/store.py:available_tool_catalogue()`.
 
@@ -188,8 +210,11 @@ Lets you edit all non-sensitive DRADIS settings at runtime without restarting th
 | Conversation history | `true` | Prepend the last N exchanges as context to each request. |
 | Conversation history depth | `2` | Number of past exchanges kept in context (resets on restart). |
 | Max completion tokens | `2048` | Caps the model's reply length (passed as `max_tokens`) so prompt+reply stay inside the model context window. Keep it at 2048 for the Groq 8K free tier; raise it for larger-context providers. |
+| Sampling temperature | `0.2` | Passed as `temperature`. Low keeps the number of tool rounds — and so the token cost of a task — the same on every run; at the provider default (~1.0) an identical prompt costs a different number of rounds each time. |
+| Max tool rounds | `3` | How many times the model may call tools before it must answer in text. Every round re-sends the whole conversation, so this multiplies the token cost of a task. |
 | Log token usage | `off` | When on, appends `🔢 in N · out N` (input/output tokens) to every chat and task reply. |
 | Log tools used | `off` | When on, appends `🔧 tool1, tool2` (the tools DRADIS called that turn, deduped) to every chat and task reply; shows `🔧 no tools` when the reply used none. |
+| Report tool failures | `on` | When on, sends a `⚠️` Telegram message naming any tool that failed this turn (page unreachable, account disconnected) ahead of the reply, so an answer built on missing data is not mistaken for a good one. Unlike the two log footers above it is not suppressed in Car Mode. |
 | Timezone for scheduled tasks | `UTC` | Timezone used to interpret all cron expressions. Select from the dropdown (covers Europe, Americas, Asia, Africa, Pacific). Changes take effect on next save — no restart required. |
 
 **Model selection by provider:**
@@ -213,7 +238,7 @@ When enabled, DRADIS automatically decides which tool to call — no prompt engi
 | `search_web` | User asks a question or wants to search for information | [Tavily](https://tavily.com) — requires `tavily_api_key` |
 | `read_url` | User provides a specific URL to read or summarise | [Jina Reader](https://jina.ai/reader/) — free, no API key required |
 
-`search_web` returns up to 5 results with full page content. `read_url` fetches the page at the given URL and returns its content as markdown (max 8 000 characters). A dedicated synthesis LLM formats the output into a concise answer.
+`search_web` returns up to 5 results with full page content. `read_url` fetches the page at the given URL and returns its text as markdown. It is a direct tool of the single agent — there is no synthesis sub-agent and no second LLM call (that architecture was removed in v2.12.0); DRADIS reads the page with its own model. The result is capped at 12 000 characters at the source and then trimmed again by the runtime to whatever the model's window and the minute's token budget actually allow. A non-2xx response from Jina Reader raises a tool failure rather than being handed to the model as if it were the page.
 
 | Field | Default | Description |
 |-------|---------|-------------|
@@ -1059,7 +1084,7 @@ DRADIS routes the request to the Web Search sub-agent (Tavily), retrieves up to 
 ### Read a specific URL
 > *"Summarise this article: https://www.example.com/article"*
 
-DRADIS routes the request to the Web Search sub-agent, which calls `read_url` via Jina Reader. The page content is fetched, truncated to 8 000 characters, and synthesised into a concise summary. No API key required.
+DRADIS calls `read_url` directly — no sub-agent, no extra LLM call — and reads the page with its own model. The content is fetched via Jina Reader, trimmed to fit the model's remaining budget, and summarised. No API key required. If the page cannot be fetched you get a `⚠️` notice saying so, rather than a summary of Jina's error page.
 
 ---
 

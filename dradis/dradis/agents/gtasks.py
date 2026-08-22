@@ -1,6 +1,8 @@
 import asyncio
 from pathlib import Path
 
+from core import ToolError
+
 GTASKS_TOKEN_FILE   = Path("/data/google_tasks_token.json")
 GTASKS_SCOPES       = ["https://www.googleapis.com/auth/tasks"]
 GTASKS_REDIRECT_URI = "http://localhost:8099/gtasksauth/callback"
@@ -161,7 +163,6 @@ def _sync_update_task(task_list: str, task_id: str, title: str, notes: str) -> s
 
 def gtasks_tools(settings: dict) -> list[dict]:
     """Return the Google Tasks tool specs."""
-    _not_auth_msg = "Google Tasks not authenticated. Send /gtasksauth to connect."
 
     async def list_tasks(task_list: str | None = "@default") -> str:
         """List all open tasks in a Google Tasks list.
@@ -170,7 +171,7 @@ def gtasks_tools(settings: dict) -> list[dict]:
         loop   = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _sync_list_tasks, task_list or "@default")
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Tasks not authenticated. Send /gtasksauth to connect.")
         return result
 
     async def create_task(
@@ -188,7 +189,7 @@ def gtasks_tools(settings: dict) -> list[dict]:
             None, _sync_create_task, task_list or "@default", title, notes or "", due or ""
         )
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Tasks not authenticated. Send /gtasksauth to connect.")
         return result
 
     async def complete_task(task_id: str, task_list: str | None = "@default") -> str:
@@ -199,7 +200,7 @@ def gtasks_tools(settings: dict) -> list[dict]:
         loop   = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _sync_complete_task, task_list or "@default", task_id)
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Tasks not authenticated. Send /gtasksauth to connect.")
         return result
 
     async def delete_task(task_id: str, task_list: str | None = "@default") -> str:
@@ -210,7 +211,7 @@ def gtasks_tools(settings: dict) -> list[dict]:
         loop   = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _sync_delete_task, task_list or "@default", task_id)
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Tasks not authenticated. Send /gtasksauth to connect.")
         return result
 
     async def update_task(
@@ -228,7 +229,7 @@ def gtasks_tools(settings: dict) -> list[dict]:
             None, _sync_update_task, task_list or "@default", task_id, title or "", notes or ""
         )
         if result == "NOT_AUTHENTICATED":
-            return _not_auth_msg
+            raise ToolError("Google Tasks not authenticated. Send /gtasksauth to connect.")
         return result
 
     return [

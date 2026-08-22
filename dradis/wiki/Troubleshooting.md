@@ -18,6 +18,25 @@
 
 ---
 
+## A task fails on the token limit — but only sometimes
+
+Symptom: the same scheduled task, on the same page, is refused by Groq roughly every other run.
+
+The 8K figure on the Groq free tier is **tokens per minute**, not the size of one request: a rolling 60-second budget counting every call a turn makes, prompt and completion together. A turn re-sends the whole conversation on each tool round, so the cost is cumulative, and one extra round can double it.
+
+What to check in the logs — each round now prints its own line:
+
+```
+[DRADIS] round=0 prompt=980 completion=48 cumulative=1028 tpm_used=1028
+[DRADIS] round=1 prompt=3540 completion=402 cumulative=4970 tpm_used=4970
+```
+
+- **A third and fourth round appearing on the failing runs but not the good ones** — the model is calling tools it does not need. Lower **Settings → DRADIS → Max tool rounds**, and check **Sampling temperature** is low: at the provider default the same prompt costs a different number of rounds every time.
+- **`read_url` in `tools_used` twice** — the fetch failed and the model retried. You should also see a `⚠️` notice naming the HTTP status; if Jina is rate-limiting you often, that is the thing to fix.
+- **A single round already near the ceiling** — the page is large. Lower **Max completion tokens**, or point the task's model at a provider with a roomier budget.
+- **`pacing groq: waiting …`** — the runtime is holding a request back so it fits the minute. Expected on heavy tasks; latency, not an error.
+- **"primary and fallback both failed"** right after a rate limit — the fallback shares the API key's budget. DRADIS now waits out the provider's retry hint before trying it, but a fallback on a *different* provider avoids the problem entirely.
+
 ## Cron jobs (tasks / monitors) fire at the wrong time
 
 - Check the **Timezone** setting in **Settings → DRADIS**. All cron expressions are interpreted in the configured timezone.
@@ -99,6 +118,18 @@ The task is alive but the feed is not delivering: either no message has arrived 
 **No radar image.** The chart is rendered on a worker thread and any failure degrades to text-only, by design. Look for `chart failed (…) — sending text only` in the log.
 
 ---
+
+## A reply looks right but the data behind it is missing
+
+A tool that fails no longer does so silently. **Settings → DRADIS → Report tool failures** (on by default) sends a `⚠️` message ahead of the reply naming what broke:
+
+```
+⚠️ Task Rassegna stampa: tool failure — the answer below may be incomplete.
+• read_url: HTTP 429 from r.jina.ai reading https://example.com/article
+• get_emails: Gmail not authenticated. Send /gmailauth to connect.
+```
+
+If you get an answer with no such warning, the tools did run. If you switched the setting off, you are back to being unable to tell a good run from a fabricated one — which is why it defaults to on.
 
 ## Google Calendar / Gmail / Tasks OAuth
 

@@ -470,6 +470,16 @@
         </div>
 
         <div class="form-group">
+          <label for="s-temperature">Sampling temperature <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">(low keeps the number of tool rounds — and so the token cost of a task — the same on every run)</span></label>
+          <input type="number" id="s-temperature" min="0" max="2" step="0.1" style="width:120px">
+        </div>
+
+        <div class="form-group">
+          <label for="s-tool-call-limit">Max tool rounds <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">(every round re-sends the whole conversation, so this multiplies the token cost of a task)</span></label>
+          <input type="number" id="s-tool-call-limit" min="1" max="8" style="width:120px">
+        </div>
+
+        <div class="form-group">
           <div class="toggle-row">
             <span class="toggle-label">Log token usage <span style="font-weight:400;color:var(--text-muted)">— append input/output tokens to every chat & task reply</span></span>
             <label class="toggle">
@@ -484,6 +494,16 @@
             <span class="toggle-label">Log tools used <span style="font-weight:400;color:var(--text-muted)">— append the tools DRADIS called to every chat & task reply</span></span>
             <label class="toggle">
               <input type="checkbox" id="s-tools-usage">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Report tool failures <span style="font-weight:400;color:var(--text-muted)">— send a Telegram warning when a tool fails (page unreachable, account disconnected), so a reply built on missing data is not mistaken for a good one</span></span>
+            <label class="toggle">
+              <input type="checkbox" id="s-tool-errors">
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -720,6 +740,14 @@
           <a href="https://jina.ai/reader/" target="_blank" style="color:var(--accent)">Jina Reader</a>
           (free, no API key required). The raw page text is returned directly to DRADIS —
           no extra LLM call is made. DRADIS analyses the content with its own model.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          How much of a page survives is decided by the model, not by a fixed number: the text is
+          trimmed to what is left of the context window and of the minute's token budget, and a
+          trimmed page is marked as such so DRADIS reports a partial read instead of filling in the
+          rest. Jina's anonymous tier is rate-limited, so a fetch fails now and then — when it does
+          you get a <b>⚠️</b> Telegram notice naming the HTTP status, rather than a summary of
+          Jina's error page.
         </p>
 
         <div class="form-group">
@@ -1613,6 +1641,9 @@ async function loadSettings() {
   document.getElementById("s-max-tokens").value      = s.max_tokens         ?? 2048;
   document.getElementById("s-token-usage").checked   = s.token_usage_enabled === true;
   document.getElementById("s-tools-usage").checked   = s.tools_usage_enabled === true;
+  document.getElementById("s-temperature").value     = s.temperature        ?? 0.2;
+  document.getElementById("s-tool-call-limit").value = s.tool_call_limit    ?? 3;
+  document.getElementById("s-tool-errors").checked   = s.tool_errors_enabled !== false;
   const tzVal = s.timezone || "UTC";
   const tzSel = document.getElementById("s-timezone");
   if (![...tzSel.options].some(o => o.value === tzVal)) {
@@ -1926,6 +1957,9 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     max_tokens:         parseInt(document.getElementById("s-max-tokens").value, 10) || 2048,
     token_usage_enabled: document.getElementById("s-token-usage").checked,
     tools_usage_enabled: document.getElementById("s-tools-usage").checked,
+    tool_errors_enabled: document.getElementById("s-tool-errors").checked,
+    temperature:        parseFloat(document.getElementById("s-temperature").value) || 0,
+    tool_call_limit:    parseInt(document.getElementById("s-tool-call-limit").value, 10) || 3,
     timezone:                 document.getElementById("s-timezone").value.trim() || "UTC",
   };
   try {

@@ -13,10 +13,10 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 - **Multi-provider LLM**: OpenRouter, OpenAI, GitHub Models, Gemini, Groq — switch provider and model at runtime from the Web UI
 - **One model + fallback** — the single agent runs on the main model; on an API error or empty reply it retries once on the configured fallback model and posts `⚠️ fallback triggered — <error>`; if both fail, a clear `❌` message is sent
 - **Per-tool selection for tasks** — each task attaches only the tools it needs, keeping the prompt small (key to Groq's 8000 tokens-per-minute limit)
-- **Token budget** — a `max_tokens` completion cap and an optional *Log token usage* toggle that appends `🔢 in N · out N` to every chat and task reply
+- **Token budget** — the free-tier ceiling that bites is *tokens per minute*, a rolling 60-second budget counting every call a turn makes, and a turn re-sends the whole conversation on each tool round. DRADIS stays inside it rather than discovering it from a rejection: a fixed sampling temperature so a prompt costs the same number of rounds every run, a bound on those rounds, tool results trimmed to the model's real headroom, requests paced against a per-provider token bucket, and one retry on the delay a rate limit asks for. Plus a `max_tokens` completion cap, per-round token logging, and an optional *Log token usage* toggle that appends `🔢 in N · out N` to every reply
 - **Tool visibility** — an optional *Log tools used* toggle that appends `🔧 tool1, tool2` (the tools DRADIS called that turn) to every chat and task reply
 - **Conversation history** with configurable depth
-- **Telegram error notifications** — all API failures are reported via Telegram
+- **Telegram error notifications** — all API failures are reported via Telegram, and so is any *tool* that failed: a `⚠️` message names the tool and the reason (page unreachable, account disconnected) ahead of the reply, so an answer built on missing data is not mistaken for a good one
 - **Model speed-test** — ranks models by tok/s, keeps top 5
 - 🚗 **Car Mode** — every alert, report and answer rewritten as plain spoken prose so CarPlay can read it aloud: icons, markup and links stripped, coordinates and record ids dropped, units and compass points spelled out (`12 km/h` → *12 chilometri orari*, `O` → *ovest*), lines joined into sentences, charts not sent. Deterministic — no model call, no added latency, no tokens. Toggle with `/car`
 

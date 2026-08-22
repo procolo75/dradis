@@ -155,9 +155,26 @@ def save_turn(role: str, text: str, history_depth: int) -> None:
         _history.pop(0)
 
 
-def history_messages() -> list[dict]:
-    """Return prior turns as OpenAI chat messages (role/content) for the runtime."""
-    return [{"role": m["role"], "content": m["content"]} for m in _history]
+# A message count is not a size. Four turns of `history_depth * 2` can be four
+# 2048-token answers, which is a whole 8K window spent before the question is
+# even asked — so the count is a ceiling, and this is the real limit.
+_HISTORY_TOKEN_SHARE = 0.25
+
+
+def history_messages(model: str | None = None) -> list[dict]:
+    """Return prior turns as OpenAI chat messages (role/content) for the runtime,
+    newest first to survive, oldest dropped once they no longer fit."""
+    budget = int(agent_core.context_window_for(model or "") * _HISTORY_TOKEN_SHARE)
+    kept: list[dict] = []
+    used = 0
+    for m in reversed(_history):
+        cost = agent_core.estimate_tokens(m["content"])
+        if kept and used + cost > budget:
+            break
+        kept.append({"role": m["role"], "content": m["content"]})
+        used += cost
+    kept.reverse()
+    return kept
 
 
 # ── Telegram helpers ──────────────────────────────────────────────────────────
@@ -278,17 +295,36 @@ def md_to_html(text: str) -> str:
 # depends on: enabled flag + auth (for chat, all available) and, for a task, the
 # explicit per-tool selection. The model decides which tool to call.
 
+# Safety cap only. The real trim happens in the runtime, which is the only place
+# that knows the model window and what is left of the minute's token budget — so
+# a page read on Gemini keeps far more of itself than the same page on Groq.
+_READ_URL_MAX_CHARS = 12000
+
+
 async def read_url(url: str) -> str:
+    """Fetch a page as text through the Jina reader.
+
+    The status check is the whole point of the rewrite. Jina rate-limits the
+    anonymous tier, and returning its error body as if it were the page taught
+    the model to do one of two harmful things: summarise the error as though it
+    were the article, or call read_url a second time — and that extra round is
+    what pushed a working task over Groq's per-minute ceiling.
+    """
     import httpx
+    from urllib.parse import quote
     if not url.startswith("http://") and not url.startswith("https://"):
-        return "Error: a valid URL starting with http:// or https:// is required."
+        raise agent_core.ToolError(
+            f"{url!r} is not a valid URL — it must start with http:// or https://")
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
-            f"https://r.jina.ai/{url}",
+            f"https://r.jina.ai/{quote(url, safe=':/?&=#%+,;@!$~*()[]')}",
             headers={"Accept": "text/plain"},
             follow_redirects=True,
         )
-    return resp.text[:8000]
+    if resp.status_code >= 400:
+        raise agent_core.ToolError(
+            f"HTTP {resp.status_code} from r.jina.ai reading {url}")
+    return resp.text[:_READ_URL_MAX_CHARS]
 
 
 READ_URL_TOOL = {
@@ -438,12 +474,17 @@ async def run_dradis(
     Returns (AgentResult|None, used_fallback: bool, error|None, fb_reason|None)
     where fb_reason is the primary error that triggered the fallback (set whenever
     the fallback ran, whether it then succeeded or not)."""
-    agent_core.set_generation_config(settings.get("max_tokens"))
+    agent_core.set_generation_config(settings.get("max_tokens"),
+                                     settings.get("temperature"))
     max_tokens = settings.get("max_tokens") or None
     model      = settings.get("model",    SETTINGS_DEFAULTS["model"])
     provider   = settings.get("provider", SETTINGS_DEFAULTS["provider"])
     tools      = build_tools(settings, selected)
     system     = _system_prompt(settings, tools)
+    # Six rounds was a ceiling nobody asked for: every round re-sends the whole
+    # transcript, so on a page-reading task rounds four to six are pure cost with
+    # no answer in them. Three is enough to fetch, react and reply.
+    rounds     = int(settings.get("tool_call_limit") or SETTINGS_DEFAULTS["tool_call_limit"])
 
     tool_names = ", ".join(t["name"] for t in tools) or "none"
     print(f"[DRADIS] {context_label}: model={model} provider={provider} "
@@ -452,7 +493,7 @@ async def run_dradis(
     async def _attempt(m: str, p: str):
         return await agent_core.run_agent(
             system, user_prompt, tools, m, p,
-            max_tokens=max_tokens, history=history,
+            max_tokens=max_tokens, history=history, tool_call_limit=rounds,
         )
 
     error = None
@@ -472,6 +513,15 @@ async def run_dradis(
         return None, False, error, None
     fb_provider = (settings.get("fallback_provider") or "").strip() or provider
     print(f"[DRADIS] {context_label} fallback → {fb_model} ({fb_provider})")
+    # A rate limit belongs to the API key, not the model. When the fallback sits on
+    # the provider that just refused us, firing the identical payload a heartbeat
+    # later refuses it again — and the user reads "both models failed" for what was
+    # a two-second wait.
+    fb_delay = agent_core.retry_after_seconds(error) if fb_provider == provider else None
+    if fb_delay:
+        print(f"[DRADIS] {context_label} waiting {fb_delay + 0.5:.1f}s before fallback "
+              f"(same provider was rate limited)")
+        await asyncio.sleep(fb_delay + 0.5)
     try:
         res = await _attempt(fb_model, fb_provider)
         if res.failed:
@@ -507,6 +557,32 @@ def reply_footer(settings: dict, result) -> str:
     # Telegram HTML parse_mode supports only a small tag set (no <br>); use a real
     # newline to separate the footer lines inside the italic block.
     return "\n\n<i>" + "\n".join(lines) + "</i>"
+
+
+def _tool_errors_msg(settings: dict, result, task_name: str | None = None) -> str:
+    """Telegram notice listing the tools that failed this turn, or "".
+
+    Sent as its own message rather than folded into `reply_footer`, and for one
+    reason: the footer is dropped entirely in Car Mode. Token counts are
+    diagnostics and can go; a tool that failed is not diagnostics. It decides
+    whether the answer underneath can be trusted at all, and that has to reach
+    the driver too.
+    """
+    if result is None or not settings.get("tool_errors_enabled", True):
+        return ""
+    errors = getattr(result, "tool_errors", None)
+    if not errors:
+        return ""
+    # One line per distinct tool: a model that retried a failing fetch three times
+    # ran into one problem, not three.
+    seen: dict[str, str] = {}
+    for name, reason in errors:
+        seen.setdefault(name, reason)
+    prefix = f"Task <b>{html.escape(task_name)}</b>: " if task_name else ""
+    lines  = [f"⚠️ {prefix}tool failure — the answer below may be incomplete."]
+    lines += [f"• <code>{html.escape(name)}</code>: {html.escape(reason)}"
+              for name, reason in seen.items()]
+    return "\n".join(lines)
 
 
 def _fallback_msg(reason, task_name: str | None = None) -> str:

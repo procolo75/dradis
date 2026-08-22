@@ -67,7 +67,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     question = update.message.text
     model    = settings.get("model", _state.SETTINGS_DEFAULTS["model"])
-    history  = _state.history_messages() if history_enabled else None
+    history  = _state.history_messages(model) if history_enabled else None
 
     # Chat gets all available tools; the single agent decides which to call.
     result, used_fallback, error, fb_reason = await _state.run_dradis(
@@ -93,6 +93,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if used_fallback:
         await _state._send_error_telegram(_state._fallback_msg(fb_reason))
+
+    tool_errors = _state._tool_errors_msg(settings, result)
+    if tool_errors:
+        await _state._send_error_telegram(tool_errors)
 
     text   = (result.content or "").strip()
     footer = _state.reply_footer(settings, result)
