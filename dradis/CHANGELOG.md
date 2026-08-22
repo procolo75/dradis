@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## [4.5.1] - 2026-08-22
+
+**v4.5.0 taught the runtime that Groq's 8K is a minute and not a request, and the pacing works — you can watch it wait in the log. The task failed anyway.** Four times over, and only the last of the four is about tokens.
+
+```
+round=0 prompt=269  completion=128   → read_url
+round=1 prompt=5473 completion=116   → read_url again
+pacing groq: waiting 57.9s (need ~3876, used 5986)
+round=2 prompt=2207 completion=251   → read_url again, {"pattern":"22"}
+primary error: 400 tool_use_failed — 'Tool choice is none, but model called a tool'
+fallback → qwen/qwen3.6-27b (groq) → 413 — Limit 8000, Requested 8081
+```
+
+**The page had no news in it.** Not "too much page for the budget" — no news. Passed to `r.jina.ai` the school's news archive comes back as 11 615 characters of month menu, eighteen signed Spaggiari thumbnail URLs at ~330 characters each, and a cookie banner, carrying **none of the eighteen headlines that are in the page's HTML**. Jina's readability pass decides which part of a page is the content and on a list-shaped page it decided the navigation was. The second read, `?date=2026-08`, returns 7 465 characters and zero news as well: that branch was a dead end before it was taken. So `{"pattern":"22"}` was not a model losing its mind — it was a model given a month menu and asked for the news of the 22nd.
+
+**Two of the three tool calls were ours.** Between round 1 and round 2 the prompt collapses from 5 473 to 2 207: the trim had blanked the first page to make room for the second, and the second had already been cut at insertion. The model was holding two markers reading *content truncated* and no article, so it asked again — which is exactly what "truncated" invites. Then the last round arrived, `run_agent` dropped `tools` to force a text answer, Groq read a tool-call transcript with no tools as `tool_choice: none`, and gpt-oss called a tool regardless. That 400 is not a rate limit, so the whole turn went to the fallback, which started from zero and spent the minute again.
+
+**And the estimate was lying, by 40%.** `_CHARS_PER_TOKEN = 3.2` was chosen to over-count. On a page three-quarters made of URLs and percent-encoded signatures it under-counts: the refused request was priced at ~4 300 tokens and billed at ~6 033. Hence the 413 — a request larger than the *whole* minute, which no amount of waiting can fix, retried unchanged because the message says `rate_limit_exceeded`.
+
+- **Fix — `read_url` returns the page instead of the menu.** Image tags are dropped always. Then the extraction is checked rather than trusted: `prose_chars(page) / len(page)` measures how much of what came back is words rather than addresses, and below `MIN_PROSE_SHARE` (0.30) the page is read again with `X-Respond-With: text` and the richer reading wins. Measured across five reads — the school archive scores 0.22 and its monthly view 0.23, an ANSA index 0.36, a Wikipedia article 0.49, and the same archive in text mode 0.91. On the page that started this: 11 615 characters with no headlines become 4 801 with all eighteen. The second read costs one HTTP request and no model tokens; a model reasoning over a navigation bar costs the turn.
+- **Fix — the context-window table said 8 192 where the model holds 131 072.** `gpt-oss`, `llama-3.1-8b`, `llama-3.3-70b` and `qwen` were all listed at the size of Groq's free *minute* rather than their own window. Since `ceiling_for()` is `min(window, TPM)`, nothing changes on the free tier — and **paying for a larger plan would have changed nothing either**, which is the point.
+- **Feat — the per-minute ceiling is a setting.** **Settings → DRADIS → Provider tokens per minute**, default `0` = whatever DRADIS knows (8000 for Groq, uncapped elsewhere). It is a plan, not a property of the model, and moving off the free tier should be a number to change rather than a release to wait for.
+- **Fix — the estimate is honest, and then it learns.** 2.2 characters per token, the worst ratio measured rather than the average. Tool schemas are counted for the first time — `_BUDGET_HEADROOM` was standing in for them at a flat 512 tokens, which a handful of Google schemas already exceeded, and it is back to 192 covering only the framing it was meant to. `estimate_request_tokens()` is now the one function the pacer, the trimmer and the tool-result sizer all price with. And `calibrate()` closes the loop: `usage.prompt_tokens` is the provider stating what it billed for a payload we had already priced, so an under-count is corrected — upward, per provider, clamped at 2× — after one round rather than after one refusal.
+- **Fix — a 413 is a measurement, not a rate limit.** `request_too_large()` reads `Limit 8000, Requested 8081` out of Groq's refusal. Before sending, `_fit_to_hard_limit()` shrinks anything larger than the whole minute; after a refusal the stated figures feed the calibration and the request is cut against the limit the provider named and sent again. `retry_after_seconds()` no longer claims these — waiting cannot make a request smaller.
+- **Fix — the final round carries no tool call, in the history either.** `flatten_tool_transcript()` rewrites the assistant/tool pairs as plain prose and ends with an instruction to answer. There is no tool session left for gpt-oss to continue. If the provider refuses anyway, that one round is retried on the same model at temperature 0 with a blunter instruction, instead of handing the whole turn — context, page and all — to the fallback.
+- **Fix — a dropped result no longer reads as an invitation.** `_trim_to_window()` replaces what it removes with a marker saying the content is gone and cannot be fetched again, distinct from the truncation marker that means a result was merely shortened.
+- **Fix — the same tool call twice in one turn runs once.** A per-turn memo of `(tool, arguments)`; the repeat is answered from the first result and told so.
+- **Feat — the log says what it thought and how wrong it was.** `round=N … est=… x1.00`, and the task line now prints `ceiling=` beside `window=` — they differ on Groq, and reading `window=8192` while the runtime budgeted against 8000 was its own small confusion.
+
+Left out deliberately: `read_url` still hands over the whole page rather than trying to find the article inside it. Stripping navigation by heuristic means being wrong about someone else's HTML, and being wrong there throws away the article instead of the menu. Measuring whether the extraction worked is a question with an answer; guessing which `<div>` holds the news is not.
+
+Also worth recording: the two Jina readings of the failing page are kept verbatim in `tests/fixtures/`, so the 0.22 in `MIN_PROSE_SHARE`'s comment can be re-derived rather than believed.
+
+Tests: 541 (was 501). `test_token_budget.py` +30, `test_tool_errors.py` +10, including a replay of the 400 and of the 413 against a scripted client, and the real page proving the second read is what recovers the headlines.
+
 ## [4.5.0] - 2026-08-22
 
 **The same task, on the same page, was refused by Groq about every other run.** The 8K figure on the free tier is not the size of one request — it is a rolling 60-second budget counting every call a turn makes, prompt and completion together. A turn re-sends the whole conversation on each tool round, so the cost is cumulative: round 0 costs ~1 000 tokens, round 1 with an 8 000-character page costs ~3 900 more, and a third round puts the turn past 10 000. Two rounds pass and three do not.

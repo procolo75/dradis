@@ -480,6 +480,17 @@
         </div>
 
         <div class="form-group">
+          <label for="s-tpm-limit">Provider tokens per minute <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">(the rolling 60-second budget of your plan, counting prompt and reply of every round; 0 = use what DRADIS knows — 8000 for Groq's free tier, no cap elsewhere)</span></label>
+          <input type="number" id="s-tpm-limit" min="0" max="10000000" step="1000" style="width:140px">
+          <small style="margin-top:6px;display:block;color:var(--text-muted)">
+            This is the limit that refuses a task, not the model's context window. When a
+            request would not fit in what is left of the minute, DRADIS waits instead of
+            being refused; when a request could not fit in a whole minute, it trims the
+            request first. Raise it the day you move off the free tier.
+          </small>
+        </div>
+
+        <div class="form-group">
           <div class="toggle-row">
             <span class="toggle-label">Log token usage <span style="font-weight:400;color:var(--text-muted)">— append input/output tokens to every chat & task reply</span></span>
             <label class="toggle">
@@ -748,6 +759,14 @@
           rest. Jina's anonymous tier is rate-limited, so a fetch fails now and then — when it does
           you get a <b>⚠️</b> Telegram notice naming the HTTP status, rather than a summary of
           Jina's error page.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          Image tags are dropped before the page reaches the model — a page of signed thumbnail
+          URLs costs tokens and says nothing. And Jina decides for itself which part of a page is
+          the content: on a school news archive it kept the month menu and threw away all eighteen
+          headlines. When what comes back is nearly all addresses, DRADIS reads the page a second
+          time as plain text and keeps whichever reading carries more words. That second read costs
+          one HTTP request and no model tokens.
         </p>
 
         <div class="form-group">
@@ -1643,6 +1662,7 @@ async function loadSettings() {
   document.getElementById("s-tools-usage").checked   = s.tools_usage_enabled === true;
   document.getElementById("s-temperature").value     = s.temperature        ?? 0.2;
   document.getElementById("s-tool-call-limit").value = s.tool_call_limit    ?? 3;
+  document.getElementById("s-tpm-limit").value       = s.tpm_limit          ?? 0;
   document.getElementById("s-tool-errors").checked   = s.tool_errors_enabled !== false;
   const tzVal = s.timezone || "UTC";
   const tzSel = document.getElementById("s-timezone");
@@ -1960,6 +1980,7 @@ document.getElementById("btn-save-settings").addEventListener("click", async () 
     tool_errors_enabled: document.getElementById("s-tool-errors").checked,
     temperature:        parseFloat(document.getElementById("s-temperature").value) || 0,
     tool_call_limit:    parseInt(document.getElementById("s-tool-call-limit").value, 10) || 3,
+    tpm_limit:          parseInt(document.getElementById("s-tpm-limit").value, 10) || 0,
     timezone:                 document.getElementById("s-timezone").value.trim() || "UTC",
   };
   try {

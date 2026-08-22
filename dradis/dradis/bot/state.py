@@ -295,36 +295,65 @@ def md_to_html(text: str) -> str:
 # depends on: enabled flag + auth (for chat, all available) and, for a task, the
 # explicit per-tool selection. The model decides which tool to call.
 
-# Safety cap only. The real trim happens in the runtime, which is the only place
-# that knows the model window and what is left of the minute's token budget — so
-# a page read on Gemini keeps far more of itself than the same page on Groq.
+# Safety cap only, and it applies to the cleaned page: 12 000 characters of text
+# are worth having, 12 000 characters of signed thumbnail URLs are not. The real
+# trim happens in the runtime, which is the only place that knows the model window
+# and what is left of the minute's token budget.
 _READ_URL_MAX_CHARS = 12000
+
+
+async def _fetch_via_jina(client, url: str, *, as_text: bool = False) -> str:
+    from urllib.parse import quote
+    headers = {"Accept": "text/plain"}
+    if as_text:
+        # Skips the readability pass and returns the page's rendered text, links
+        # and all. Less tidy than the markdown, but it cannot decide that the
+        # article is boilerplate, which is the failure this exists to answer.
+        headers["X-Respond-With"] = "text"
+    resp = await client.get(
+        f"https://r.jina.ai/{quote(url, safe=':/?&=#%+,;@!$~*()[]')}",
+        headers=headers,
+        follow_redirects=True,
+    )
+    if resp.status_code >= 400:
+        raise agent_core.ToolError(
+            f"HTTP {resp.status_code} from r.jina.ai reading {url}")
+    return resp.text
 
 
 async def read_url(url: str) -> str:
     """Fetch a page as text through the Jina reader.
 
-    The status check is the whole point of the rewrite. Jina rate-limits the
-    anonymous tier, and returning its error body as if it were the page taught
-    the model to do one of two harmful things: summarise the error as though it
-    were the article, or call read_url a second time — and that extra round is
-    what pushed a working task over Groq's per-minute ceiling.
+    Two checks sit on top of the fetch. The status check, from v4.5.0: Jina
+    rate-limits its anonymous tier, and returning that error body as if it were
+    the page taught the model to summarise the error or call the tool again.
+
+    And the extraction check. Jina's readability pass decides what counts as
+    content, and on a school news archive it decided the month menu did: 11 615
+    characters of navigation, thumbnails and cookie banner, with none of the
+    eighteen headlines that were in the HTML. A model handed that has nothing to
+    answer with, so it calls the tool again — which is how one page read became
+    three rounds and a refused request. When what comes back is nearly all
+    addresses, the page is read again as plain text and the richer of the two
+    wins. That costs one HTTP request and no model tokens.
     """
     import httpx
-    from urllib.parse import quote
     if not url.startswith("http://") and not url.startswith("https://"):
         raise agent_core.ToolError(
             f"{url!r} is not a valid URL — it must start with http:// or https://")
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            f"https://r.jina.ai/{quote(url, safe=':/?&=#%+,;@!$~*()[]')}",
-            headers={"Accept": "text/plain"},
-            follow_redirects=True,
-        )
-    if resp.status_code >= 400:
-        raise agent_core.ToolError(
-            f"HTTP {resp.status_code} from r.jina.ai reading {url}")
-    return resp.text[:_READ_URL_MAX_CHARS]
+        page  = agent_core.clean_page(await _fetch_via_jina(client, url))
+        prose = agent_core.prose_chars(page)
+        if page and prose / len(page) < agent_core.MIN_PROSE_SHARE:
+            try:
+                alt = agent_core.clean_page(await _fetch_via_jina(client, url, as_text=True))
+            except agent_core.ToolError:
+                alt = ""     # the first read worked; a failed second one is not fatal
+            if agent_core.prose_chars(alt) > prose:
+                print(f"[DRADIS] read_url: readability kept {prose} chars of prose "
+                      f"on {url}, text mode kept {agent_core.prose_chars(alt)} — using text mode")
+                page = alt
+    return page[:_READ_URL_MAX_CHARS]
 
 
 READ_URL_TOOL = {
@@ -479,6 +508,10 @@ async def run_dradis(
     max_tokens = settings.get("max_tokens") or None
     model      = settings.get("model",    SETTINGS_DEFAULTS["model"])
     provider   = settings.get("provider", SETTINGS_DEFAULTS["provider"])
+    # The per-minute ceiling belongs to the plan behind the API key, so it is a
+    # setting. Applied to the fallback provider too: same key, same bucket.
+    tpm_limit  = settings.get("tpm_limit") or 0
+    agent_core.set_provider_tpm(provider, tpm_limit)
     tools      = build_tools(settings, selected)
     system     = _system_prompt(settings, tools)
     # Six rounds was a ceiling nobody asked for: every round re-sends the whole
@@ -488,7 +521,9 @@ async def run_dradis(
 
     tool_names = ", ".join(t["name"] for t in tools) or "none"
     print(f"[DRADIS] {context_label}: model={model} provider={provider} "
-          f"tools={len(tools)} [{tool_names}] window={agent_core.context_window_for(model)}")
+          f"tools={len(tools)} [{tool_names}] "
+          f"window={agent_core.context_window_for(model)} "
+          f"ceiling={agent_core.ceiling_for(model, provider)}")
 
     async def _attempt(m: str, p: str):
         return await agent_core.run_agent(
@@ -512,6 +547,7 @@ async def run_dradis(
     if not fb_model:
         return None, False, error, None
     fb_provider = (settings.get("fallback_provider") or "").strip() or provider
+    agent_core.set_provider_tpm(fb_provider, tpm_limit)
     print(f"[DRADIS] {context_label} fallback → {fb_model} ({fb_provider})")
     # A rate limit belongs to the API key, not the model. When the fallback sits on
     # the provider that just refused us, firing the identical payload a heartbeat

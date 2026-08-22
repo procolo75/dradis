@@ -6,7 +6,7 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 
 **Why no framework:** v3.0 removed **agno**. A probe on Groq's `gpt-oss-120b` measured a raw `/chat/completions` request with 8 tool schemas at ~800 prompt tokens, versus ~8800 through agno — the framework added ~8000 tokens per request, making the 8K free-tier limit unreachable. The runtime now sends only what's needed.
 
-**Tools & selection:** each capability (Web Search, Weather, Calendar, Gmail, Tasks, Read URL) exposes plain tool specs via `agents/*.py:*_tools(settings)`. Chat gets all available tools; a **task selects exactly which tools** to attach (`build_tools(settings, selected)`). The single agent runs on the main model with one fallback; per-capability model settings are retired. A `max_tokens` cap (default 2048) and a **TPM probe** in the UI keep token usage observable.
+**Tools & selection:** each capability (Web Search, Weather, Calendar, Gmail, Tasks, Read URL) exposes plain tool specs via `agents/*.py:*_tools(settings)`. Chat gets all available tools; a **task selects exactly which tools** to attach (`build_tools(settings, selected)`). The single agent runs on the main model with one fallback; per-capability model settings are retired.
 
 ## Source Layout
 
@@ -57,6 +57,22 @@ dradis/
         ├── positions.py     # /api/positions CRUD, entity discovery, connection test
         └── tools.py         # Google OAuth callbacks, /api/websearch-test, /api/weather-test
 ```
+
+## Token Budget
+
+Two ceilings, and they are not the same number. The **context window** belongs to the model — `MODEL_CONTEXT_WINDOW` in `core.py`, 131 072 for gpt-oss-120b and most of the current Groq line-up. The **tokens-per-minute budget** belongs to the plan behind the API key — `PROVIDER_TPM`, 8000 on Groq's free tier, overridable from **Settings → DRADIS → Provider tokens per minute**. `ceiling_for(model, provider)` takes the tighter of the two, which on a free tier is always the plan. Keeping them apart is not pedantry: while the table claimed gpt-oss held 8192 tokens, paying for a larger plan would have changed nothing at all.
+
+A turn re-sends its whole transcript on every tool round, so the cost is cumulative and the budget is spent by the minute, not by the request:
+
+- `estimate_tokens()` prices text at 2.2 characters per token — the worst measured ratio, not the average, because the estimate exists to stay under a hard limit. `estimate_schema_tokens()` adds the tool definitions, which are prompt tokens like any other. `estimate_request_tokens()` is the single function the pacer, the trimmer and the tool-result sizer all use, so they cannot disagree about what a request costs.
+- `calibrate()` closes the loop: `usage.prompt_tokens` is the provider stating what it billed for a payload we had already priced, so an under-count corrects itself after one round instead of after one refusal. Kept per provider, upward only, clamped at 2×.
+- `record_tpm()` / `tpm_wait_seconds()` are a rolling 60-second bucket, keyed by provider because the ceiling belongs to the API key — the fallback model draws from the same one. If the next call would not fit, `_create_with_pacing()` waits.
+- Waiting only answers *not now*. A request larger than a whole minute is refused whatever the clock says, so `_fit_to_hard_limit()` cuts it down before it is sent, and `request_too_large()` reads Groq's `413 … Limit 8000, Requested 8081` as a measurement — fed to `calibrate()`, then the request is trimmed against the stated limit and sent again.
+- `_trim_to_window()` drops the oldest tool results, sparing the newest. What replaces one says the content is gone for good; the truncation marker, which says a result was merely shortened, is what taught a model to fetch the rest.
+- `flatten_tool_transcript()` rewrites the final round's history as plain prose. A transcript full of `tool_calls` sent with no tools attached is what Groq reads as `tool_choice: none`, and gpt-oss answers it with another tool call — a 400 that costs the whole turn.
+- `run_agent()` keeps a per-turn memo of `(tool, arguments)`: the same call twice is answered from the first result.
+
+`read_url` (`bot/state.py`) sits on the other side of the same budget. It drops image tags, then checks the extraction: when Jina's readability pass returns nearly all addresses and no prose — `prose_chars(page) / len(page) < MIN_PROSE_SHARE` — the page is read again with `X-Respond-With: text` and the richer reading wins. One HTTP request, no model tokens; the alternative is a model reasoning over a navigation menu.
 
 ## Fallback Model
 

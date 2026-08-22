@@ -70,7 +70,7 @@ GEMINI_MODELS = [
 
 SETTINGS_KEYS = [
     "provider", "agent_instructions", "model", "fallback_provider", "fallback_model",
-    "max_tokens", "temperature", "tool_call_limit",
+    "max_tokens", "temperature", "tool_call_limit", "tpm_limit",
     "token_usage_enabled", "tools_usage_enabled", "tool_errors_enabled",
     "history_enabled", "history_depth", "startup_message", "timezone",
     "car_mode_enabled",
@@ -100,6 +100,11 @@ SETTINGS_DEFAULTS: dict = {
     # that is refused. Low, not zero: zero makes some providers loop on a tool.
     "temperature":          0.2,
     "tool_call_limit":      3,
+    # The provider's rolling tokens-per-minute ceiling. 0 = whatever we know about
+    # the provider (Groq's free tier is 8000; nobody else is capped here). It is a
+    # plan, not a property of the model, so it belongs in the settings: a paid tier
+    # is a number to change, not a release to wait for.
+    "tpm_limit":            0,
     "token_usage_enabled":  False,
     "tools_usage_enabled":  False,
     "tool_errors_enabled":  True,

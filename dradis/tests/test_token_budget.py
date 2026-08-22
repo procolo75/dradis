@@ -12,11 +12,21 @@ whole transcript, page included, on every tool round. Whether the model took two
 rounds or three was left to the provider's default temperature, so the cost of an
 identical prompt varied by thousands of tokens between runs. Nothing measured
 any of it: `context_window_for` existed but its only caller was a log line.
+
+v4.5.1 adds what that release still got wrong. The estimate was calibrated for
+prose and the pages it had to price were three-quarters URL, so a request
+estimated at ~4 300 tokens was billed at ~6 033 and refused for being larger
+than the whole minute. The tool schemas were never counted at all. And the
+window table said gpt-oss held 8 192 tokens, which is Groq's free minute rather
+than the model's 131 072 — so paying for a bigger plan would have changed
+nothing.
 """
 
 import sys
 import unittest
 from pathlib import Path
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "dradis"))
 
@@ -222,6 +232,235 @@ class RetryAfterTest(unittest.TestCase):
     def test_rate_limit_without_a_figure_still_waits(self):
         err = self._Err("429 Too Many Requests", response=self._Resp())
         self.assertGreater(core.retry_after_seconds(err), 0)
+
+
+class PageCleaningTest(unittest.TestCase):
+    """What a fetched page is worth, decided before a token is spent on it.
+
+    The fixtures are one URL read twice in the same minute: the school news
+    archive as Jina's readability pass returns it, and the same page as text.
+    The first has none of the eighteen headlines that are in the HTML.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.readability = (_FIXTURES / "jina_school_news_archive.md").read_text(encoding="utf-8")
+        cls.text_mode   = (_FIXTURES / "jina_school_news_archive.text.md").read_text(encoding="utf-8")
+
+    def test_image_tags_are_dropped(self):
+        self.assertNotIn("![", core.clean_page("hello ![alt](https://x/y.png) world"))
+        self.assertIn("hello", core.clean_page("hello ![alt](https://x/y.png) world"))
+
+    def test_cleaning_takes_nearly_half_of_the_school_archive(self):
+        # 11 615 characters in, 6 274 out, and not one word of news lost —
+        # the difference is eighteen signed thumbnail URLs.
+        cleaned = core.clean_page(self.readability)
+        self.assertLess(len(cleaned), len(self.readability) * 0.6)
+
+    def test_prose_keeps_link_labels_and_drops_their_targets(self):
+        text = "[Gennaio](https://example.com/archivio-news?date=2026-01)"
+        self.assertEqual(core.prose_chars(text), len("Gennaio"))
+
+    def test_a_page_of_addresses_scores_below_the_threshold(self):
+        cleaned = core.clean_page(self.readability)
+        share   = core.prose_chars(cleaned) / len(cleaned)
+        self.assertLess(share, core.MIN_PROSE_SHARE)
+
+    def test_the_same_page_read_as_text_scores_above_it(self):
+        cleaned = core.clean_page(self.text_mode)
+        share   = core.prose_chars(cleaned) / len(cleaned)
+        self.assertGreater(share, core.MIN_PROSE_SHARE)
+
+    def test_the_text_reading_carries_the_headlines_the_other_lost(self):
+        # The whole reason the second read is worth an HTTP request.
+        for headline in ("CHIUSURA SCUOLA DEL 14/08/2026",
+                         "Ingresso posticipato del 25-06-2026"):
+            self.assertNotIn(headline.upper(), self.readability.upper())
+            self.assertIn(headline.upper(), self.text_mode.upper())
+
+    def test_an_ordinary_article_is_not_mistaken_for_navigation(self):
+        article = ("Il consiglio si è riunito ieri sera per discutere il bilancio, "
+                   "che secondo [il documento](https://example.com/doc) chiude in "
+                   "pareggio. La seduta è durata tre ore e si è conclusa con un "
+                   "voto unanime dei presenti in aula consiliare. ") * 4
+        share = core.prose_chars(article) / len(article)
+        self.assertGreater(share, core.MIN_PROSE_SHARE)
+
+
+class SchemaEstimateTest(unittest.TestCase):
+    """Tool definitions are prompt tokens. Nothing counted them."""
+
+    schemas = [{"type": "function", "function": {
+        "name": "read_url", "description": "Fetch and return the text of a page.",
+        "parameters": {"type": "object", "properties": {"url": {"type": "string"}}}}}]
+
+    def test_no_schemas_cost_nothing(self):
+        self.assertEqual(core.estimate_schema_tokens(None), 0)
+        self.assertEqual(core.estimate_schema_tokens([]), 0)
+
+    def test_schemas_cost_something(self):
+        self.assertGreater(core.estimate_schema_tokens(self.schemas), 20)
+
+    def test_a_request_is_priced_with_them(self):
+        messages = [{"role": "user", "content": "hello"}]
+        self.assertGreater(core.estimate_request_tokens(messages, self.schemas),
+                           core.estimate_request_tokens(messages, None))
+
+
+class CalibrationTest(unittest.TestCase):
+    """The provider's own usage figures, fed back into the estimate."""
+
+    def setUp(self):
+        core.reset_calibration()
+
+    def tearDown(self):
+        core.reset_calibration()
+
+    def test_an_estimate_that_over_counts_is_left_alone(self):
+        core.calibrate("groq", estimated=1000, actual=800)
+        self.assertEqual(core.correction_for("groq"), 1.0)
+
+    def test_under_counting_raises_later_estimates(self):
+        messages = [{"role": "user", "content": "x" * 2200}]
+        before = core.estimate_request_tokens(messages, None, "groq")
+        core.calibrate("groq", estimated=1000, actual=1400)
+        self.assertGreater(core.estimate_request_tokens(messages, None, "groq"), before)
+
+    def test_the_worst_case_is_kept_not_averaged_away(self):
+        core.calibrate("groq", estimated=1000, actual=1400)
+        core.calibrate("groq", estimated=1000, actual=1050)
+        self.assertAlmostEqual(core.correction_for("groq"), 1.4, places=2)
+
+    def test_it_is_clamped(self):
+        core.calibrate("groq", estimated=100, actual=100000)
+        self.assertLessEqual(core.correction_for("groq"), 2.0)
+
+    def test_it_is_per_provider(self):
+        core.calibrate("groq", estimated=1000, actual=1400)
+        self.assertEqual(core.correction_for("gemini"), 1.0)
+
+
+class ProviderTpmSettingTest(unittest.TestCase):
+    """The 8000 is a plan, not a law."""
+
+    def tearDown(self):
+        core.set_provider_tpm("groq", 0)
+        core.set_provider_tpm("gemini", 0)
+
+    def test_a_paid_plan_is_a_number(self):
+        core.set_provider_tpm("groq", 300000)
+        self.assertEqual(core.PROVIDER_TPM["groq"], 300000)
+        self.assertEqual(core.ceiling_for("gpt-oss-120b", "groq"), 131072)
+
+    def test_zero_restores_what_we_know(self):
+        core.set_provider_tpm("groq", 300000)
+        core.set_provider_tpm("groq", 0)
+        self.assertEqual(core.PROVIDER_TPM["groq"], 8000)
+
+    def test_a_provider_we_know_nothing_about_stays_unpaced(self):
+        core.set_provider_tpm("gemini", 0)
+        self.assertNotIn("gemini", core.PROVIDER_TPM)
+
+    def test_the_free_tier_still_wins_over_the_window(self):
+        self.assertEqual(core.ceiling_for("gpt-oss-120b", "groq"), 8000)
+
+
+class RequestTooLargeTest(unittest.TestCase):
+    """A 413 is a measurement, not a rate limit."""
+
+    class _Err(Exception):
+        def __init__(self, msg, status_code=None):
+            super().__init__(msg)
+            self.status_code = status_code
+
+    GROQ_413 = ("Error code: 413 - Request too large for model `qwen/qwen3.6-27b` "
+                "in organization `org_x` service tier `on_demand` on tokens per "
+                "minute (TPM): Limit 8000, Requested 8081, please reduce your "
+                "message size and try again.")
+
+    def test_it_reads_the_two_figures(self):
+        self.assertEqual(core.request_too_large(self._Err(self.GROQ_413, 413)),
+                         (8000, 8081))
+
+    def test_an_ordinary_rate_limit_is_not_one(self):
+        err = self._Err("rate_limit_exceeded: Limit 8000, Used 3704, Requested 4502. "
+                        "Please try again in 1.52s.", 429)
+        self.assertIsNone(core.request_too_large(err))
+
+    def test_waiting_is_not_offered_for_a_request_that_cannot_shrink_by_waiting(self):
+        # The body says `rate_limit_exceeded`, so the old code waited and re-sent
+        # the identical payload, which was refused identically.
+        self.assertIsNone(core.retry_after_seconds(self._Err(self.GROQ_413, 413)))
+
+
+class HardLimitTest(unittest.TestCase):
+    """Nothing bigger than the whole minute should ever leave the process."""
+
+    def _conversation(self):
+        return [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "the question"},
+            {"role": "tool", "tool_call_id": "1", "content": "old page " * 2000},
+            {"role": "tool", "tool_call_id": "2", "content": "new page " * 2000},
+        ]
+
+    def test_an_impossible_request_is_cut_down_before_it_is_sent(self):
+        msgs = self._conversation()
+        self.assertGreater(core.estimate_request_tokens(msgs), 8000)
+        self.assertTrue(core._fit_to_hard_limit(msgs, None, "groq", 2048, 8000))
+        self.assertLessEqual(core.estimate_request_tokens(msgs), 8000 - 2048)
+
+    def test_the_newest_result_is_shortened_when_dropping_is_not_enough(self):
+        msgs = self._conversation()
+        core._fit_to_hard_limit(msgs, None, "groq", 2048, 8000)
+        self.assertIn("truncated", msgs[3]["content"])
+
+    def test_it_reports_defeat_when_the_cap_alone_fills_the_limit(self):
+        msgs = self._conversation()
+        self.assertFalse(core._fit_to_hard_limit(msgs, None, "groq", 8000, 8000))
+
+
+class FlattenTest(unittest.TestCase):
+    """The final round, with nothing left in it that looks like a tool session."""
+
+    def _conversation(self):
+        return [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "what is new at school?"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "read_url", "arguments": '{"url": "https://x"}'}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "the page"},
+        ]
+
+    def test_no_tool_calls_survive(self):
+        flat = core.flatten_tool_transcript(self._conversation())
+        self.assertFalse(any(m.get("tool_calls") for m in flat))
+        self.assertFalse(any(m.get("role") == "tool" for m in flat))
+
+    def test_what_was_asked_survives(self):
+        flat = core.flatten_tool_transcript(self._conversation())
+        self.assertEqual(flat[0], {"role": "system", "content": "rules"})
+        self.assertIn("what is new at school?", flat[1]["content"])
+
+    def test_the_material_survives(self):
+        flat = core.flatten_tool_transcript(self._conversation())
+        self.assertTrue(any("the page" in (m.get("content") or "") for m in flat))
+
+    def test_it_ends_by_asking_for_an_answer(self):
+        flat = core.flatten_tool_transcript(self._conversation())
+        self.assertEqual(flat[-1]["role"], "user")
+        self.assertIn("Do not call any tool", flat[-1]["content"])
+
+    def test_the_argument_json_does_not_survive(self):
+        # What the model called and with what is not worth re-sending; the result
+        # is. On a long argument payload this is the whole saving.
+        conv = self._conversation()
+        conv[2]["tool_calls"][0]["function"]["arguments"] = '{"url": "%s"}' % ("https://x/" + "y" * 900)
+        flat = core.flatten_tool_transcript(conv)
+        self.assertFalse(any("yyyy" in (m.get("content") or "") for m in flat))
+        self.assertLess(core.estimate_messages_tokens(flat),
+                        core.estimate_messages_tokens(conv))
 
 
 if __name__ == "__main__":
