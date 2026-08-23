@@ -3930,7 +3930,9 @@ function renderMonitorForm(monitor) {
         <small style="color:var(--text-muted);margin-top:4px;display:block">
           Each selected variable generates its own chart image. Wind, gusts, precipitation,
           probability and cloud cover are drawn as one lane per model with the value printed
-          every 3 hours; wind direction as arrows pointing downwind.
+          every 3 hours; wind direction as arrows pointing downwind. Charts start at the next
+          3-hour mark after the run and cover "Forecast days" × 24 hours from there, in the
+          local time of the location.
         </small>
       </div>
 

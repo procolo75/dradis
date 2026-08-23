@@ -604,7 +604,9 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 | Geopotential 500 hPa | m | Line | All models |
 | Temperature 850 hPa | °C | Line | All models |
 
-**Chart appearance:** 16×5 inch figure at 150 dpi, dark theme (#111 background), five high-contrast colours (blue / red / green / amber / magenta), 2-px line width. Each chart title includes the variable name, location, forecast days, and generation timestamp.
+**Chart appearance:** 16×5 inch figure at 150 dpi, dark theme (#111 background), five high-contrast colours (blue / red / green / amber / magenta), 2-px line width. Each chart title includes the variable name, location, forecast days, and generation timestamp. The x-axis is in the **local time of the location**, with a bright vertical line at midnight and a fainter one at midday, over a dashed grid every 6 hours.
+
+**Forecast window:** Open-Meteo always answers from 00:00 of the current day, so everything before the run is discarded and the series starts at the next 3-hour mark (a run at 10:16 starts at 12:00) — which keeps the labels of the lane charts on round hours, aligned with the ticks and the midnight line. "3 days" therefore means 72 hours ahead of the run, not three calendar days.
 
 **Precipitation, precipitation probability and cloud cover** are sent even when all values are zero, so a lane of zeros communicates "no rain / clear sky." All other bar-type variables are suppressed if no model returns any non-zero value.
 
@@ -617,7 +619,7 @@ Two of them aggregate the 3-hour window rather than sampling one hour out of thr
 | Field | Description |
 |-------|-------------|
 | Location | City name resolved via Open-Meteo geocoding. |
-| Forecast days | Number of days to fetch (1–7, default 3). |
+| Forecast days | Number of days to plot (1–7, default 3), counted **from the moment the monitor runs**, not from midnight. |
 | Weather models | Select one or more models (checkboxes with description). |
 | Variables to plot | Select one or more variables. Each generates a separate chart image sent to Telegram. |
 | Cron | Schedule (e.g. `0 7 * * *` = daily at 07:00). |

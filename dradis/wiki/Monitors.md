@@ -156,11 +156,13 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| Forecast days | 3 | Number of days to fetch (1–7). |
+| Forecast days | 3 | Number of days to plot (1–7), counted from the moment the monitor runs. |
 | Weather models | ECMWF IFS 9km | Select one or more models (checkboxes with description). |
 | Variables to plot | Temperature, Precipitation, Wind | Each selected variable generates one chart image. |
 
 **Precipitation, precipitation probability and cloud cover** are always sent even when all values are zero — so a clear forecast reads as "no rain expected" instead of a chart silently disappearing. UV index is suppressed when all-zero (night or overcast periods).
+
+**Time axis.** The x-axis is in the local time of the location, with a bright line at midnight and a fainter one at midday over a dashed 6-hour grid. The series starts at the first 3-hour mark after the run (10:16 → 12:00) and runs `days × 24` hours from there: Open-Meteo answers from 00:00 of the current day, and the hours already past are dropped rather than plotted.
 
 **Lane charts.** Six variables are drawn as lanes — one horizontal row per model, sampled every 3 h, with the model name on the y-axis instead of a legend. Wind direction uses arrows; cloud cover, precipitation, precipitation probability, wind speed and wind gusts print the **bare number** (the unit lives in the chart title), because several models of overlapping semi-transparent bars were illegible. Zeros are dimmed so real values stand out. Precipitation sums its 3 h window and wind gusts take the peak — sampling one hour in three would have thrown the rest away — and a model that does not carry the variable is left out rather than shown as an empty lane.
 

@@ -23,6 +23,20 @@ What is pinned:
     reads as "no rain expected" rather than "no data".
   · Colour follows the model's position in the selection, not the lane index, so
     dropping a lane does not recolour the models below it.
+
+The axis and the forecast window are pinned here too:
+  · Tick labels carry the LOCAL time of the data. The timestamps are tz-aware and
+    matplotlib places those in UTC, so a locator without a tz labelled the whole
+    axis one or two hours off the values printed under it.
+  · Midnight lines land exactly on the 00:00 tick.
+  · The x-axis is pinned to the data. Neither text nor quiver feeds the autoscaler,
+    so the limits used to come from the midnight lines and everything past the last
+    one was clipped away — eight hours of a 3-day chart starting at midday.
+  · The window starts at the run, not at midnight — Open-Meteo always answers from
+    00:00 of the current day — and is anchored to the 0/3/6/9 grid so the labels of
+    a lane chart stay on round hours.
+  · Clipping cuts the timestamps and every series with the same indices. Cutting
+    only the timestamps would slide every value onto the wrong hour.
 """
 
 import sys
@@ -35,8 +49,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "dradis"))
 try:
     import matplotlib
     matplotlib.use("Agg")
+    import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
-    from monitors.weather_chart import _COLORS, _plot_value_lanes
+    from zoneinfo import ZoneInfo
+    from monitors.weather_chart import (
+        _COLORS, _clip_window, _plot_value_lanes, _window_start,
+    )
 except ModuleNotFoundError as e:          # matplotlib absent outside the add-on image
     raise unittest.SkipTest(str(e))
 
@@ -150,6 +168,108 @@ class LaneRenderingTest(unittest.TestCase):
         drawn = self._draw(data)
         self.assertEqual([t.get_color() for t in drawn], [_COLORS[0], _COLORS[2]])
 
+
+_ROME = ZoneInfo("Europe/Rome")
+
+
+class WindowTest(unittest.TestCase):
+    """The forecast window starts at the run, anchored to the 3-hour grid."""
+
+    def test_start_is_pushed_to_the_next_multiple_of_three(self):
+        for now, expected in [
+            (datetime(2026, 8, 23, 10, 16), datetime(2026, 8, 23, 12, 0)),
+            (datetime(2026, 8, 23, 11, 59), datetime(2026, 8, 23, 12, 0)),
+            (datetime(2026, 8, 23, 12, 0),  datetime(2026, 8, 23, 15, 0)),
+            (datetime(2026, 8, 23, 0, 5),   datetime(2026, 8, 23, 3, 0)),
+        ]:
+            with self.subTest(now=now):
+                self.assertEqual(_window_start(now), expected)
+
+    def test_start_rolls_over_midnight(self):
+        self.assertEqual(_window_start(datetime(2026, 8, 23, 23, 30)),
+                         datetime(2026, 8, 24, 0, 0))
+
+    def test_past_hours_are_dropped(self):
+        times = _hours(24)
+        hourly = {"v": list(range(24))}
+        start = datetime(2026, 8, 23, 12, 0)
+        kept, clipped = _clip_window(times, hourly, start, start + timedelta(days=1))
+        self.assertEqual(kept[0], start)
+        self.assertEqual(clipped["v"][0], 12)
+
+    def test_every_series_is_cut_with_the_same_indices(self):
+        # Cutting only the timestamps would print the 00:00 value under the 12:00 label.
+        times = _hours(24)
+        hourly = {"a": list(range(24)), "b": [x * 10 for x in range(24)]}
+        start = datetime(2026, 8, 23, 6, 0)
+        kept, clipped = _clip_window(times, hourly, start, start + timedelta(hours=3))
+        self.assertEqual([f"{t:%H}" for t in kept], ["06", "07", "08"])
+        self.assertEqual(clipped["a"], [6, 7, 8])
+        self.assertEqual(clipped["b"], [60, 70, 80])
+
+    def test_the_time_key_is_not_carried_into_the_clipped_series(self):
+        times = _hours(6)
+        hourly = {"time": ["x"] * 6, "v": list(range(6))}
+        _, clipped = _clip_window(times, hourly, times[0], times[3])
+        self.assertNotIn("time", clipped)
+
+    def test_a_short_series_does_not_raise(self):
+        # ICON EU stops before the window ends; its series is shorter than the mask.
+        times = _hours(12)
+        kept, clipped = _clip_window(times, {"v": [1, 2, 3]}, times[0], times[-1])
+        self.assertEqual(clipped["v"], [1, 2, 3])
+        self.assertEqual(len(kept), 11)
+
+
+class AxisTest(unittest.TestCase):
+    """Tick labels and midnight lines follow the data, not UTC."""
+
+    def test_tick_labels_carry_local_time(self):
+        # Europe/Rome in August is UTC+2: this is exactly where the axis used to lie.
+        times = [(datetime(2026, 8, 23, 0, 0) + timedelta(hours=i)).replace(tzinfo=_ROME)
+                 for i in range(72)]
+        fig, ax = plt.subplots()
+        try:
+            ax.plot(times, range(72))
+            ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18], tz=_ROME))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m\n%H:%M", tz=_ROME))
+            fig.canvas.draw()
+            for loc, lab in zip(ax.get_xticks(), ax.get_xticklabels()):
+                local = mdates.num2date(loc).astimezone(_ROME)
+                self.assertEqual(lab.get_text(), f"{local:%d/%m}\n{local:%H:%M}")
+        finally:
+            plt.close(fig)
+
+    def test_midnight_line_sits_on_the_midnight_tick(self):
+        midnight = datetime(2026, 8, 24, 0, 0, tzinfo=_ROME)
+        fig, ax = plt.subplots()
+        try:
+            ax.plot([midnight - timedelta(hours=12), midnight + timedelta(hours=12)], [0, 1])
+            ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18], tz=_ROME))
+            fig.canvas.draw()
+            ticks = list(ax.get_xticks())
+            self.assertIn(True, [abs(mdates.date2num(midnight) - t) < 1e-9 for t in ticks])
+        finally:
+            plt.close(fig)
+
+
+    def test_axis_covers_every_hour_of_data(self):
+        # The limits used to be inherited from the midnight lines, dropping the hours
+        # after the last one. A chart starting at midday lost its final two labels.
+        times = [(datetime(2026, 8, 23, 12, 0) + timedelta(hours=i)).replace(tzinfo=_ROME)
+                 for i in range(72)]
+        model_data = {"ecmwf_ifs04": (times, {"v": list(range(72))})}
+        fig, ax = plt.subplots()
+        try:
+            _plot_value_lanes(ax, "v", ["ecmwf_ifs04"], model_data, _NOTE)
+            for t in times:                    # drawn after, as the chart does
+                if t.hour in (0, 12):
+                    ax.axvline(t)
+            lo, hi = ax.get_xlim()
+            outside = [t for t in times if not (lo <= mdates.date2num(t) <= hi)]
+            self.assertEqual(outside, [])
+        finally:
+            plt.close(fig)
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,7 +31,7 @@ and bars ("bar") for what is left. Lanes exist because overlapping multi-model b
 
 import io
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -191,7 +191,10 @@ async def _fetch_model(
         "longitude":     lon,
         "hourly":        ",".join(effective_vars),
         "timezone":      "auto",
-        "forecast_days": days,
+        # One day more than asked for: the API always starts at 00:00 of the current day,
+        # and everything before the run time is clipped away (see _clip_window), so the
+        # last requested day would otherwise come up short by the hours already elapsed.
+        "forecast_days": min(days + 1, 16),
     }
     if cfg["param"]:
         params["models"] = cfg["param"]
@@ -214,10 +217,54 @@ def _parse_times(data: dict, tz: ZoneInfo) -> list[datetime]:
     return result
 
 
+# ── Forecast window ──────────────────────────────────────────────────────────
+
+def _window_start(now: datetime) -> datetime:
+    """First hour worth plotting: the next whole hour, pushed up to the 0/3/6/9… grid.
+
+    Open-Meteo always answers from 00:00 of the current day, so a monitor running at 10:16
+    would otherwise spend a third of a 3-day chart on forecasts that have already happened.
+    Anchoring to the 3-hour grid — rather than starting at 11:00 — keeps the labels of the
+    lane charts, which are drawn every 3 hours, on round times that line up with the
+    0/6/12/18 ticks and with the midnight and midday lines."""
+    start = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    return start + timedelta(hours=(-start.hour) % 3)
+
+
+def _clip_window(times: list[datetime], hourly: dict,
+                 start: datetime, end: datetime) -> tuple[list[datetime], dict]:
+    """Cut times and every hourly series to [start, end) using the same indices.
+
+    The renderers pair times[i] with series[i] by position, so the series have to be cut
+    with exactly the mask the timestamps were cut with — clipping only the timestamps
+    would slide every value onto the wrong hour."""
+    keep = [i for i, t in enumerate(times) if start <= t < end]
+    clipped = {
+        name: [values[i] for i in keep if i < len(values)]
+        for name, values in hourly.items()
+        if name != "time"
+    }
+    return [times[i] for i in keep], clipped
+
+
 # Variables always sent even if all values are zero. precipitation/probability
 # convey "no rain expected"; cloud_cover must render even for a fully clear
 # forecast so a user-selected chart never silently disappears.
 _ALWAYS_SEND = {"precipitation", "precipitation_probability", "cloud_cover"}
+
+
+def _set_time_limits(ax, model_ids: list, model_data: dict) -> None:
+    """Pin the x-axis to the data, plus an hour of margin on each side.
+
+    Neither `ax.text` nor `quiver` feeds the autoscaler, so a lane chart used to take its
+    limits from the midnight lines drawn afterwards — which cut off every hour past the
+    last midnight (eight of them on a 3-day chart starting at midday). The margin keeps
+    the first and last label, centred on their timestamp, from being clipped in half."""
+    span = [t for m in model_ids for t in model_data[m][0]]
+    if not span:
+        return
+    hour = 1 / 24
+    ax.set_xlim(mdates.date2num(min(span)) - hour, mdates.date2num(max(span)) + hour)
 
 
 # ── Wind-direction arrows (compass) ──────────────────────────────────────────
@@ -259,6 +306,7 @@ def _plot_wind_arrows(ax, var_id: str, model_ids: list, model_data: dict) -> Non
     ax.set_ylim(-0.6, n - 0.4)
     ax.text(0.004, 1.015, "arrows point downwind", transform=ax.transAxes,
             fontsize=8, color="#9e9e9e", ha="left", va="bottom")
+    _set_time_limits(ax, model_ids, model_data)
 
 
 # ── Numeric value lanes ──────────────────────────────────────────────────────
@@ -314,6 +362,7 @@ def _plot_value_lanes(ax, var_id: str, model_ids: list, model_data: dict,
     ax.set_ylim(-0.6, n - 0.4)
     ax.text(0.004, 1.015, note, transform=ax.transAxes,
             fontsize=8, color="#9e9e9e", ha="left", va="bottom")
+    _set_time_limits(ax, model_ids, model_data)
 
 
 # ── Single-variable chart ────────────────────────────────────────────────────
@@ -389,18 +438,24 @@ def _generate_single_chart(
                       facecolor="#1e1e1e", edgecolor="#444",
                       labelcolor="#e1e1e1", framealpha=0.85)
 
-    ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18]))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m\n%H:%M"))
+    # The timestamps are tz-aware and matplotlib converts those to UTC to place them.
+    # Without the same tz on the locator and the formatter, the ticks are labelled in UTC
+    # while the data sits at local time — the whole axis then reads one or two hours off.
+    first_times = next(iter(model_data.values()))[0]
+    tz = first_times[0].tzinfo if first_times else None
+
+    ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18], tz=tz))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m\n%H:%M", tz=tz))
     plt.setp(ax.xaxis.get_majorticklabels(), rotation=0, ha="center", fontsize=9, color="#9e9e9e")
 
-    # Midnight vertical lines
-    first_times = next(iter(model_data.values()))[0]
-    seen: set = set()
+    # Midnight and midday lines. Tested on the hour rather than on "first sample of a new
+    # date": the series no longer starts at midnight, so that test would have drawn its
+    # first line at whatever hour the monitor happened to run.
     for t in first_times:
-        d = t.date()
-        if d not in seen:
-            seen.add(d)
-            ax.axvline(t, color="#444", linewidth=0.8, linestyle="-")
+        if t.hour == 0:
+            ax.axvline(t, color="#666", linewidth=1.2, linestyle="-")
+        elif t.hour == 12:
+            ax.axvline(t, color="#444", linewidth=0.9, linestyle="-")
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     title = f"{label}{f' ({unit})' if unit else ''}  ·  {location_name}  ·  {days}d  ·  {now_str}"
@@ -438,15 +493,22 @@ async def run_weather_chart_monitor(monitor: dict, tz_name: str = "UTC") -> list
 
     lat, lon, resolved = await _geocode(location)
 
+    # `days` counts forward from the run, not from midnight: one window shared by every
+    # model and every variable, so all the charts of one run cover the same hours.
+    start = _window_start(datetime.now(tz))
+    end   = start + timedelta(days=days)
+
     model_data: dict = {}
     for model_id in selected_models:
         try:
             data   = await _fetch_model(lat, lon, model_id, selected_vars, days)
             times  = _parse_times(data, tz)
             hourly = data.get("hourly", {})
+            times, hourly = _clip_window(times, hourly, start, end)
             if times:
                 model_data[model_id] = (times, hourly)
-                print(f"[DRADIS] weather_chart: {model_id} OK ({len(times)} h)")
+                print(f"[DRADIS] weather_chart: {model_id} OK ({len(times)} h "
+                      f"from {times[0]:%d/%m %H:%M})")
         except Exception as e:
             print(f"[DRADIS] weather_chart: {model_id} failed — {e}")
 

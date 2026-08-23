@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## [4.7.2] - 2026-08-23
+
+**The axis was labelled in UTC and the data was local.** `_parse_times` stamps every timestamp with the configured timezone, and matplotlib converts tz-aware datetimes to UTC to place them — but the tick locator and formatter were built without a timezone, so they fell back to `rcParams["timezone"]`, which is UTC. Every label on every chart this monitor has ever produced was off by the UTC offset: **two hours in summer, one in winter**. The number sitting under `12:00` was the 14:00 forecast. The midnight lines were drawn at the real local midnight, which on a UTC-labelled axis lands under the `22:00` tick — the lines were right, the labels were not, and that is the mismatch that made this visible.
+
+**And the chart began in the past.** Open-Meteo answers from 00:00 of the current day, always. A monitor running at 10:16 spent ten hours of its width on forecasts that had already happened, and "3 days" meant three calendar days — 72 hours minus whatever had already elapsed.
+
+- **Fix — the timezone reaches the ticks.** `HourLocator(..., tz=tz)` and `DateFormatter(..., tz=tz)`, with `tz` taken from the timestamps themselves rather than threaded through another parameter. Labels now name the hour their values belong to, and the midnight line falls exactly on the `00:00` tick.
+- **Fix — `days` counts from the run.** The window starts at the first 3-hour mark at or after the run (10:16 → 12:00) and covers `days × 24` hours from there; the request asks for one day more to cover it. Anchoring to the 0/3/6/9 grid — rather than starting at 11:00 — keeps the labels of the lane charts, drawn every 3 hours, on round hours aligned with the ticks and the midnight line. Asking beyond a model's horizon is safe: Open-Meteo pads with nulls, which every renderer already skips.
+- **Fix — the lane charts were clipping their own tail.** Neither `ax.text` nor `quiver` feeds the autoscaler, so the x-limits were inherited from the midnight lines drawn afterwards, and everything past the last one was cut off — eight hours, two printed labels, on a 3-day chart starting at midday. Both lane renderers now pin the axis to the data.
+- Midnight is brighter (`#666`, 1.2 px) and midday is drawn too (`#444`, 0.9 px), so neither is mistaken for the dashed 6-hour grid. They are tested on the hour rather than on "first sample of a new date", which would now put a line at whatever time the monitor happened to run.
+
+The clipping helper cuts the timestamps and every hourly series with the same indices — the renderers pair `times[i]` with `series[i]` by position, so cutting only the timestamps would slide every value onto the wrong hour. That is what the new tests are mostly about.
+
+Tests: 607 (was 598). `test_weather_lanes.py` grows the axis and window cases: labels carrying local time under a UTC+2 zone, the midnight line on the midnight tick, the 3-hour anchoring, and no hour of data falling outside the axis.
+
 ## [4.7.1] - 2026-08-23
 
 **Six semi-transparent bars, one hour wide, stacked on the same 72 hours.** That was the cloud cover chart with three models selected: `alpha=0.6` over hourly bars, and the reading you could take from it was a smear. Wind direction had already met this problem and solved it — v3.1.0 gave it one horizontal lane per model with an arrow every 3 hours, because a multi-model 0–360° scatter was an unreadable cloud of points. The fix was sitting in the same file the whole time; it just had `compass` written on it instead of a name that could apply to anything else.
