@@ -141,14 +141,14 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 | Temperature 2m | °C | line | All models |
 | Apparent Temperature | °C | line | All models |
 | Temperature 850 hPa | °C | line | All models |
-| Precipitation | mm | bars | Always sent, even at zero |
-| Precipitation Probability | % | bars | ECMWF IFS + GFS only; always sent |
-| Wind Speed 10m | km/h | line | All models |
-| Wind Gusts 10m | km/h | line | All models |
+| Precipitation | mm | numbers | One lane per model, 3 h totals. Always sent, even at zero |
+| Precipitation Probability | % | numbers | One lane per model. ECMWF IFS + GFS only; always sent |
+| Wind Speed 10m | km/h | numbers | One lane per model |
+| Wind Gusts 10m | km/h | numbers | One lane per model, 3 h peaks |
 | Wind Direction 10m | ° | arrows | One horizontal lane per model, an arrow every 3 h pointing downwind |
 | Humidity 2m | % | line | All models |
 | Sea Level Pressure | hPa | line | All models |
-| Cloud Cover | % | bars | Always sent, even at zero |
+| Cloud Cover | % | numbers | One lane per model. Always sent, even at zero |
 | UV Index | — | bars | GFS only; suppressed if all-zero |
 | Geopotential 500 hPa | m | line | All models |
 
@@ -161,6 +161,8 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 | Variables to plot | Temperature, Precipitation, Wind | Each selected variable generates one chart image. |
 
 **Precipitation, precipitation probability and cloud cover** are always sent even when all values are zero — so a clear forecast reads as "no rain expected" instead of a chart silently disappearing. UV index is suppressed when all-zero (night or overcast periods).
+
+**Lane charts.** Six variables are drawn as lanes — one horizontal row per model, sampled every 3 h, with the model name on the y-axis instead of a legend. Wind direction uses arrows; cloud cover, precipitation, precipitation probability, wind speed and wind gusts print the **bare number** (the unit lives in the chart title), because several models of overlapping semi-transparent bars were illegible. Zeros are dimmed so real values stand out. Precipitation sums its 3 h window and wind gusts take the peak — sampling one hour in three would have thrown the rest away — and a model that does not carry the variable is left out rather than shown as an empty lane.
 
 **Example configuration:**
 

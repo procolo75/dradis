@@ -13,13 +13,20 @@ Supported models (weather_models config param):
 
 Supported variables (chart_variables config param):
   temperature_2m              Temperature 2 m
-  precipitation               Precipitation
-  wind_speed_10m              Wind speed 10 m
-  wind_gusts_10m              Wind gusts 10 m
-  wind_direction_10m          Wind direction 10 m (compass scatter)
+  precipitation               Precipitation (numeric lanes, 3 h totals)
+  wind_speed_10m              Wind speed 10 m (numeric lanes)
+  wind_gusts_10m              Wind gusts 10 m (numeric lanes, 3 h peaks)
+  wind_direction_10m          Wind direction 10 m (arrow lanes)
   relative_humidity_2m        Relative humidity 2 m
   geopotential_height_500hPa  Geopotential 500 hPa
   temperature_850hPa          Temperature 850 hPa
+  cloud_cover                 Cloud cover (numeric lanes)
+  precipitation_probability   Precipitation probability (numeric lanes)
+
+Three rendering styles, picked per variable in VARIABLES: a line plot by default, one
+horizontal lane per model carrying either arrows ("compass") or printed values ("lanes"),
+and bars ("bar") for what is left. Lanes exist because overlapping multi-model bars and
+0-360 degree scatters were unreadable.
 """
 
 import io
@@ -77,19 +84,25 @@ VARIABLES = {
         "bar":   False,
     },
     "precipitation": {
-        "label": "Precipitation",
-        "unit":  "mm",
-        "bar":   True,
+        "label":     "Precipitation",
+        "unit":      "mm",
+        "bar":       False,
+        "lanes":     True,
+        "decimals":  1,      # millimetre totals are fractional; rounding would zero them
+        "aggregate": "sum",  # hourly rainfall accumulates: sample and two thirds vanish
     },
     "wind_speed_10m": {
         "label": "Wind 10m",
         "unit":  "km/h",
         "bar":   False,
+        "lanes": True,
     },
     "wind_gusts_10m": {
-        "label": "Wind Gusts 10m",
-        "unit":  "km/h",
-        "bar":   False,
+        "label":     "Wind Gusts 10m",
+        "unit":      "km/h",
+        "bar":       False,
+        "lanes":     True,
+        "aggregate": "max",  # a gust chart exists to show the peak, not a spot reading
     },
     "wind_direction_10m": {
         "label":   "Wind Direction 10m",
@@ -120,7 +133,8 @@ VARIABLES = {
     "precipitation_probability": {
         "label": "Precip. Probability",
         "unit":  "%",
-        "bar":   True,
+        "bar":   False,
+        "lanes": True,
     },
     "pressure_msl": {
         "label": "Sea Level Pressure",
@@ -130,7 +144,8 @@ VARIABLES = {
     "cloud_cover": {
         "label": "Cloud Cover",
         "unit":  "%",
-        "bar":   True,
+        "bar":   False,
+        "lanes": True,   # rendered as per-model numeric lanes (see _plot_value_lanes)
     },
     "uv_index": {
         "label": "UV Index",
@@ -200,8 +215,8 @@ def _parse_times(data: dict, tz: ZoneInfo) -> list[datetime]:
 
 
 # Variables always sent even if all values are zero. precipitation/probability
-# convey "no rain expected"; cloud_cover (a bar var) must render even for a fully
-# clear forecast so a user-selected chart never silently disappears.
+# convey "no rain expected"; cloud_cover must render even for a fully clear
+# forecast so a user-selected chart never silently disappears.
 _ALWAYS_SEND = {"precipitation", "precipitation_probability", "cloud_cover"}
 
 
@@ -246,6 +261,61 @@ def _plot_wind_arrows(ax, var_id: str, model_ids: list, model_data: dict) -> Non
             fontsize=8, color="#9e9e9e", ha="left", va="bottom")
 
 
+# ── Numeric value lanes ──────────────────────────────────────────────────────
+
+def _plot_value_lanes(ax, var_id: str, model_ids: list, model_data: dict,
+                      note: str, decimals: int = 0, aggregate: str | None = None) -> None:
+    """Render a variable as one horizontal lane per model, printing the value every few
+    hours instead of drawing bars or lines. Multi-model bars overlapped into an unreadable
+    block; the numbers stay comparable model-by-model at a glance. The unit is carried by
+    the chart title and the note, so the values are printed bare.
+
+    Sampling one hour in three suits variables that describe a state (cloud cover, wind
+    direction). It does not suit rainfall, which accumulates — two thirds of it would be
+    skipped — nor gusts, whose point is the peak. Those pass aggregate="sum" / "max" and
+    each label then covers the whole window."""
+    step = 3  # hours between labels, same cadence as the wind lanes
+    # Colour by position in the model selection, not by lane, so a model keeps the same
+    # colour across every chart even when a lane below it is dropped.
+    colors = {m: _COLORS[i % len(_COLORS)] for i, m in enumerate(model_ids)}
+    # Models that do not carry this variable (see MODELS[...]["exclude"]) would leave a
+    # labelled but empty lane, which reads as "no rain expected" rather than "no data".
+    model_ids = [m for m in model_ids if model_data[m][1].get(var_id)]
+    n = len(model_ids)
+    # A 3-day lane holds ~24 labels with room to spare; a 7-day one holds ~56 and
+    # the three-digit values start touching. Size the text to the longest lane.
+    longest = max((len(model_data[m][0]) for m in model_ids), default=0)
+    labels = longest // step
+    fontsize = 13 if labels <= 28 else 10.5 if labels <= 42 else 8.5
+    for lane, model_id in enumerate(model_ids):
+        times, hourly = model_data[model_id]
+        raw = hourly[var_id]
+        color = colors[model_id]
+        end = min(len(times), len(raw))
+        for i in range(0, end, step):
+            if aggregate:
+                window = [float(x) for x in raw[i:min(i + step, end)] if x is not None]
+                if not window:
+                    continue
+                v = sum(window) if aggregate == "sum" else max(window)
+            elif raw[i] is None:
+                continue
+            else:
+                v = float(raw[i])
+            # A bare "0" reads faster than "0.0", and dimming it keeps a mostly-dry
+            # rain lane from drowning its few real values in a row of zeros.
+            text = "0" if v == 0 else f"{v:.{decimals}f}"
+            ax.text(mdates.date2num(times[i]), lane, text,
+                    color="#555555" if v == 0 else color,
+                    fontsize=fontsize, ha="center", va="center", clip_on=True)
+    ax.xaxis_date()
+    ax.set_yticks(range(n))
+    ax.set_yticklabels([MODELS.get(m, {}).get("label", m) for m in model_ids])
+    ax.set_ylim(-0.6, n - 0.4)
+    ax.text(0.004, 1.015, note, transform=ax.transAxes,
+            fontsize=8, color="#9e9e9e", ha="left", va="bottom")
+
+
 # ── Single-variable chart ────────────────────────────────────────────────────
 
 def _generate_single_chart(
@@ -268,9 +338,21 @@ def _generate_single_chart(
 
     model_ids = list(model_data.keys())
 
+    # Both lane renderers label their y-ticks with model names, so they need
+    # neither a y-axis label nor a legend.
+    lane_mode = vinfo.get("compass") or vinfo.get("lanes")
+
     if vinfo.get("compass"):
         # Wind direction: per-model arrow lanes (unreadable as a multi-model scatter).
         _plot_wind_arrows(ax, var_id, model_ids, model_data)
+    elif vinfo.get("lanes"):
+        # Per-model numeric lanes: readable where overlapping bars or lines were not.
+        aggregate = vinfo.get("aggregate")
+        note = f"{label.lower()} in {unit}" if unit else label.lower()
+        if aggregate:
+            note += ", 3h total" if aggregate == "sum" else ", 3h peak"
+        _plot_value_lanes(ax, var_id, model_ids, model_data, note,
+                          vinfo.get("decimals", 0), aggregate)
     else:
         for mi, model_id in enumerate(model_ids):
             times, hourly = model_data[model_id]
@@ -296,9 +378,8 @@ def _generate_single_chart(
         if unit == "%":
             ax.set_ylim(0, 100)
 
-    # Value charts get a y-axis label + model legend; the compass chart instead
-    # labels its y-ticks with model names (set in _plot_wind_arrows) and needs neither.
-    if not vinfo.get("compass"):
+    # Value charts get a y-axis label + model legend; the lane charts do not.
+    if not lane_mode:
         ylabel = f"{label} ({unit})" if unit else label
         ax.set_ylabel(ylabel, color="#9e9e9e", fontsize=10)
 

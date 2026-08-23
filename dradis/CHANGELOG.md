@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## [4.7.1] - 2026-08-23
+
+**Six semi-transparent bars, one hour wide, stacked on the same 72 hours.** That was the cloud cover chart with three models selected: `alpha=0.6` over hourly bars, and the reading you could take from it was a smear. Wind direction had already met this problem and solved it — v3.1.0 gave it one horizontal lane per model with an arrow every 3 hours, because a multi-model 0–360° scatter was an unreadable cloud of points. The fix was sitting in the same file the whole time; it just had `compass` written on it instead of a name that could apply to anything else.
+
+**So the lane is now a rendering style, not a special case for one variable.** `VARIABLES` grew a `lanes` flag alongside `bar` and `compass`, and six variables use lanes: wind direction keeps its arrows, while cloud cover, precipitation, precipitation probability, wind speed and wind gusts print the **value as a bare number** — no `%`, no `mm`, the unit is already in the chart title and repeated in the corner note.
+
+- **Feat — numeric lanes.** `_plot_value_lanes` draws one row per model, labelled on the y-axis with the model name, one value every 3 hours — the same cadence the arrows use. Font size follows the density: 13 pt at 3 days, 8.5 pt at 7, where a lane holds ~56 labels and three digits start touching.
+- **Fix — the sampling that would have thrown away the rain.** Reading one hour in three is right for a variable that describes a state, and wrong for one that accumulates: a shower falling entirely at 13:00 does not exist between a 12:00 and a 15:00 reading, and two thirds of the rain goes with it. **Precipitation now sums its 3-hour window and wind gusts take the peak** (a gust chart exists to show the maximum, not a spot reading). The others still sample — summing three hours of cloud cover would read 300.
+- **Zeros are dimmed.** A dry week is a lane of zeros, and at full brightness the two numbers that matter drown in it. Zero also prints as a bare `0` rather than `0.0`, decimals or not.
+- **A model that does not carry the variable is dropped from that chart.** ICON EU has no precipitation probability; a labelled but empty row reads as "no rain expected" when it means "no data". Colour is taken from the model's position in the selection rather than from the lane index, so removing that row does not recolour the models under it — and a model keeps one colour across every chart, which is what the line charts already did.
+- Precipitation, precipitation probability and cloud cover are still always sent, even all-zero. Only the shape of the "nothing happening" answer changed: a row of dim zeros instead of an empty bar chart.
+
+Tests: 598 (was 587). New file `test_weather_lanes.py` (11) — this monitor had no tests at all. No network: the renderer is handed the `{model_id: (times, hourly)}` structure the runner builds and the drawn text is read back off the axes, which is what pins the 13:00 shower surviving.
+
 ## [4.7.0] - 2026-08-23
 
 **Two numbers in a dict decided when this monitor was allowed to speak.** `_ALL_WINDOWS = {"55-65": (55,65), "75-81": (75,81)}` — the minute windows were not configuration, they were the source. The Web UI's two checkboxes only chose *which of the two* to use; wanting 50–60, or 80–88, meant editing Python. And there was one odds cap for both, which is why it gated only the first window: applying a single number to two very different moments of a match would have been wrong in one of them, so v4.4.4 made it wrong in neither by making it apply to one. That was the right call for one cap. It is the wrong shape for two.

@@ -592,21 +592,25 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 |----------|------|-----------|-------|
 | Temperature 2m | °C | Line | All models |
 | Apparent Temperature | °C | Line | All models |
-| Precipitation | mm | Bar | Always sent (shows 0 if no rain expected) |
-| Precipitation Probability | % | Bar | ECMWF IFS + GFS only; always sent |
-| Wind Speed 10m | km/h | Line | All models |
-| Wind Gusts 10m | km/h | Line | All models |
+| Precipitation | mm | Numbers | One lane per model; 3-hour totals. Always sent (0 if no rain expected) |
+| Precipitation Probability | % | Numbers | One lane per model. ECMWF IFS + GFS only; always sent |
+| Wind Speed 10m | km/h | Numbers | One lane per model |
+| Wind Gusts 10m | km/h | Numbers | One lane per model; 3-hour peaks |
 | Wind Direction 10m | ° | Arrows | One lane per model; arrows point downwind |
 | Humidity 2m | % | Line | All models |
 | Sea Level Pressure | hPa | Line | All models |
-| Cloud Cover | % | Bar | Always sent (0 if clear sky) |
+| Cloud Cover | % | Numbers | One lane per model. Always sent (0 if clear sky) |
 | UV Index | — | Bar | GFS only; suppressed if all-zero |
 | Geopotential 500 hPa | m | Line | All models |
 | Temperature 850 hPa | °C | Line | All models |
 
 **Chart appearance:** 16×5 inch figure at 150 dpi, dark theme (#111 background), five high-contrast colours (blue / red / green / amber / magenta), 2-px line width. Each chart title includes the variable name, location, forecast days, and generation timestamp.
 
-**Precipitation, precipitation probability and cloud cover** are sent even when all values are zero, so the absence of bars communicates "no rain / clear sky." All other bar-type variables are suppressed if no model returns any non-zero value. **Wind direction** is drawn as arrow lanes — one horizontal lane per model, with a uniform arrow every 3 hours pointing downwind (the way the wind blows toward). This avoids both the compass wraparound problem (359°→0°) of a line and the unreadable overlapping-point cloud a multi-model 0–360° scatter produces.
+**Precipitation, precipitation probability and cloud cover** are sent even when all values are zero, so a lane of zeros communicates "no rain / clear sky." All other bar-type variables are suppressed if no model returns any non-zero value.
+
+**Lane charts.** Wind direction, cloud cover, precipitation, precipitation probability, wind speed and wind gusts are drawn as **lanes** — one horizontal lane per model, sampled every 3 hours, labelled on the y-axis with the model name instead of a legend. Wind direction shows a uniform arrow pointing downwind (the way the wind blows toward), which avoids both the compass wraparound problem (359°→0°) of a line and the unreadable point cloud a multi-model 0–360° scatter produces. The other five print the **value as a bare number** (the unit is in the chart title), because overlapping semi-transparent bars from several models were illegible. Zero values are dimmed so the real ones stand out in a mostly dry lane.
+
+Two of them aggregate the 3-hour window rather than sampling one hour out of three, which would silently drop data: **precipitation** shows the window **total** (rainfall accumulates), **wind gusts** the window **peak** (a gust chart exists to show the maximum). Models that do not carry a variable are omitted from that chart instead of showing an empty lane.
 
 **Configuration fields:**
 
