@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import aiomqtt
-import httpx
 from fastapi import APIRouter, HTTPException, Query
 
+from geocode import search as geocode_search
 import web.store as _store
 from web.store import (
     _validate_cron_expr,
@@ -107,26 +107,18 @@ async def geocode_location(q: str = ""):
     if not q.strip():
         raise HTTPException(status_code=400, detail="Query is required")
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.get(
-                "https://geocoding-api.open-meteo.com/v1/search",
-                params={"name": q, "count": 1, "language": "it", "format": "json"},
-            )
-        results = resp.json().get("results", [])
-        if not results:
-            raise HTTPException(status_code=404, detail=f"Location not found: {q!r}")
-        r = results[0]
-        return {
-            "name":         r.get("name", q),
-            "country":      r.get("country", ""),
-            "country_code": r.get("country_code", ""),
-            "latitude":     r["latitude"],
-            "longitude":    r["longitude"],
-        }
-    except HTTPException:
-        raise
+        r = await geocode_search(q, timeout=8)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Location not found: {q!r}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "name":         r.get("name", q),
+        "country":      r.get("country", ""),
+        "country_code": r.get("country_code", ""),
+        "latitude":     r["latitude"],
+        "longitude":    r["longitude"],
+    }
 
 
 # ── Live Monitors ─────────────────────────────────────────────────────────────

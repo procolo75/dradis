@@ -35,6 +35,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
+from geocode import geocode
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -156,21 +158,6 @@ VARIABLES = {
 
 # High-contrast colors, hue-spaced, bright on dark background
 _COLORS = ["#29b6f6", "#ff5252", "#69f0ae", "#ffd740", "#e040fb", "#ff6d00", "#40c4ff"]
-
-
-# ── Geocoding ────────────────────────────────────────────────────────────────
-
-async def _geocode(location: str) -> tuple[float, float, str]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": location, "count": 1, "language": "en", "format": "json"},
-        )
-    results = resp.json().get("results", [])
-    if not results:
-        raise ValueError(f"Location not found: {location!r}")
-    r = results[0]
-    return r["latitude"], r["longitude"], r.get("name", location)
 
 
 # ── Fetch data for a single model ────────────────────────────────────────────
@@ -491,7 +478,7 @@ async def run_weather_chart_monitor(monitor: dict, tz_name: str = "UTC") -> list
     except ZoneInfoNotFoundError:
         tz = ZoneInfo("UTC")
 
-    lat, lon, resolved = await _geocode(location)
+    lat, lon, resolved = await geocode(location)
 
     # `days` counts forward from the run, not from midnight: one window shared by every
     # model and every variable, so all the charts of one run cover the same hours.

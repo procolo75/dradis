@@ -113,6 +113,7 @@ It is sent as its own message, ahead of the reply, and unlike the `🔢`/`🔧` 
 | `web/routes/agents.py` | FastAPI routes: agents CRUD, model listing, speed test, voice |
 | `web/routes/tasks.py` | FastAPI routes: task CRUD, cron validation, manual run |
 | `web/routes/monitors.py` | FastAPI routes: scheduled monitor, live monitor, HA monitor CRUD; geocode; HA test/discover |
+| `geocode.py` | Place name → coordinates, shared by every monitor, the weather tool and the UI hint |
 | `web/routes/tools.py` | FastAPI routes: Google OAuth callbacks, web search test, weather test |
 | `web/routes/bots.py` | FastAPI routes: extra Telegram bot CRUD, test-connection endpoint |
 | `web/routes/positions.py` | FastAPI routes: named position CRUD, coordinate-entity discovery, connection test |
@@ -526,7 +527,7 @@ Click `+` in the **Scheduled Monitors** sidebar header to create a new monitor. 
 | Enabled | Toggle — a green dot in the sidebar shows the monitor is active. |
 | Monitor type | Type of data source: **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts** (all Open-Meteo, no API key required), **🌍 Seismic report** (INGV GOSSIP), **🚨 Civil Protection alert** (Centro Funzionale Campania, today + tomorrow), or **☁️ Google Drive Backup**. |
 | Response language | Language of the Telegram report: 🇮🇹 **Italiano** (default) or 🇬🇧 **English**. |
-| Location | City name or geographic description (e.g. *Bacoli*, *Naples*, *Rome*). Resolved to coordinates via Open-Meteo geocoding. A live hint shows the resolved name and coordinates as you type. |
+| Location | City name or geographic description (e.g. *Bacoli*, *Napoli*, *Roma*). Resolved to coordinates via Open-Meteo geocoding, keeping the most populous match; add a country to disambiguate (*Springfield, US*). A live hint shows the resolved name and coordinates as you type. |
 | Forecast days | *(Thunderstorm only)* Number of days to fetch (1–7, default 2). |
 | Hours ahead | *(Rain alert only)* How many hours ahead to check for rain (1–24, default 2). |
 | Alert from level | *(Civil Protection alert only)* Minimum zone level, on either day, that triggers a message: 🟡 Giallo (default), 🟠 Arancione, 🔴 Rosso, or 🟢 Sempre. |
@@ -618,7 +619,7 @@ Two of them aggregate the 3-hour window rather than sampling one hour out of thr
 
 | Field | Description |
 |-------|-------------|
-| Location | City name resolved via Open-Meteo geocoding. |
+| Location | City name resolved via Open-Meteo geocoding — the most populous match wins. Add a country to disambiguate: *Springfield, US*. |
 | Forecast days | Number of days to plot (1–7, default 3), counted **from the moment the monitor runs**, not from midnight. |
 | Weather models | Select one or more models (checkboxes with description). |
 | Variables to plot | Select one or more variables. Each generates a separate chart image sent to Telegram. |
@@ -650,7 +651,7 @@ When rain is detected, the Telegram message lists every 15-minute slot in the wi
 
 | Field | Description |
 |---|---|
-| Location | City name resolved via Open-Meteo geocoding. |
+| Location | City name resolved via Open-Meteo geocoding — the most populous match wins. Add a country to disambiguate: *Springfield, US*. |
 | Hours ahead | How far ahead to look for rain (1–24, default 2). |
 | Language | 🇮🇹 Italiano / 🇬🇧 English. |
 | Cron | How often to check (e.g. `0 * * * *` = every hour). |

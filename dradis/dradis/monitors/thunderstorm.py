@@ -26,6 +26,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from geocode import geocode
+
 # Default calibration constants (Mediterranean). Per-monitor overrides come from the saved config.
 _CAPE_SAT_DEFAULT = 1200.0
 _LI_SAT_DEFAULT   =    5.0
@@ -109,19 +111,6 @@ def _band_mean(hourly: dict, field: str, hour_range: range, base: int) -> float 
         if base + h < len(vals) and vals[base + h] is not None
     ]
     return round(statistics.mean(bucket), 2) if bucket else None
-
-
-async def _geocode(location: str) -> tuple[float, float, str]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": location, "count": 1, "language": "it", "format": "json"},
-        )
-    results = resp.json().get("results", [])
-    if not results:
-        raise ValueError(f"Location not found: {location!r}")
-    r = results[0]
-    return r["latitude"], r["longitude"], r.get("name", location)
 
 
 async def _fetch_instability(lat: float, lon: float, days: int) -> dict:
@@ -211,7 +200,7 @@ async def run_thunderstorm_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     cape_sat = float(monitor.get("cape_sat", _CAPE_SAT_DEFAULT))
     li_sat   = float(monitor.get("li_sat",   _LI_SAT_DEFAULT))
     cin_supp = float(monitor.get("cin_supp", _CIN_SUPP_DEFAULT))
-    lat, lon, resolved = await _geocode(location)
+    lat, lon, resolved = await geocode(location)
     data = await _fetch_instability(lat, lon, days)
     hourly = data.get("hourly", {})
     return _format_report(resolved, lat, lon, days, hourly, tz_name, lang, cape_sat, li_sat, cin_supp)

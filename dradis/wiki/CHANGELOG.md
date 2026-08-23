@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## [4.7.3] - 2026-08-23
+
+**"Napoli" resolved to a village in Gambia, and the weather charts were drawn for it.** 3000 km from the city, in a place ICON EU and ARPAE do not cover — which is why those two models answered 400 and quietly dropped out of every chart for that location. Two independent mistakes, repeated across five copies of the same twelve lines:
+
+**The language decides what can be found at all.** The geocoding endpoint searches localized name tables. `weather_chart.py` and the weather tool asked in English, and the English tables index the city as *Naples* — "Napoli" does not match it there, at any rank: the real city is not even in the first ten results. The first hit is the Gambian village. The three monitors that asked in Italian resolved it correctly all along, which is also why the UI's live hint showed the right coordinates while the chart used the wrong ones.
+
+**`count=1` hands the choice to the API's own ranking**, which is not population. Even in the right language that is a coin toss between a city of 909 000 and a hamlet named Napoli-Nola.
+
+- **Fix — one `geocode.py`, used by all five callers.** The three scheduled monitors, the LLM weather tool and the Web UI's location hint now share it, so a fix lands everywhere instead of in one of five places. Italian for everyone (it carries the local names *and* the English aliases, so "Napoli", "Naples", "Rome" and "London" all resolve), ten results asked for, most populous match kept. An unknown population counts as zero, which leaves the API's order in charge only when nothing has one.
+- **Feat — a trailing country disambiguates.** `Springfield, US`, `Napoli, Gambia` — matched on the country code or the country name, case-insensitively. A country nothing matches is an error rather than a silent fallback to somewhere else entirely, which is the failure mode this release exists to remove.
+- Every resolution is logged: `geocode: 'Napoli' → Napoli, IT (40.8522, 14.2681)`. This bug was invisible for as long as it was because nothing ever said where the monitor had decided to look.
+
+Checked against the real API: Napoli, Naples, Roma, Rome, Firenze, Milano, London, Bacoli and Pozzuoli all resolve to the intended place, and Bacoli still lands on the coordinates the docs have always shown. A 4-model chart for Napoli now includes ICON EU and ARPAE, which had been silently failing there.
+
+Tests: 619 (was 607). New file `test_geocode.py` (12), no network — `_fetch` is swapped for the records the API really returns for "Napoli", including the Gambian village that used to win.
+
 ## [4.7.2] - 2026-08-23
 
 **The axis was labelled in UTC and the data was local.** `_parse_times` stamps every timestamp with the configured timezone, and matplotlib converts tz-aware datetimes to UTC to place them — but the tick locator and formatter were built without a timezone, so they fell back to `rcParams["timezone"]`, which is UTC. Every label on every chart this monitor has ever produced was off by the UTC offset: **two hours in summer, one in winter**. The number sitting under `12:00` was the 14:00 forecast. The midnight lines were drawn at the real local midnight, which on a UTC-labelled axis lands under the `22:00` tick — the lines were right, the labels were not, and that is the mismatch that made this visible.

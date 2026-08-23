@@ -1,4 +1,6 @@
 import httpx
+
+from geocode import geocode
 import statistics
 from datetime import date as _date
 
@@ -63,16 +65,10 @@ async def fetch_weather(location: str, days: int = 7) -> str:
         days: number of forecast days (1-16, default 7).
     """
     days = max(1, min(days, 16))
-    async with httpx.AsyncClient(timeout=10) as client:
-        geo = await client.get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": location, "count": 1, "language": "en", "format": "json"},
-        )
-    results = geo.json().get("results", [])
-    if not results:
+    try:
+        lat, lon, name = await geocode(location, timeout=10)
+    except ValueError:
         return f"Location '{location}' not found. Do not invent weather data."
-    r = results[0]
-    lat, lon, name = r["latitude"], r["longitude"], r.get("name", location)
 
     params = {
         "latitude": lat,

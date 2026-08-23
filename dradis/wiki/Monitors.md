@@ -21,7 +21,7 @@ Click `+` in the **Scheduled Monitors** sidebar header.
 | Enabled | Green dot in sidebar when active. |
 | Monitor type | **⛈️ Thunderstorm risk**, **🌧️ Rain alert**, **📊 Weather Charts**, **🌍 Seismic report**, **🚨 Civil Protection alert** (Campania, today + tomorrow), or **☁️ Google Drive Backup**. |
 | Response language | 🇮🇹 Italiano (default) or 🇬🇧 English. |
-| Location | City name — resolved to coordinates via Open-Meteo geocoding. Live hint shows coordinates as you type. Not used for seismic type (uses area checkboxes instead). |
+| Location | City name — resolved to coordinates via Open-Meteo geocoding, keeping the **most populous match**. Add a country when a name is ambiguous: `Springfield, US`, `Napoli, GM`. Live hint shows coordinates as you type. Not used for seismic type (uses area checkboxes instead). |
 | Cron expression | 5-part cron with live validation and next-fire preview. |
 
 ---

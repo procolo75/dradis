@@ -12,21 +12,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-_GEOCODE_URL  = "https://geocoding-api.open-meteo.com/v1/search"
+from geocode import geocode
+
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-
-
-async def _geocode(location: str) -> tuple[float, float, str]:
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            _GEOCODE_URL,
-            params={"name": location, "count": 1, "language": "it", "format": "json"},
-        )
-    results = resp.json().get("results", [])
-    if not results:
-        raise ValueError(f"Location not found: {location!r}")
-    r = results[0]
-    return r["latitude"], r["longitude"], r.get("name", location)
 
 
 async def _fetch_rain(lat: float, lon: float, tz_name: str) -> dict:
@@ -59,7 +47,7 @@ async def run_rain_monitor(monitor: dict, tz_name: str = "UTC") -> str:
     except ZoneInfoNotFoundError:
         tz = ZoneInfo("UTC")
 
-    lat, lon, resolved = await _geocode(location)
+    lat, lon, resolved = await geocode(location)
     data = await _fetch_rain(lat, lon, tz_name)
 
     m15    = data.get("minutely_15", {})
