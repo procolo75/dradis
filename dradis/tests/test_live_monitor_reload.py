@@ -200,7 +200,10 @@ class ReloadIsolationTest(unittest.TestCase):
 
 def football(**overrides) -> dict:
     cfg = {"id": "f1", "name": "Serie A", "type": "football_betting",
-           "enabled": True, "windows": ["55-65"], "max_odds": 2.0,
+           "enabled": True, "windows": ["early", "late"],
+           "window_early_start": 55, "window_early_end": 65,
+           "window_early_max_odds": 2.0, "window_late_start": 75,
+           "window_late_end": 81, "window_late_max_odds": 0.0,
            "quiet_start": "", "quiet_end": "", "language": "it",
            "telegram_bot_id": "default"}
     cfg.update(overrides)
@@ -262,11 +265,13 @@ class FootballReloadTest(unittest.IsolatedAsyncioTestCase):
     async def test_its_own_change_does_restart_it(self):
         self.reload(football())
         first = self.manager._monitors["f1"]
-        self.reload(football(max_odds=3.5))
+        self.reload(football(window_late_max_odds=3.5))
         self.assertIsNot(self.manager._monitors["f1"], first)
 
     async def test_any_field_counts_as_a_change(self):
-        for field, value in (("windows", ["70-80"]), ("quiet_start", "23:00"),
+        for field, value in (("windows", ["early"]), ("window_early_start", 50),
+                             ("window_late_end", 90),
+                             ("quiet_start", "23:00"),
                              ("name", "Renamed"), ("telegram_bot_id", "other")):
             with self.subTest(field=field):
                 manager = FootballMonitorManager()

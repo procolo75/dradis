@@ -22,28 +22,63 @@ router = APIRouter()
 _FOOTBALL_PROVIDERS = {"provider1", "provider2", "provider3", "provider4"}
 
 
+def _football_windows(windows: str, early_start: int, early_end: int, early_max_odds: float,
+                      late_start: int, late_end: int, late_max_odds: float):
+    """The window list the Test API table is computed against.
+
+    Built from query parameters and handed to the monitor's own `_window_specs`,
+    so the table cannot answer with a different rule than the poll would.
+    """
+    from live_monitors.football import MINUTE_CEILING, MINUTE_FLOOR, _window_specs
+    for label, start, end in (("early", early_start, early_end), ("late", late_start, late_end)):
+        if not MINUTE_FLOOR <= start < end <= MINUTE_CEILING:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {label} window {start}-{end}: expected {MINUTE_FLOOR} ≤ start < end ≤ {MINUTE_CEILING}",
+            )
+    if early_max_odds < 0 or late_max_odds < 0:
+        raise HTTPException(status_code=400, detail="Maximum odds cannot be negative (0 = no cap)")
+    return _window_specs({
+        "windows":               [w for w in windows.split(",") if w.strip()],
+        "window_early_start":    early_start,
+        "window_early_end":      early_end,
+        "window_early_max_odds": early_max_odds,
+        "window_late_start":     late_start,
+        "window_late_end":       late_end,
+        "window_late_max_odds":  late_max_odds,
+    })
+
+
 @router.get("/api/football/inplaying")
-async def football_inplaying(max_odds: float = 2.0):
+async def football_inplaying(windows: str = "early,late",
+                             early_start: int = 55, early_end: int = 65, early_max_odds: float = 2.0,
+                             late_start: int = 75, late_end: int = 81, late_max_odds: float = 0.0):
     import bot.state as _state
     if not _state.RAPIDAPI_FOOTBALL_KEY:
         raise HTTPException(status_code=400, detail="rapidapi_football_key not configured in add-on settings")
+    specs = _football_windows(windows, early_start, early_end, early_max_odds,
+                              late_start, late_end, late_max_odds)
     try:
         from live_monitors.football import fetch_inplaying_data
-        matches = await fetch_inplaying_data(max_odds)
+        matches = await fetch_inplaying_data(specs)
         return {"count": len(matches), "matches": matches}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/api/football/provider/{provider_name}")
-async def football_provider_test(provider_name: str, max_odds: float = 2.0):
+async def football_provider_test(provider_name: str, windows: str = "early,late",
+                                 early_start: int = 55, early_end: int = 65, early_max_odds: float = 2.0,
+                                 late_start: int = 75, late_end: int = 81, late_max_odds: float = 0.0):
     import bot.state as _state
     if provider_name not in _FOOTBALL_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_name}")
     if not _state.RAPIDAPI_FOOTBALL_KEY:
         raise HTTPException(status_code=400, detail="rapidapi_football_key not configured in add-on settings")
+    specs = _football_windows(windows, early_start, early_end, early_max_odds,
+                              late_start, late_end, late_max_odds)
     from live_monitors.football import fetch_provider_data
-    return await fetch_provider_data(provider_name, max_odds)
+    return await fetch_provider_data(provider_name, specs)
 
 
 # ── Web Search ────────────────────────────────────────────────────────────────

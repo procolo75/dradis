@@ -4221,8 +4221,23 @@ function renderLiveMonitorForm(monitor) {
     storm_front:      "Watches real-time lightning from Blitzortung and tells you whether a storm is heading at you or going past. It speaks a few times as the storm closes in, then stops — one storm can never produce more than a handful of messages. Each alert comes with a radar picture. No cron, no LLM, no token cost.",
     rain_front:       "Watches the national weather radar (Protezione Civile, free, no API key) and tells you when rain will reach you — and, when the radar can measure which way it is drifting, in how many minutes and by how much it will miss. Italy only. Same one-message-per-step guarantee as the storm front. Each alert carries the actual radar picture. No cron, no LLM, no token cost.",
     seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
-    football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's AND below the configured maximum odds, in the configured minute windows (2nd half, 1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
+    football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's AND below that window's maximum odds, inside two configurable 2nd-half minute windows (1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };
+
+  // The two football windows. Their ids are stable; their minutes and their odds
+  // caps are configuration. Monitors saved before the minutes were settable
+  // stored the bounds themselves as the id, so those labels are read back here
+  // the same way live_monitors/football.py does it.
+  const _LM_WINDOW_LEGACY_IDS = { "55-65": "early", "75-81": "late" };
+  const _LM_WINDOWS = [
+    { id: "early", label: "First window",  start: 55, end: 65, odds: 2.0 },
+    { id: "late",  label: "Second window", start: 75, end: 81, odds: 0.0 },
+  ];
+  const lmEnabledWindows = (monitor.windows || ["early", "late"])
+    .map(w => _LM_WINDOW_LEGACY_IDS[w] || w);
+  // 0 means "no maximum", so ?? and not || — a deliberate 0 must survive.
+  const lmWindowOdds = w => monitor[`window_${w.id}_max_odds`]
+    ?? (w.id === "early" ? (monitor.max_odds ?? w.odds) : w.odds);
 
   panel.innerHTML = `
     <div class="form-card">
@@ -4433,16 +4448,24 @@ function renderLiveMonitorForm(monitor) {
 
       <div class="form-group" id="lm-windows-block">
         <label>Minute windows (2nd half)</label>
-        <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
-          <label><input type="checkbox" class="lm-window" value="55-65" ${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "checked" : ""}> 55'–65'</label>
-          <label><input type="checkbox" class="lm-window" value="75-81" ${(monitor.windows||["55-65","75-81"]).includes("75-81") ? "checked" : ""}> 75'–81'</label>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
+          ${_LM_WINDOWS.map(w => {
+            const on    = lmEnabledWindows.includes(w.id);
+            const start = monitor[`window_${w.id}_start`] ?? w.start;
+            const end   = monitor[`window_${w.id}_end`]   ?? w.end;
+            const odds  = lmWindowOdds(w);
+            return `
+          <div class="lm-window-row" data-window="${w.id}" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap${on ? "" : ";opacity:0.5"}">
+            <label style="display:flex;align-items:center;gap:6px;min-width:150px;cursor:pointer">
+              <input type="checkbox" class="lm-window" value="${w.id}" ${on ? "checked" : ""}> ${w.label}
+            </label>
+            <span>from <input type="number" class="lm-window-field" id="lm-w-${w.id}-start" min="1" max="120" step="1" value="${start}" style="width:70px" ${on ? "" : "disabled"}>&#39;</span>
+            <span>to <input type="number" class="lm-window-field" id="lm-w-${w.id}-end" min="1" max="120" step="1" value="${end}" style="width:70px" ${on ? "" : "disabled"}>&#39;</span>
+            <span>max odds <input type="number" class="lm-window-field" id="lm-w-${w.id}-odds" min="0" step="0.1" value="${odds}" style="width:80px" ${on ? "" : "disabled"}></span>
+          </div>`;
+          }).join("")}
         </div>
-        <small style="color:var(--text-muted);margin-top:4px;display:block">Alert when the losing team's next-goal odds &lt; the winning team's next-goal odds. In the 55'–65' window the losing team's odds must also be below the maximum below; in 75'–81' the comparison alone is enough. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
-
-        <div class="form-group" id="lm-max-odds-block" style="margin-top:12px${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "" : ";opacity:0.5"}">
-          <label for="lm-max-odds">Maximum odds (55'–65' only) <span style="font-weight:400;color:var(--text-muted)">— alert only if the losing team's next-goal odds are under this value. Ignored for the 75'–81' window.</span></label>
-          <input type="number" id="lm-max-odds" min="1" step="0.1" value="${monitor.max_odds ?? 2.0}" style="width:100px" ${(monitor.windows||["55-65","75-81"]).includes("55-65") ? "" : "disabled"}>
-        </div>
+        <small style="color:var(--text-muted);margin-top:6px;display:block">Alert when the losing team's next-goal odds &lt; the winning team's next-goal odds <b>and</b> below that window's maximum odds. <b>0 = no maximum</b>, and then the comparison alone decides. Bounds are exclusive: 55–65 covers the 56th to the 64th minute. Requires <code>rapidapi_football_key</code> in add-on configuration.</small>
 
         <div style="margin-top:12px">
           <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -4636,16 +4659,51 @@ function renderLiveMonitorForm(monitor) {
     }
   });
 
-  // The odds cap only gates the 55'-65' window, so it is dead weight when that
-  // window is off — show it as such rather than letting it read as a global gate.
-  const earlyWindowBox = panel.querySelector('.lm-window[value="55-65"]');
-  if (earlyWindowBox) {
-    earlyWindowBox.addEventListener("change", () => {
-      const input = document.getElementById("lm-max-odds");
-      const block = document.getElementById("lm-max-odds-block");
-      if (input) input.disabled = !earlyWindowBox.checked;
-      if (block) block.style.opacity = earlyWindowBox.checked ? "" : "0.5";
+  // A window that is off decides nothing, so its minutes and its cap are dead
+  // weight — show them as such rather than letting them read as active settings.
+  panel.querySelectorAll(".lm-window-row").forEach(row => {
+    const box = row.querySelector(".lm-window");
+    if (!box) return;
+    box.addEventListener("change", () => {
+      row.querySelectorAll(".lm-window-field").forEach(f => { f.disabled = !box.checked; });
+      row.style.opacity = box.checked ? "" : "0.5";
     });
+  });
+
+  // The window form as the API reads it, shared by the Test API buttons and the
+  // save handler so the table cannot be computed against different numbers than
+  // the ones about to be stored.
+  function _lmReadWindows() {
+    const enabled = [];
+    const values  = {};
+    _LM_WINDOWS.forEach(w => {
+      const row = panel.querySelector(`.lm-window-row[data-window="${w.id}"]`);
+      const on  = row?.querySelector(".lm-window")?.checked ?? false;
+      if (on) enabled.push(w.id);
+      const start = parseInt(document.getElementById(`lm-w-${w.id}-start`)?.value, 10);
+      const end   = parseInt(document.getElementById(`lm-w-${w.id}-end`)?.value, 10);
+      const odds  = parseFloat(document.getElementById(`lm-w-${w.id}-odds`)?.value);
+      const clampMinute = (v, fallback) =>
+        Number.isFinite(v) ? Math.max(1, Math.min(120, v)) : fallback;
+      values[w.id] = {
+        start: clampMinute(start, w.start),
+        end:   clampMinute(end,   w.end),
+        // 0 is a real answer (no cap), so an explicit isFinite check, not `||`.
+        odds:  Number.isFinite(odds) && odds >= 0 ? odds : w.odds,
+      };
+      if (values[w.id].end <= values[w.id].start) {
+        values[w.id].start = w.start;
+        values[w.id].end   = w.end;
+      }
+    });
+    return { enabled, values };
+  }
+
+  function _lmWindowQuery() {
+    const { enabled, values } = _lmReadWindows();
+    return `windows=${enabled.join(",")}`
+         + `&early_start=${values.early.start}&early_end=${values.early.end}&early_max_odds=${values.early.odds}`
+         + `&late_start=${values.late.start}&late_end=${values.late.end}&late_max_odds=${values.late.odds}`;
   }
 
   panel.querySelectorAll(".fp-provider-btn").forEach(btn => {
@@ -4659,8 +4717,7 @@ function renderLiveMonitorForm(monitor) {
       statusEl.style.color = "var(--text-muted)";
       resultsEl.style.display = "none";
       try {
-        const maxOdds = parseFloat(document.getElementById("lm-max-odds")?.value) || 2.0;
-        const data = await api("GET", `/api/football/provider/${provider}?max_odds=${encodeURIComponent(maxOdds)}`);
+        const data = await api("GET", `/api/football/provider/${provider}?${_lmWindowQuery()}`);
         if (!data.ok) {
           statusEl.textContent = `❌ ${data.error}`;
           statusEl.style.color = "var(--danger)";
@@ -4671,7 +4728,7 @@ function renderLiveMonitorForm(monitor) {
         statusEl.style.color = "var(--success)";
         metaEl.textContent   = `${second_half.length} matches 2nd half (${data.count} live total) — ${provider}`;
         tbody.innerHTML = second_half.map(m => {
-          const inWindow = m.in_55_65 || m.in_75_81;
+          const inWindow = m.window != null;
           const diffAbs  = Math.abs(m.home_score - m.away_score);
           const rowBg    = m.signal ? "background:rgba(46,213,115,0.12)"
                          : inWindow ? "background:rgba(255,193,7,0.10)" : "";
@@ -4680,7 +4737,7 @@ function renderLiveMonitorForm(monitor) {
           const ngAway   = m.ng_away != null ? m.ng_away.toFixed(2) : "—";
           const period   = m.period_id === "3" ? "2T" : m.period_id === "2" ? "1T" : m.period_id;
           return `<tr style="border-bottom:1px solid var(--border);${rowBg}">
-            <td style="padding:3px 6px">${m.minutes}'<br><span style="font-size:0.7rem;color:var(--text-muted)">${period}</span></td>
+            <td style="padding:3px 6px">${m.minutes}'<br><span style="font-size:0.7rem;color:var(--text-muted)">${period}${m.window_label ? ` · ${m.window_label}` : ""}</span></td>
             <td style="padding:3px 6px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.league}</td>
             <td style="padding:3px 6px">${m.home}</td>
             <td style="padding:3px 6px">${m.away}</td>
@@ -4736,6 +4793,7 @@ function renderLiveMonitorForm(monitor) {
   }
 
   document.getElementById("btn-save-live-monitor").addEventListener("click", async () => {
+    const lmWindowForm = _lmReadWindows();
     const payload = {
       name:         document.getElementById("lm-name").value.trim(),
       enabled:      document.getElementById("lm-enabled").checked,
@@ -4745,8 +4803,13 @@ function renderLiveMonitorForm(monitor) {
       longitude:    parseFloat(document.getElementById("lm-longitude").value) || 0,
       radius_km:    parseFloat(document.getElementById("lm-radius").value)    || 30,
       areas:        Array.from(document.querySelectorAll(".lm-area:checked")).map(c => c.value),
-      windows:      Array.from(document.querySelectorAll(".lm-window:checked")).map(c => c.value),
-      max_odds:     parseFloat(document.getElementById("lm-max-odds")?.value) || 2.0,
+      windows:               lmWindowForm.enabled,
+      window_early_start:    lmWindowForm.values.early.start,
+      window_early_end:      lmWindowForm.values.early.end,
+      window_early_max_odds: lmWindowForm.values.early.odds,
+      window_late_start:     lmWindowForm.values.late.start,
+      window_late_end:       lmWindowForm.values.late.end,
+      window_late_max_odds:  lmWindowForm.values.late.odds,
       language:     document.getElementById("lm-language").value,
       quiet_start:     document.getElementById("lm-quiet-start")?.value || "",
       quiet_end:       document.getElementById("lm-quiet-end")?.value   || "",
@@ -4804,8 +4867,13 @@ function renderLiveMonitorForm(monitor) {
         quiet_start:     src.quiet_start || "",
         quiet_end:       src.quiet_end   || "",
         areas:           src.areas   || [],
-        windows:         src.windows || ["55-65", "75-81"],
-        max_odds:        src.max_odds ?? 2.0,
+        windows:               src.windows || ["early", "late"],
+        window_early_start:    src.window_early_start ?? 55,
+        window_early_end:      src.window_early_end   ?? 65,
+        window_early_max_odds: src.window_early_max_odds ?? src.max_odds ?? 2.0,
+        window_late_start:     src.window_late_start ?? 75,
+        window_late_end:       src.window_late_end   ?? 81,
+        window_late_max_odds:  src.window_late_max_odds ?? 0.0,
         telegram_bot_id: src.telegram_bot_id || "default",
       });
       liveMonitors.push(copy);

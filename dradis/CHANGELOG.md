@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## [4.7.0] - 2026-08-23
+
+**Two numbers in a dict decided when this monitor was allowed to speak.** `_ALL_WINDOWS = {"55-65": (55,65), "75-81": (75,81)}` — the minute windows were not configuration, they were the source. The Web UI's two checkboxes only chose *which of the two* to use; wanting 50–60, or 80–88, meant editing Python. And there was one odds cap for both, which is why it gated only the first window: applying a single number to two very different moments of a match would have been wrong in one of them, so v4.4.4 made it wrong in neither by making it apply to one. That was the right call for one cap. It is the wrong shape for two.
+
+**So both are now per window.** Each of the two windows carries its own start minute, end minute and maximum odds, all settable per monitor. A match is signalled when the trailing side is the shorter price **and** under that window's own maximum — the second window can now filter, which it could not before.
+
+- **Feat — settable minute windows.** `window_early_start` / `window_early_end` / `window_late_start` / `window_late_end`, integers clamped to a football match (1–120) with `start < end`; a pair that fails either check falls back to that window's defaults instead of taking the monitor down. Bounds stay exclusive, as they always were: 55–65 covers the 56th to the 64th minute.
+- **Feat — a maximum for the second window.** `window_late_max_odds`, alongside `window_early_max_odds`. **`0` means no maximum**, and it is the second window's default — that is exactly what it did before this release, so every monitor already saved keeps behaving as it did until its owner sets a number. Which means `0` is an answer and not an absence, and every read of these fields is an explicit `None` check: `float(cfg.get(...) or default)`, the idiom this file used, would have read a deliberate 0 as "unset" and quietly restored the cap.
+- **Fix — the rule lives in one place now.** The poll and the 🔍 Test API table each carried their own copy of the signal logic; v4.4.4 fixed the second by making it *agree* with the first and said outright that the honest fix was a shared predicate. Now there is one: `_window_specs`, `_get_window`, `_next_goal_odds` and `_is_signal` are called by the poll, by the table, and by the `/monitors` Telegram detail. `PollMirrorsUiTest` stays anyway.
+- **Compat — old monitors are read, not migrated.** A monitor saved before this release stores its window ids as their own bounds (`"55-65"`) and a single `max_odds`. `_window_specs` maps those labels back onto the bands they named and hands the old cap to the early window. Nothing is rewritten on disk until the monitor is saved from the UI.
+- The window id is now `early` / `late` rather than its minutes, which is also what the dedup key is built from (`match_id:early`) — so moving a window's bounds no longer resurrects alerts already sent for it.
+- The `/monitors` Telegram detail printed the raw labels (`Finestre: 55-65, 75-81'`). It now prints the real minutes and each window's cap: `Finestre: 55'–65' (max 2.0) · 75'–81' (nessun max)`.
+
+Tests: 587 (was 574). `test_football_signal.py` was pinning the very asymmetry this release removes, so it is rewritten around the new rule — including the zero-is-not-absent trap and a legacy config read back into the right bands.
+
 ## [4.6.0] - 2026-08-22
 
 **A task was pointed at a page that does not exist.** `centrofunzionale.regione.campania.it` is an Angular single-page app: the HTML it serves is an empty shell and the bulletin is drawn client-side, so `read_url` could only ever come back with `Caricamento in corso...`. No HTML fetcher was going to see that page — not the one fixed in v4.5.0, not any other, and not the plain-text second reading added in v4.5.1 either: an empty shell has no text in either mode. The site's own JavaScript bundle calls a public, unauthenticated REST backend that returns the bulletin already structured, and that is the thing worth reading.

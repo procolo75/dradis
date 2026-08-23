@@ -898,10 +898,10 @@ Polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse
 
 **Alert conditions (all must be true):**
 1. Match is in the **2nd half** (`periodID == "3"`)
-2. Match minute falls inside a configured **minute window** (default: 55′–65′ and/or 75′–81′)
+2. Match minute falls inside one of the two enabled **minute windows** (defaults: 55′–65′ and 75′–81′; both bounds are settable per monitor and exclusive, so 55–65 covers the 56th to the 64th minute)
 3. **Goal difference == 1** (exactly one team ahead)
 4. The **losing team's next-goal odds are lower** than the winning team's — a market signal that the losing team is expected to equalise
-5. **Only in the 55′–65′ window:** the losing team's next-goal odds are also **below the configured maximum** (default `2.0`) — filters out long-shot signals early in the half. In the 75′–81′ window condition 4 alone is enough.
+5. The losing team's next-goal odds are **below that window's maximum odds**. Each window carries its own maximum; `0` means no maximum, and then condition 4 alone decides.
 
 **Provider fallback:** the API is queried via `provider1` → `provider2` → `provider3` → `provider4`; the first successful response wins.
 
@@ -918,15 +918,16 @@ Negele Arsi Ketema vs Hawassa Kenema SC
 
 | Field | Description |
 |-------|-------------|
-| Minute windows | Checkboxes for 55′–65′ and 75′–81′ (both enabled by default). More windows coming in a future release. |
-| Maximum odds (55′–65′ only) | Alert only when the losing team's next-goal odds are below this value (default `2.0`). Applies to the 55′–65′ window and is ignored in 75′–81′; the field is disabled in the UI when 55′–65′ is unchecked. The 🔍 Test API table honours the same rule. |
+| First window | Checkbox + start / end minute (default 55 → 65) + its own maximum odds (default `2.0`). |
+| Second window | Checkbox + start / end minute (default 75 → 81) + its own maximum odds (default `0`, i.e. no maximum — what this window did before the cap became per-window). |
+| Maximum odds | Per window. Alert only when the losing team's next-goal odds are below this value; `0` disables the check for that window. The 🔍 Test API table honours the same rule, computed by the monitor's own `_window_specs`. Unchecking a window disables its three fields. |
 | API pause | Time range during which API calls are suppressed (default 23:00–07:00). Leave blank to disable. |
 
 **🔍 Test API button:** fetches all current live matches and renders them in a table with columns: minute, league, home, away, score, next-goal odds (home / away), and a 🔔 signal flag. Matches that meet all alert conditions are highlighted in green; matches in a window with 1-goal difference but without the odds signal are highlighted in yellow.
 
-**Deduplication:** one alert is sent per match per window. The alert key (`match_id:window`) is pruned automatically when the match leaves the live feed — a new alert fires if the same match re-enters a window.
+**Deduplication:** one alert is sent per match per window. The alert key is `match_id:early` / `match_id:late` — the window *id*, not its minutes, so moving a window does not change what has already been alerted. It is pruned automatically when the match leaves the live feed — a new alert fires if the same match re-enters a window.
 
-**More options coming soon:** additional minute windows, configurable goal-difference threshold, and league filtering are planned for upcoming releases.
+**More options coming soon:** configurable goal-difference threshold and league filtering are planned for upcoming releases.
 
 **Example configuration:**
 
@@ -934,7 +935,8 @@ Negele Arsi Ketema vs Hawassa Kenema SC
 |-------|-------|
 | Name | Football Betting |
 | Type | ⚽ Football Betting (RapidAPI) |
-| Minute windows | 55′–65′ ✅, 75′–81′ ✅ |
+| First window | ✅ 55′ → 65′, max odds 2.0 |
+| Second window | ✅ 75′ → 81′, max odds 2.5 |
 | API pause | 23:00 – 07:00 |
 
 ---

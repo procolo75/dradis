@@ -378,10 +378,13 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Status: {badge}\n"
                f"Polling: 60s")
     elif mtype == "football_betting":
-        windows = ", ".join(monitor.get("windows") or ["55-65", "75-81"])
+        from live_monitors.football import _window_specs
+        windows = " · ".join(
+            f"{w.label} ({w.cap_label})" for w in _window_specs(monitor)
+        ) or "nessuna"
         msg = (f"⚽ <b>{html.escape(monitor['name'])}</b>\n"
                f"Tipo: Football Betting Live\n"
-               f"Finestre: {windows}'\n"
+               f"Finestre: {windows}\n"
                f"Status: {badge}\n"
                f"Polling: 300s")
     else:

@@ -471,10 +471,10 @@ Language:     🇮🇹 Italiano
 Polls [football-betting-odds1.p.rapidapi.com](https://rapidapi.com/fluis.lacasse/api/football-betting-odds1) every 5 minutes at exact clock-aligned boundaries (:00, :05, :10, :15 … regardless of when DRADIS started). Sends a Telegram alert when all of the following conditions are met simultaneously in a live match:
 
 1. Match is in the **2nd half** (`periodID == "3"`)
-2. Match minute falls inside a configured **minute window** (e.g. 55′–65′ or 75′–81′)
+2. Match minute falls inside one of the two enabled **minute windows** (defaults 55′–65′ and 75′–81′, both settable per monitor)
 3. **Goal difference == 1** (one team leads by exactly one goal)
 4. The **losing team's next-goal odds are lower** than the winning team's — the market expects the trailing team to score next
-5. **Only in the 55′–65′ window:** the losing team's next-goal odds are also **below the configured maximum** (default `2.0`) — filters out long-shot signals while there is still time for the price to mean nothing. In the 75′–81′ window condition 4 alone is enough.
+5. The losing team's next-goal odds are also **below that window's maximum odds**. Each window has its own; `0` means no maximum, and then condition 4 alone decides.
 
 This combination identifies matches where the statistics and betting market both suggest the losing team has the momentum to equalise — a classically exploitable live-betting signal.
 
@@ -484,8 +484,9 @@ This combination identifies matches where the statistics and betting market both
 
 | Field | Description |
 |-------|-------------|
-| Minute windows | Select one or both: **55′–65′** and **75′–81′**. Both are enabled by default. Additional windows are planned for a future release. |
-| Maximum odds (55′–65′ only) | Alert only when the losing team's next-goal odds are below this value (default `2.0`). It gates the **55′–65′** window only and is ignored in **75′–81′**; the field is disabled in the Web UI when 55′–65′ is unchecked. The 🔍 Test API table honours the same rule. |
+| First window | Checkbox + **start** and **end** minute (default 55 → 65) + its own **maximum odds** (default `2.0`). |
+| Second window | Checkbox + **start** and **end** minute (default 75 → 81) + its own **maximum odds** (default `0` = no maximum, which is what this window did before the cap became per-window — so a monitor saved before this release keeps behaving exactly as it did). |
+| Maximum odds | Per window: alert only when the losing team's next-goal odds are below this value. `0` disables the check for that window and leaves the odds comparison as the whole signal. Unchecking a window greys out and disables its three fields. The 🔍 Test API table honours the same rule. |
 | API pause | Time range during which API calls are suppressed (default 23:00–07:00, evaluated in the configured timezone). Avoids unnecessary API usage overnight. Leave blank to disable. |
 
 ### Provider Fallback
@@ -508,7 +509,7 @@ The **🔍 Test API** button in the Web UI fetches all current live matches and 
 
 | Column | Description |
 |--------|-------------|
-| Min | Current match minute and half |
+| Min | Current match minute, half, and which window it falls in |
 | Campionato | League / competition name |
 | Casa / Fuori | Home and away team names |
 | Ris. | Current score |
@@ -519,12 +520,11 @@ Rows are highlighted: 🟩 green = active signal, 🟨 yellow = partial match (i
 
 ### Deduplication
 
-One alert is sent per **match × window**. The alert key is pruned as soon as the match leaves the live feed, so a new alert fires correctly if conditions are met again later in the same match (different window).
+One alert is sent per **match × window**. The key is built from the window *id* (`early` / `late`), not from its minutes, so moving a window's bounds does not resurrect alerts already sent. The key is pruned as soon as the match leaves the live feed, so a new alert fires correctly if conditions are met again later in the same match (different window).
 
 ### Coming Soon
 
 The following options are planned for upcoming releases:
-- Additional configurable minute windows
 - Goal-difference threshold (e.g. allow alerts when difference == 2)
 - League or competition filter
 
@@ -533,8 +533,8 @@ The following options are planned for upcoming releases:
 ```
 Name:          Football Betting
 Type:          ⚽ Football Betting (RapidAPI)
-Minute windows: 55′–65′ ✅  75′–81′ ✅
-Maximum odds:  2.0
+First window:  ✅ 55′ → 65′, max odds 2.0
+Second window: ✅ 75′ → 81′, max odds 2.5
 API pause:     23:00 – 07:00
 Telegram bot:  default
 ```

@@ -3,17 +3,21 @@ live_monitors/football.py
 ─────────────────────────
 LLM-free live monitor: polls football-betting-odds1.p.rapidapi.com every 300s
 and sends Telegram alerts when a losing team's next-goal odds are lower (better)
-than the winning team's in configured minute windows of the 2nd half.
+than the winning team's inside a configured minute window of the 2nd half.
 
 Alert conditions (all must be true):
   - periodID == "3" (2nd half)
-  - match minute inside a configured window ("55-65" and/or "75-81")
+  - match minute inside an enabled window (bounds are configurable per monitor)
   - goal difference == 1
   - losing team's next-goal odds < winning team's next-goal odds
-  - in the "55-65" window only: losing team's next-goal odds < max_odds
+  - losing team's next-goal odds < that window's max_odds (0 = no cap)
+
+There are two windows, "early" and "late". Their minutes and their odds caps are
+per-monitor configuration; only the two ids are fixed, because they are what the
+dedup key is built from.
 
 Providers are tried in order (provider1→4); first successful response wins.
-Deduplication: one alert per (match_id + window). Key is pruned only when the
+Deduplication: one alert per (match_id + window id). Key is pruned only when the
 match disappears from the live feed (guard: only prune if feed returned results).
 """
 
@@ -22,6 +26,7 @@ import html
 import json
 import logging
 from datetime import datetime
+from typing import NamedTuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -35,13 +40,89 @@ POLL_INTERVAL_SEC = 300
 _BASE_URL  = "https://football-betting-odds1.p.rapidapi.com"
 _PROVIDERS = ["provider1", "provider2", "provider3", "provider4"]
 
-WINDOW_EARLY = "55-65"   # the only window the max-odds cap applies to
-WINDOW_LATE  = "75-81"
+WINDOW_EARLY = "early"
+WINDOW_LATE  = "late"
 
-_ALL_WINDOWS: dict[str, tuple[int, int]] = {
-    WINDOW_EARLY: (55, 65),
-    WINDOW_LATE:  (75, 81),
+MINUTE_FLOOR   = 1
+MINUTE_CEILING = 120
+
+# id → (start, end, max_odds). The late band's 0.0 is not a placeholder: it is
+# "no cap", which is what this monitor did before the cap became per-window, and
+# so what every monitor saved before that keeps doing until its owner sets one.
+_WINDOW_DEFAULTS: dict[str, tuple[int, int, float]] = {
+    WINDOW_EARLY: (55, 65, 2.0),
+    WINDOW_LATE:  (75, 81, 0.0),
 }
+
+# Monitors saved before the minutes were settable stored the bounds themselves as
+# the window id ("55-65"). The id is stable now and the minutes are config, so an
+# old label is read back as the band it used to name.
+_LEGACY_WINDOW_IDS = {"55-65": WINDOW_EARLY, "75-81": WINDOW_LATE}
+
+
+class WindowSpec(NamedTuple):
+    id:       str
+    start:    int
+    end:      int
+    max_odds: float   # 0 = no cap
+
+    @property
+    def label(self) -> str:
+        return f"{self.start}'–{self.end}'"
+
+    @property
+    def cap_label(self) -> str:
+        return f"max {self.max_odds:.2f}" if self.max_odds else "nessun max"
+
+
+def _clamp_minute(value, default: int) -> int:
+    """A minute of play, or the default when the config cannot say which one."""
+    if value is None or value == "":
+        return default
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return default
+    return max(MINUTE_FLOOR, min(MINUTE_CEILING, parsed))
+
+
+def _clamp_odds(value, default: float) -> float:
+    """An odds cap. 0 is a real answer — it means no cap — so it is never the
+    same thing as an absent value, which is why nothing here uses `or`."""
+    if value is None or value == "":
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, parsed)
+
+
+def _window_specs(cfg: dict) -> list[WindowSpec]:
+    """The enabled windows of one monitor, minutes and caps resolved.
+
+    The single place that decides what a window is: the poll, the Test API table
+    and the Telegram detail all read it, so the rule cannot drift between them.
+    """
+    raw_enabled = cfg.get("windows")
+    if raw_enabled is None:
+        raw_enabled = list(_WINDOW_DEFAULTS)
+    enabled = {_LEGACY_WINDOW_IDS.get(str(w), str(w)) for w in raw_enabled}
+
+    specs: list[WindowSpec] = []
+    for wid, (d_start, d_end, d_odds) in _WINDOW_DEFAULTS.items():
+        if wid not in enabled:
+            continue
+        start = _clamp_minute(cfg.get(f"window_{wid}_start"), d_start)
+        end   = _clamp_minute(cfg.get(f"window_{wid}_end"),   d_end)
+        if end <= start:
+            start, end = d_start, d_end
+        raw_odds = cfg.get(f"window_{wid}_max_odds")
+        if raw_odds is None and wid == WINDOW_EARLY:
+            # Legacy: the one cap there used to be gated the early window only.
+            raw_odds = cfg.get("max_odds")
+        specs.append(WindowSpec(wid, start, end, _clamp_odds(raw_odds, d_odds)))
+    return specs
 
 
 def _in_quiet_window(quiet_start: str, quiet_end: str, tz_name: str = "UTC") -> bool:
@@ -62,11 +143,41 @@ def _in_quiet_window(quiet_start: str, quiet_end: str, tz_name: str = "UTC") -> 
         return False
 
 
-def _get_window(minute: int, windows: list[tuple[str, int, int]]) -> str | None:
-    for label, lo, hi in windows:
-        if lo < minute < hi:
-            return label
+def _get_window(minute: int, windows: list[WindowSpec]) -> WindowSpec | None:
+    """Bounds are exclusive on both sides: 55–65 matches minutes 56–64."""
+    for spec in windows:
+        if spec.start < minute < spec.end:
+            return spec
     return None
+
+
+def _next_goal_odds(match: dict) -> tuple[float, float] | None:
+    """(home, away) next-goal odds, falling back to rest-of-match (provider2)."""
+    odds = match["odds"]
+    tot  = match["home_score"] + match["away_score"]
+    for key_home, key_away in ((f"next-goal-{tot + 1}-1", f"next-goal-{tot + 1}-2"),
+                               ("rest-of-match-1",        "rest-of-match-2")):
+        try:
+            return float(odds[key_home]), float(odds[key_away])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
+
+def _is_signal(diff: int, odds_home: float, odds_away: float, spec: WindowSpec) -> bool:
+    """The alert rule itself, given a match already known to be in `spec`.
+
+    The market must price the trailing side as the likelier next scorer, and —
+    when that window carries a cap — price it short enough that the preference
+    is worth acting on. A cap of 0 means the comparison alone decides.
+    """
+    if abs(diff) != 1:
+        return False
+    losing_odds  = odds_away if diff > 0 else odds_home
+    winning_odds = odds_home if diff > 0 else odds_away
+    if losing_odds >= winning_odds:
+        return False
+    return not (spec.max_odds and losing_odds >= spec.max_odds)
 
 
 def _build_headers() -> dict:
@@ -84,22 +195,15 @@ class FootballLiveMonitor:
         self._enabled   = bool(cfg.get("enabled", True))
         self.tz_name    = tz_name
 
-        raw_windows = cfg.get("windows") or list(_ALL_WINDOWS.keys())
-        self._windows: list[tuple[str, int, int]] = [
-            (label, lo, hi)
-            for label, (lo, hi) in _ALL_WINDOWS.items()
-            if label in raw_windows
-        ]
+        self._windows: list[WindowSpec] = _window_specs(cfg)
 
         self._quiet_start: str = cfg.get("quiet_start") or "23:00"
         self._quiet_end:   str = cfg.get("quiet_end")   or "07:00"
 
-        # Only alert when the losing team's next-goal odds are below this cap.
-        self._max_odds: float = float(cfg.get("max_odds") or 2.0)
-
         self._alerted: set[str] = set()
         self._task: asyncio.Task | None = None
-        print(f"[FootballMonitor] '{self.name}' init — windows: {[w[0] for w in self._windows]} quiet: {self._quiet_start}–{self._quiet_end} max_odds: {self._max_odds}")
+        windows_desc = " · ".join(f"{w.id} {w.label} ({w.cap_label})" for w in self._windows) or "none"
+        print(f"[FootballMonitor] '{self.name}' init — windows: {windows_desc} quiet: {self._quiet_start}–{self._quiet_end}")
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -172,8 +276,8 @@ class FootballLiveMonitor:
             n_2nd += 1
 
             minute = match["minutes"]
-            window = _get_window(minute, self._windows)
-            if window is None:
+            spec = _get_window(minute, self._windows)
+            if spec is None:
                 continue
             n_window += 1
 
@@ -184,54 +288,31 @@ class FootballLiveMonitor:
                 continue
             n_diff1 += 1
 
-            alert_key = f"{match['id']}:{window}"
+            alert_key = f"{match['id']}:{spec.id}"
             if alert_key in self._alerted:
                 continue
             n_new += 1
 
-            # Try next-goal-N-1/2 first (provider1/3), fall back to rest-of-match (provider2)
-            odds = match["odds"]
-            tot = home_score + away_score
-            try:
-                odds_home_next = float(odds[f"next-goal-{tot + 1}-1"])
-                odds_away_next = float(odds[f"next-goal-{tot + 1}-2"])
-            except (KeyError, TypeError, ValueError):
-                try:
-                    odds_home_next = float(odds["rest-of-match-1"])
-                    odds_away_next = float(odds["rest-of-match-2"])
-                except (KeyError, TypeError, ValueError):
-                    _LOGGER.debug(
-                        "[FootballMonitor] '%s' missing next-goal and rest-of-match odds for %s",
-                        self.name, match["id"],
-                    )
-                    continue
+            odds = _next_goal_odds(match)
+            if odds is None:
+                _LOGGER.debug(
+                    "[FootballMonitor] '%s' missing next-goal and rest-of-match odds for %s",
+                    self.name, match["id"],
+                )
+                continue
+            odds_home_next, odds_away_next = odds
             n_odds_ok += 1
 
-            # Determine winning/losing team and their next-goal odds
-            if diff > 0:
-                # home winning
-                winning_team  = match["home"]
-                losing_team   = match["away"]
-                winning_odds  = odds_home_next
-                losing_odds   = odds_away_next
-            else:
-                # away winning
-                winning_team  = match["away"]
-                losing_team   = match["home"]
-                winning_odds  = odds_away_next
-                losing_odds   = odds_home_next
-
-            if losing_odds >= winning_odds:
-                continue
-            # The cap is a 55-65 rule only. Early in the second half there is still
-            # time for a long-shot price to be nothing more than a long shot, so the
-            # signal is only worth an alert when the trailing side is short-priced.
-            # By 75-81 the market's own preference for the trailing side is the whole
-            # signal, and capping it there would drop valid late alerts.
-            capped = window == WINDOW_EARLY
-            if capped and losing_odds >= self._max_odds:
+            if not _is_signal(diff, odds_home_next, odds_away_next, spec):
                 continue
             n_signal += 1
+
+            if diff > 0:
+                winning_team, losing_team = match["home"], match["away"]
+                winning_odds, losing_odds = odds_home_next, odds_away_next
+            else:
+                winning_team, losing_team = match["away"], match["home"]
+                winning_odds, losing_odds = odds_away_next, odds_home_next
 
             self._alerted.add(alert_key)
             msg = self._build_alert(
@@ -244,9 +325,9 @@ class FootballLiveMonitor:
                 odds_away    = odds_away_next,
             )
             print(
-                f"[FootballMonitor] '{self.name}' ALERT {alert_key} "
+                f"[FootballMonitor] '{self.name}' ALERT {alert_key} ({spec.label}) "
                 f"{losing_team} next={losing_odds:.2f} < {winning_team} next={winning_odds:.2f}"
-                + (f" (max_odds={self._max_odds})" if capped else " (no odds cap in this window)")
+                + (f" (max_odds={spec.max_odds:g})" if spec.max_odds else " (no odds cap in this window)")
             )
             try:
                 await self._send(msg)
@@ -316,58 +397,36 @@ class FootballLiveMonitor:
 
 # ── Standalone test helpers (used by /api/football/…) ────────────────────────
 
-def _normalise_for_ui(match_id: str, obj: dict, provider: str, max_odds: float = 2.0) -> dict:
-    m    = FootballLiveMonitor._normalise(match_id, obj)
-    odds = m["odds"]
-    tot  = m["home_score"] + m["away_score"]
-    try:
-        ng_home = float(odds[f"next-goal-{tot + 1}-1"])
-    except (KeyError, TypeError, ValueError):
-        try:
-            ng_home = float(odds["rest-of-match-1"])
-        except (KeyError, TypeError, ValueError):
-            ng_home = None
-    try:
-        ng_away = float(odds[f"next-goal-{tot + 1}-2"])
-    except (KeyError, TypeError, ValueError):
-        try:
-            ng_away = float(odds["rest-of-match-2"])
-        except (KeyError, TypeError, ValueError):
-            ng_away = None
-    diff           = m["home_score"] - m["away_score"]
-    is_second_half = m["period_id"] == "3"
-    minute         = m["minutes"]
-    lo_e, hi_e     = _ALL_WINDOWS[WINDOW_EARLY]
-    lo_l, hi_l     = _ALL_WINDOWS[WINDOW_LATE]
-    in_55_65       = is_second_half and lo_e < minute < hi_e
-    in_75_81       = is_second_half and lo_l < minute < hi_l
-    signal = False
-    if (in_55_65 or in_75_81) and abs(diff) == 1 and ng_home is not None and ng_away is not None:
-        losing_odds  = ng_away if diff > 0 else ng_home
-        winning_odds = ng_home if diff > 0 else ng_away
-        # Same rule as the poll: the cap only gates the early window.
-        if losing_odds < winning_odds:
-            signal = in_75_81 or losing_odds < max_odds
+def _normalise_for_ui(match_id: str, obj: dict, provider: str,
+                      windows: list[WindowSpec]) -> dict:
+    m       = FootballLiveMonitor._normalise(match_id, obj)
+    odds    = _next_goal_odds(m)
+    ng_home = odds[0] if odds else None
+    ng_away = odds[1] if odds else None
+    diff    = m["home_score"] - m["away_score"]
+    minute  = m["minutes"]
+    spec    = _get_window(minute, windows) if m["period_id"] == "3" else None
+    signal  = bool(spec and odds and _is_signal(diff, ng_home, ng_away, spec))
     return {
-        "id":         m["id"],
-        "league":     m["country_leagues"],
-        "home":       m["home"],
-        "away":       m["away"],
-        "score":      m["score"],
-        "minutes":    minute,
-        "period_id":  m["period_id"],
-        "home_score": m["home_score"],
-        "away_score": m["away_score"],
-        "ng_home":    ng_home,
-        "ng_away":    ng_away,
-        "in_55_65":   in_55_65,
-        "in_75_81":   in_75_81,
-        "signal":     signal,
-        "provider":   provider,
+        "id":           m["id"],
+        "league":       m["country_leagues"],
+        "home":         m["home"],
+        "away":         m["away"],
+        "score":        m["score"],
+        "minutes":      minute,
+        "period_id":    m["period_id"],
+        "home_score":   m["home_score"],
+        "away_score":   m["away_score"],
+        "ng_home":      ng_home,
+        "ng_away":      ng_away,
+        "window":       spec.id if spec else None,
+        "window_label": spec.label if spec else None,
+        "signal":       signal,
+        "provider":     provider,
     }
 
 
-async def fetch_provider_data(provider_name: str, max_odds: float = 2.0) -> dict:
+async def fetch_provider_data(provider_name: str, windows: list[WindowSpec]) -> dict:
     """Fetch from a single named provider. Returns {ok, count, matches, error}."""
     async with httpx.AsyncClient(timeout=30) as client:
         url = f"{_BASE_URL}/{provider_name}/live/inplaying"
@@ -379,15 +438,15 @@ async def fetch_provider_data(provider_name: str, max_odds: float = 2.0) -> dict
             return {"ok": False, "error": str(e), "count": 0, "matches": []}
         if not isinstance(raw, dict) or not raw:
             return {"ok": False, "error": f"Empty/invalid response ({type(raw).__name__})", "count": 0, "matches": []}
-        matches = [_normalise_for_ui(mid, obj, provider_name, max_odds) for mid, obj in raw.items()]
+        matches = [_normalise_for_ui(mid, obj, provider_name, windows) for mid, obj in raw.items()]
         matches.sort(key=lambda x: x["minutes"], reverse=True)
         return {"ok": True, "error": None, "count": len(matches), "matches": matches}
 
 
-async def fetch_inplaying_data(max_odds: float = 2.0) -> list[dict]:
+async def fetch_inplaying_data(windows: list[WindowSpec]) -> list[dict]:
     """Fetch from providers in order; return matches from first successful one."""
     for provider in _PROVIDERS:
-        result = await fetch_provider_data(provider, max_odds)
+        result = await fetch_provider_data(provider, windows)
         if result["ok"]:
             return result["matches"]
     return []

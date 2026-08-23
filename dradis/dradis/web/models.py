@@ -60,8 +60,23 @@ class LiveMonitorPayload(BaseModel):
     areas:           list[str] = []
     quiet_start:     str       = ""
     quiet_end:       str       = ""
-    windows:         list[str] = ["55-65", "75-81"]
-    # Football: the odds cap gates the "55-65" window only — see live_monitors/football.py.
+    # Football: which of the two minute windows are enabled. The ids are stable;
+    # the minutes below are what moves. Monitors saved before the minutes became
+    # settable hold the old bounds-as-id labels ("55-65") and are read back by
+    # live_monitors/football.py._window_specs.
+    windows:         list[str] = ["early", "late"]
+    window_early_start:    int   = 55
+    window_early_end:      int   = 65
+    window_early_max_odds: float = 2.0
+    window_late_start:     int   = 75
+    window_late_end:       int   = 81
+    # Each window has its own cap on the trailing side's next-goal odds. 0 means
+    # no cap — the late window's default, because that is what it did before the
+    # cap became per-window, and a stricter default would silently drop alerts
+    # from every monitor already saved.
+    window_late_max_odds:  float = 0.0
+    # Deprecated: the single cap, which gated the early window only. Kept so a
+    # monitor saved before this release keeps its value until it is saved again.
     max_odds:        float     = 2.0
     telegram_bot_id: str       = "default"
     # Storm front and rain front — how many approach updates a single event may
