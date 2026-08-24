@@ -69,11 +69,21 @@ def _bulletin(levels: dict[int, int], *, notice: int = 72, day: str = "21/08/202
     }
 
 
-def _unpublished() -> dict:
-    """What findBollettinoDomani answers for most of every morning."""
+def _no_zones(*, issued: bool, day: str = "22/08/2026") -> dict:
+    """What the alert endpoints answer when the window lists no zone at all.
+
+    `checkAvviso` is the entire difference between "nessuna allerta" and "not
+    decided yet", and only tomorrow's endpoint ever answers False.
+    """
     return {"bollettinoMeteoBindList": [], "idBollettino": None, "numeroAvviso": None,
-            "dataEmissione": None, "dataDa": "14:00 - 22/08/2026",
-            "dataA": "14:00 - 23/08/2026", "firmaBollettino": None}
+            "dataEmissione": None, "dataDa": f"14:00 - {day}",
+            "dataA": "14:00 - 23/08/2026", "firmaBollettino": None,
+            "checkAvviso": issued}
+
+
+def _unpublished() -> dict:
+    """What findAllertaDomaniNew answers for most of every morning."""
+    return _no_zones(issued=False)
 
 
 def _run(monitor: dict, today, tomorrow) -> str:
@@ -105,6 +115,22 @@ class BothDaysTest(unittest.TestCase):
         out = _run({"min_level": 2}, _bulletin({}), _bulletin({4: 3}))
         self.assertIn("Nessuna allerta su tutte le zone", out)
         self.assertIn("🟠 ARANCIONE", out)
+
+    def test_an_empty_list_on_a_decided_day_is_green_not_unpublished(self):
+        # The regression of v4.7.3: the region publishes an alert bulletin only
+        # when there is an alert, so a quiet day comes back with no zones at all.
+        # Reading that as "non ancora emesso" turned every quiet day into a
+        # report that the region had said nothing, which is not what it said.
+        out = _run({"min_level": 1}, _no_zones(issued=True), _no_zones(issued=True))
+        self.assertEqual(out.count("Nessuna allerta su tutte le zone"), 2)
+        self.assertNotIn("non ancora emesso", out)
+
+    def test_today_is_green_on_an_empty_list_whatever_the_flag_says(self):
+        # Today's window is already running: the site paints its map green with
+        # no zones listed, and never grey.
+        out = _run({"min_level": 1}, _no_zones(issued=False), _bulletin({}))
+        self.assertIn("Nessuna allerta su tutte le zone", out.split("DOMANI")[0])
+        self.assertNotIn("non ancora emesso", out)
 
     def test_an_unpublished_tomorrow_is_said_so_not_hidden(self):
         out = _run({"min_level": 2}, _bulletin({1: 2}), _unpublished())
@@ -229,6 +255,72 @@ class ReportTest(unittest.TestCase):
         self.assertIn(_PHENOMENA, out)
 
 
+class EndpointTest(unittest.TestCase):
+    """The two endpoints the site's own home-page map calls, and no others.
+
+    The `findLastBollettino` pair used until v4.7.4 answers a different question:
+    it leaves `dataDa` null on today's window, which the message printed as
+    "dal ? al ...".
+    """
+
+    def test_the_alert_endpoints_are_the_ones_asked(self):
+        import monitors.campania_alert as mod
+        self.assertTrue(mod._ENDPOINTS["today"].endswith("/findLastAllertaNew"))
+        self.assertTrue(mod._ENDPOINTS["tomorrow"].endswith("/findAllertaDomaniNew"))
+
+
+class DetailFallbackTest(unittest.TestCase):
+    """`fenomeni` / `scenari` arrive inline today; the monitor survives if they stop.
+
+    The alert endpoints feed a map that needs only zona and livello, so nothing
+    on the site would break if their prose went away — this monitor would lose
+    half its message. The detail endpoint is asked only when it has to be.
+    """
+
+    def _detail(self, data, detail):
+        import monitors.campania_alert as mod
+        calls = []
+
+        async def _fake_get(url):
+            calls.append(url)
+            if isinstance(detail, BaseException):
+                raise detail
+            return detail
+
+        original, mod._get_json = mod._get_json, _fake_get
+        try:
+            return asyncio.run(mod._with_detail(data)), calls
+        finally:
+            mod._get_json = original
+
+    def test_prose_already_inline_costs_no_second_request(self):
+        out, calls = self._detail(_bulletin({1: 2}), None)
+        self.assertEqual(calls, [])
+        self.assertEqual(out["bollettinoMeteoBindList"][0]["fenomeni"], _PHENOMENA)
+
+    def test_an_all_green_day_costs_no_second_request(self):
+        _, calls = self._detail(_bulletin({}), None)
+        self.assertEqual(calls, [])
+
+    def test_a_stripped_alert_is_filled_in_from_the_detail_endpoint(self):
+        stripped = _bulletin({1: 2})
+        for zone in stripped["bollettinoMeteoBindList"]:
+            zone["fenomeni"] = zone["scenari"] = None
+        out, calls = self._detail(stripped, _bulletin({1: 2}))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("/findByIdBollettino/702", calls[0])
+        self.assertEqual(out["bollettinoMeteoBindList"][0]["fenomeni"], _PHENOMENA)
+        # The wrapper stays the alert endpoint's: only the zones are replaced.
+        self.assertEqual(out["dataDa"], stripped["dataDa"])
+
+    def test_a_failing_detail_endpoint_keeps_the_levels(self):
+        stripped = _bulletin({1: 4})
+        for zone in stripped["bollettinoMeteoBindList"]:
+            zone["fenomeni"] = zone["scenari"] = None
+        out, _ = self._detail(stripped, RuntimeError("HTTP 500"))
+        self.assertEqual(_max_level(out), 4)
+
+
 class HelpersTest(unittest.TestCase):
 
     def test_stamp_swaps_clock_and_date(self):
@@ -247,6 +339,13 @@ class HelpersTest(unittest.TestCase):
     def test_max_level_of_nothing_is_green(self):
         for empty in (_unpublished(), RuntimeError("boom"), None):
             self.assertEqual(_max_level(empty), 1)
+
+    def test_only_tomorrow_can_be_undecided(self):
+        from monitors.campania_alert import _is_issued
+        self.assertTrue(_is_issued(_no_zones(issued=True), "tomorrow"))
+        self.assertFalse(_is_issued(_no_zones(issued=False), "tomorrow"))
+        for data in (_no_zones(issued=False), RuntimeError("boom"), None):
+            self.assertTrue(_is_issued(data, "today"))
 
     def test_every_zone_number_has_a_name(self):
         self.assertEqual(sorted(ZONES), list(range(1, 9)))

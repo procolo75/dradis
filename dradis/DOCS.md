@@ -668,10 +668,14 @@ Both days rather than a choice between them: the question this monitor answers i
 
 | Bulletin | Endpoint |
 |---|---|
-| Oggi | `findLastBollettino` |
-| Domani | `findBollettinoDomani` |
+| Oggi | `findLastAllertaNew` |
+| Domani | `findAllertaDomaniNew` |
 
-The bulletin is issued in the morning and is valid from 14:00 to 14:00 the following day. `findBollettinoDomani` returns an empty zone list until tomorrow's bulletin is published; the report says so in place — the validity window is known even before the bulletin is issued.
+These are the two endpoints the site's own home-page alert map calls. The `findLastBollettino` pair, used until v4.7.4, answers a different question and returns today's window with a null `dataDa`.
+
+The bulletin is issued in the morning and is valid from 14:00 to 14:00 the following day. **An empty zone list means different things on the two days**, and the site's map treats them differently: today's window is already running, so no zone listed means *nessuna allerta* and the map is painted green; tomorrow's map stays grey — undecided — until the response's `checkAvviso` flag turns true, and only then is a zone-less bulletin a green one. The report mirrors that: `🟢 Nessuna allerta su tutte le zone` for a day the region has declared quiet, `Bollettino non ancora emesso` only for a day it has not yet decided. Either way the validity window is known and shown.
+
+**`fenomeni` and `scenari` are fetched only if the alert endpoints stop carrying them.** Those endpoints feed a map that needs nothing but the zone and its level — the site fetches the prose separately, per zone, when one is clicked. It currently arrives inline, and when a zone in alert arrives without it, `findByIdBollettino/{id}` is asked for the text. No extra request on the common path, and none at all on a day with no alert.
 
 **Tomorrow is fetched tolerantly, today is not.** If the *tomorrow* endpoint fails, the error is reported inside the message and today's alert still goes out — an alert that exists must reach the phone even when the other half of the request is down. If the *today* endpoint fails, that is the monitor failing and the scheduler says so.
 

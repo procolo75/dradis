@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [4.7.4] - 2026-08-24
+
+**Every quiet day was reported as a day the region had said nothing.** "📅 OGGI — dal **?** al 25/08/2026 14:00 · *Bollettino non ancora emesso*", at 15:00, an hour into a window Regione Campania had already declared green. Two mistakes stacked on top of each other, and both of them are visible in that one line.
+
+**The wrong pair of endpoints.** The backend exposes two families that return the same envelope: `findLastBollettino`/`findBollettinoDomani`, and `findLastAllertaNew`/`findAllertaDomaniNew` — the ones the site's own home-page map calls. This monitor read the first pair, which answers a different question and hands back today's window with `dataDa` null. That null is the `?`. The alert pair returns `14:00 - 24/08/2026`, the window that is actually running.
+
+**An empty zone list is not the same answer on both days.** The region publishes an alert bulletin *only when there is an alert*, so a quiet day comes back with no zones at all — and the monitor read that, on both days, as "not published yet". The site does not: its map paints **today green** when nothing is listed, and paints **tomorrow grey** — undecided — until the response's `checkAvviso` flag turns true, green afterwards. That flag was in every response all along and nothing read it.
+
+- **Fix — the alert endpoints, and `checkAvviso` decides.** A day with no zones now prints `🟢 Nessuna allerta su tutte le zone` when the region has decided it, and `Bollettino non ancora emesso` only when it has not — which, for tomorrow, is most of every morning. Today's window is always running, so an empty list there is always green.
+- **Feat — `fenomeni` and `scenari` survive the switch.** The alert endpoints feed a map that needs nothing but the zone and its level; the site fetches the prose separately, per zone, when one is clicked. It does arrive inline today, and if it ever stops, `findByIdBollettino/{id}` is asked for it — only when a zone in alert carries no text, so there is no extra request on the common path and none at all on a day with no alert. If that request fails the levels still go out: an alert without its scenario text still has to reach the phone.
+
+Only a monitor set to 🟢 *Sempre (anche verde)* could see this — above green the report was suppressed either way, since a quiet day scores level 1 whichever sentence is printed under it. Nothing was ever missed; what was sent was wrong.
+
+Checked against the live API: today's window is `dal 24/08/2026 14:00 al 25/08/2026 14:00` with `🟢 Nessuna allerta su tutte le zone`, tomorrow's is `dal 25/08/2026 14:00 al 26/08/2026 14:00` and `checkAvviso: false` — not yet issued. Both match what the site's map shows.
+
+Tests: 627 (was 619). `test_campania_alert.py` grows to 41 (was 33): the two endpoints are pinned by name, the empty-list case is pinned separately per day and per flag, and the detail fetch is pinned to fire only when it must — and to keep the levels when it fails.
+
 ## [4.7.3] - 2026-08-23
 
 **"Napoli" resolved to a village in Gambia, and the weather charts were drawn for it.** 3000 km from the city, in a place ICON EU and ARPAE do not cover — which is why those two models answered 400 and quietly dropped out of every chart for that location. Two independent mistakes, repeated across five copies of the same twelve lines:

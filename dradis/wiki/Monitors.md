@@ -224,7 +224,9 @@ Both days rather than a choice between them: the question this monitor answers i
 
 **Why not just read the website.** `centrofunzionale.regione.campania.it` is an Angular single-page app: the HTML it serves is an empty shell and the bulletin is drawn client-side, so `read_url` gets back `Caricamento in corso...` and nothing more. The page's own JavaScript bundle calls a public, unauthenticated REST backend that returns the bulletin already structured, and that is what this monitor reads. Nothing parses HTML, images or PDF.
 
-**If every zone is below the configured level on both days, no message is sent.** A single zone reaching the level on either day is enough to fire, so an orange tomorrow reports even when today is entirely green. Tomorrow's bulletin is empty for most of every morning; the report says so in place rather than hiding the day.
+**If every zone is below the configured level on both days, no message is sent.** A single zone reaching the level on either day is enough to fire, so an orange tomorrow reports even when today is entirely green.
+
+**A day with no zones listed is not automatically a day with no bulletin.** The region issues an alert bulletin only when there is an alert, so a quiet day comes back with an empty zone list — and the site's own map paints today green for it, while it paints tomorrow grey until the response's `checkAvviso` flag says the region has decided. The report mirrors that map: `🟢 Nessuna allerta su tutte le zone` for a day already declared quiet, `Bollettino non ancora emesso` only for a day still undecided — which is what tomorrow is for most of every morning. The validity window is shown either way.
 
 **Tomorrow is fetched tolerantly, today is not.** If the *tomorrow* endpoint fails, the error is reported inside the message and today's alert still goes out. If the *today* endpoint fails, that is the monitor failing and the scheduler says so.
 
@@ -272,6 +274,13 @@ Avviso n. 72 del 2026 · emesso 21/08/2026 11:00
 
 📅 DOMANI — dal 22/08/2026 14:00 al 23/08/2026 14:00
 Bollettino non ancora emesso.
+```
+
+A quiet day, from a monitor set to 🟢 Sempre:
+
+```
+📅 OGGI — dal 24/08/2026 14:00 al 25/08/2026 14:00
+🟢 Nessuna allerta su tutte le zone.
 ```
 
 The bulletin repeats the same phenomena and scenario text on every zone in alert, so within each day they are de-duplicated and printed once.

@@ -17,6 +17,17 @@ drawn client-side — so read_url (and any other HTML fetcher) gets back
 calls a public, unauthenticated REST backend that returns the bulletin already
 structured, which is what this monitor reads. Nothing here parses HTML or PDF.
 
+Which of that backend's endpoints: the two the home page's own alert map calls,
+`findLastAllertaNew` and `findAllertaDomaniNew`. The `findLastBollettino` pair
+this monitor used until v4.7.4 answers a different question and leaves `dataDa`
+null on today's window, which is where the "dal ?" in the message came from.
+
+An empty zone list is not the same answer on the two days, and the site does not
+treat it as one: today's map is painted green when nothing is in alert, while
+tomorrow's is painted grey — "not decided yet" — until `checkAvviso` turns true.
+Mirrored here, because "bollettino non ancora emesso" printed over a day the
+region has already declared quiet is the same wrong answer in the other direction.
+
 Levels, as the region defines them:
   1 : 🟢 VERDE      — nessuna allerta
   2 : 🟡 GIALLO     — criticità ordinaria
@@ -35,9 +46,12 @@ _BASE_URL = ("https://centrofunzionale.regione.campania.it"
              "/CentroFunzionalePortaleRest/rest/bollettinometeo")
 
 _ENDPOINTS = {
-    "today":    f"{_BASE_URL}/findLastBollettino",
-    "tomorrow": f"{_BASE_URL}/findBollettinoDomani",
+    "today":    f"{_BASE_URL}/findLastAllertaNew",
+    "tomorrow": f"{_BASE_URL}/findAllertaDomaniNew",
 }
+
+# Same wrapper, keyed by bulletin id. See _with_detail.
+_DETAIL_URL = f"{_BASE_URL}/findByIdBollettino/{{bulletin_id}}"
 
 # The API returns the zone as a bare number; the names live only in the site's
 # JavaScript bundle, so they are carried here.
@@ -99,13 +113,58 @@ _STRINGS = {
 }
 
 
-async def _fetch_bulletin(day: str) -> dict:
-    """Fetch the raw bulletin JSON for 'today' or 'tomorrow'."""
-    url = _ENDPOINTS.get(day, _ENDPOINTS["today"])
+async def _get_json(url: str) -> dict:
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, headers={"Accept": "application/json"})
     resp.raise_for_status()
     return resp.json()
+
+
+async def _with_detail(data: dict) -> dict:
+    """Fill in the bulletin's own prose when the alert endpoint omits it.
+
+    The two endpoints feed the home page's map, which needs nothing but `zona`
+    and `livello` — the site fetches `fenomeni` and `scenari` separately, when a
+    zone is clicked. They come back inline today, and this monitor would lose
+    half its message the day that changes, so the detail endpoint is asked only
+    when the zones in alert arrive with no text at all: no extra request on the
+    common path, and none whatsoever on a day with no alert.
+    """
+    alerted = [z for z in (data.get("bollettinoMeteoBindList") or [])
+               if (z.get("livello") or 1) > 1]
+    bulletin_id = data.get("idBollettino")
+    if not alerted or bulletin_id is None:
+        return data
+    if any(z.get("fenomeni") or z.get("scenari") for z in alerted):
+        return data
+
+    # Best-effort: the levels are already in hand, and an alert without its
+    # scenario text still has to reach the phone.
+    try:
+        detail = await _get_json(_DETAIL_URL.format(bulletin_id=bulletin_id))
+    except Exception:
+        return data
+    zones = (detail or {}).get("bollettinoMeteoBindList") or []
+    return {**data, "bollettinoMeteoBindList": zones} if zones else data
+
+
+async def _fetch_bulletin(day: str) -> dict:
+    """Fetch the bulletin JSON for 'today' or 'tomorrow'."""
+    data = await _get_json(_ENDPOINTS.get(day, _ENDPOINTS["today"]))
+    return await _with_detail(data) if isinstance(data, dict) else data
+
+
+def _is_issued(data, day: str) -> bool:
+    """Has the region already decided this window, or is it still undecided?
+
+    Only tomorrow can be undecided, and the site says so through `checkAvviso`:
+    its map for tomorrow is grey until that flag turns true, green afterwards.
+    Today's window is running, so its map is green whenever no zone is listed —
+    an empty list there means "nessuna allerta", never "not published yet".
+    """
+    if day != "tomorrow":
+        return True
+    return bool(isinstance(data, dict) and data.get("checkAvviso"))
 
 
 def _level_label(level: int, lang: str) -> str:
@@ -145,7 +204,7 @@ def _max_level(data) -> int:
     return max((z.get("livello") or 1) for z in zones) if zones else 1
 
 
-def _day_block(data, s: dict, heading: str, lang: str) -> list[str]:
+def _day_block(data, s: dict, heading: str, lang: str, issued: bool = True) -> list[str]:
     """Render one day's bulletin: heading, validity, zones, phenomena, scenarios."""
     lines = [heading]
 
@@ -163,7 +222,7 @@ def _day_block(data, s: dict, heading: str, lang: str) -> list[str]:
 
     zones = data.get("bollettinoMeteoBindList") or []
     if not zones:
-        lines.append(s["not_issued"])
+        lines.append(s["all_green"] if issued else s["not_issued"])
         return lines
 
     if data.get("numeroAvviso") is not None:
@@ -221,9 +280,9 @@ def _format_report(today, tomorrow, tz_name: str, lang: str) -> str:
         f"🕐 {datetime.now(tz).strftime('%d/%m/%Y %H:%M')} ({tz_name})",
         "",
     ]
-    lines += _day_block(today, s, s["today"], lang)
+    lines += _day_block(today, s, s["today"], lang, _is_issued(today, "today"))
     lines += [""]
-    lines += _day_block(tomorrow, s, s["tomorrow"], lang)
+    lines += _day_block(tomorrow, s, s["tomorrow"], lang, _is_issued(tomorrow, "tomorrow"))
     lines += ["", s["footer"]]
     return "\n".join(lines)
 
