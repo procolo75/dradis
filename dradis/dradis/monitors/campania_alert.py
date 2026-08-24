@@ -28,6 +28,14 @@ tomorrow's is painted grey — "not decided yet" — until `checkAvviso` turns t
 Mirrored here, because "bollettino non ancora emesso" printed over a day the
 region has already declared quiet is the same wrong answer in the other direction.
 
+The validity window belongs to the avviso, and only to it. A real one carries its
+own hours and they vary widely — across 235 avvisi from 2024-2026 the window
+starts at eighteen distinct hours, 00:00 the most common at a quarter of them and
+14:00 second at one in seven. On a day with no avviso the backend still answers
+`dataDa`/`dataA`, computed as today 14:00 → tomorrow 14:00, with every other field
+null. That is a placeholder, not a window anyone declared, so nothing prints its
+hours: a day with no avviso is headed by its date alone.
+
 Levels, as the region defines them:
   1 : 🟢 VERDE      — nessuna allerta
   2 : 🟡 GIALLO     — criticità ordinaria
@@ -172,6 +180,12 @@ def _level_label(level: int, lang: str) -> str:
     return f"{emoji} {en_name if lang == 'en' else it_name}"
 
 
+def _day_only(raw) -> str:
+    """The date out of the API's "HH:MM - DD/MM/YYYY", without the clock."""
+    text = str(raw or "").strip()
+    return text.partition(" - ")[2].strip() if " - " in text else text
+
+
 def _stamp(raw) -> str:
     """Turn the API's "HH:MM - DD/MM/YYYY" into "DD/MM/YYYY HH:MM".
 
@@ -215,15 +229,22 @@ def _day_block(data, s: dict, heading: str, lang: str, issued: bool = True) -> l
         lines.append(s["unavailable"].format(reason=html.escape(reason)))
         return lines
 
+    zones = data.get("bollettinoMeteoBindList") or []
+
+    # No avviso, no window: the hours the backend answers with here are its own
+    # invention (see the module docstring), so only the day itself is printed.
+    if not zones:
+        # dataA is deliberately not a fallback: it names the day the window
+        # would have ended, which is the day after the one being reported.
+        day = _day_only(data.get("dataDa"))
+        lines[0] = f"{heading} ({html.escape(day)})" if day else heading
+        lines.append(s["all_green"] if issued else s["not_issued"])
+        return lines
+
     validity = s["validity"].format(
         start=html.escape(_stamp(data.get("dataDa")) or "?"),
         end=html.escape(_stamp(data.get("dataA")) or "?"))
     lines[0] = f"{heading} — {validity}"
-
-    zones = data.get("bollettinoMeteoBindList") or []
-    if not zones:
-        lines.append(s["all_green"] if issued else s["not_issued"])
-        return lines
 
     if data.get("numeroAvviso") is not None:
         lines.append(s["notice"].format(

@@ -134,9 +134,11 @@ class BothDaysTest(unittest.TestCase):
 
     def test_an_unpublished_tomorrow_is_said_so_not_hidden(self):
         out = _run({"min_level": 2}, _bulletin({1: 2}), _unpublished())
-        self.assertIn("non ancora emesso", out)
-        # Its window is known even before it is issued, so it is still shown.
-        self.assertIn("22/08/2026 14:00", out)
+        tomorrow = out.split("DOMANI")[1]
+        self.assertIn("non ancora emesso", tomorrow)
+        # Which day it is talking about is still said — see WindowTest for why
+        # the hours are not.
+        self.assertIn("22/08/2026", tomorrow)
 
     def test_each_day_keeps_its_own_notice_number(self):
         out = _run({"min_level": 2},
@@ -255,6 +257,46 @@ class ReportTest(unittest.TestCase):
         self.assertIn(_PHENOMENA, out)
 
 
+class WindowTest(unittest.TestCase):
+    """The validity window belongs to the avviso, and is printed only with one.
+
+    A real avviso carries its own hours and they vary: across 235 avvisi from
+    2024-2026 the window starts at eighteen distinct hours — 00:00 in a quarter
+    of them, 14:00 in one in seven, 18:00 in one in twenty. On a day with no
+    avviso the backend answers `dataDa`/`dataA` anyway, computed as today 14:00 →
+    tomorrow 14:00 with every other field null. Printing that as a window states
+    something the region never said.
+    """
+
+    def test_a_real_avviso_prints_its_own_hours_whatever_they_are(self):
+        for start, end in (("00:00", "23:59"), ("13:00", "20:00"), ("18:00", "08:00")):
+            today = {**_bulletin({1: 2}),
+                     "dataDa": f"{start} - 21/08/2026", "dataA": f"{end} - 22/08/2026"}
+            out = _run({"min_level": 2}, today, _unpublished())
+            self.assertIn(f"dal 21/08/2026 {start} al 22/08/2026 {end}", out)
+
+    def test_a_day_with_no_avviso_is_headed_by_its_date_alone(self):
+        out = _run({"min_level": 1}, _no_zones(issued=True, day="24/08/2026"), _unpublished())
+        today = out.split("DOMANI")[0]
+        self.assertIn("(24/08/2026)", today)
+        # The backend's placeholder hours must not reach the message.
+        self.assertNotIn("14:00", today)
+        self.assertNotIn("dal", today)
+
+    def test_the_day_shown_is_the_one_being_reported(self):
+        # dataA names the day the window would have ended — one day later.
+        tomorrow = {**_unpublished(), "dataDa": "14:00 - 25/08/2026",
+                    "dataA": "14:00 - 26/08/2026"}
+        out = _run({"min_level": 1}, _bulletin({}), tomorrow).split("DOMANI")[1]
+        self.assertIn("25/08/2026", out)
+        self.assertNotIn("26/08/2026", out)
+
+    def test_a_missing_date_leaves_a_bare_heading(self):
+        out = _run({"min_level": 1}, {**_no_zones(issued=True), "dataDa": None},
+                   _unpublished())
+        self.assertIn("<b>OGGI</b>\n", out)
+
+
 class EndpointTest(unittest.TestCase):
     """The two endpoints the site's own home-page map calls, and no others.
 
@@ -329,6 +371,12 @@ class HelpersTest(unittest.TestCase):
     def test_stamp_leaves_anything_else_alone(self):
         for raw in ("21/08/2026", "", None, "aggiornamento - straordinario"):
             self.assertEqual(_stamp(raw), str(raw or "").strip())
+
+    def test_day_only_drops_the_clock(self):
+        from monitors.campania_alert import _day_only
+        self.assertEqual(_day_only("14:00 - 25/08/2026"), "25/08/2026")
+        for raw in ("25/08/2026", "", None):
+            self.assertEqual(_day_only(raw), str(raw or "").strip())
 
     def test_dedup_keeps_order_and_drops_blanks(self):
         self.assertEqual(_dedup(["b", "", "a", "b", None, " a "]), ["b", "a"])

@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## [4.7.5] - 2026-08-24
+
+**The 14:00 in yesterday's message was invented by the backend, and the monitor printed it as fact.** "📅 OGGI — dal 24/08/2026 14:00 al 25/08/2026 14:00" over a day with no avviso at all. Nothing in this monitor has ever hardcoded an hour — it prints `dataDa`/`dataA` verbatim — but on a day with no avviso those two fields are the *only* ones the backend fills in: `idBollettino`, `dataEmissione`, `numeroAvviso` and `firmaBollettino` all come back null, and `dataDa`/`dataA` come back computed as today 14:00 → tomorrow 14:00. A placeholder, printed as a window the region had declared.
+
+**The validity window belongs to the avviso, and its hours vary with it.** Across the 235 avvisi issued in 2024–2026 the window starts at **eighteen distinct hours** — `00:00` in a quarter of them, `14:00` in one in seven, then `13:00`, `12:00`, `20:00`, `18:00` and eleven more. The commonest windows are `00:00 → 23:59`, `14:00 → 14:00`, `13:00 → 20:00`, `20:00 → 20:00`. There is no standard window to fall back on, which is exactly why inventing one is wrong.
+
+- **Fix — no avviso, no hours.** A day with no zones listed is now headed by its date alone: `📅 OGGI (24/08/2026)`, `📅 DOMANI (25/08/2026)`. Which day is being reported is still said; the hours are not, because nobody declared them. A real avviso still prints its own window in full, whatever it is.
+- **Fix — the docs said "valid from 14:00 to 14:00 the following day".** True of 13.6% of avvisi. `DOCS.md`, the wiki and the field help in the Web UI now carry the real distribution instead of a generalisation from one example.
+- `dataA` is deliberately not a fallback when `dataDa` is missing: it names the day the window would have *ended*, which is the day after the one being reported.
+
+Tests: 632 (was 627). `test_campania_alert.py` grows to 46 (was 41) with a `WindowTest` class: a real avviso prints `00:00 → 23:59`, `13:00 → 20:00` and `18:00 → 08:00` unchanged; a day without one prints its date and no hours; the day shown is the one being reported, not `dataA`'s.
+
 ## [4.7.4] - 2026-08-24
 
 **Every quiet day was reported as a day the region had said nothing.** "📅 OGGI — dal **?** al 25/08/2026 14:00 · *Bollettino non ancora emesso*", at 15:00, an hour into a window Regione Campania had already declared green. Two mistakes stacked on top of each other, and both of them are visible in that one line.

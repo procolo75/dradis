@@ -226,6 +226,8 @@ Both days rather than a choice between them: the question this monitor answers i
 
 **If every zone is below the configured level on both days, no message is sent.** A single zone reaching the level on either day is enough to fire, so an orange tomorrow reports even when today is entirely green.
 
+**Alert hours are read, never assumed.** The validity window belongs to the avviso and its hours vary a lot: across the 235 avvisi of 2024–2026 the window starts at eighteen distinct hours — `00:00` in a quarter of them, `14:00` in one in seven, `18:00` in one in twenty. The monitor prints the window the API answers with. On a day with **no** avviso there is no window: the backend answers a computed `14:00 → 14:00` placeholder with every other field null, so only the date is printed — `📅 OGGI (24/08/2026)`.
+
 **A day with no zones listed is not automatically a day with no bulletin.** The region issues an alert bulletin only when there is an alert, so a quiet day comes back with an empty zone list — and the site's own map paints today green for it, while it paints tomorrow grey until the response's `checkAvviso` flag says the region has decided. The report mirrors that map: `🟢 Nessuna allerta su tutte le zone` for a day already declared quiet, `Bollettino non ancora emesso` only for a day still undecided — which is what tomorrow is for most of every morning. The validity window is shown either way.
 
 **Tomorrow is fetched tolerantly, today is not.** If the *tomorrow* endpoint fails, the error is reported inside the message and today's alert still goes out. If the *today* endpoint fails, that is the monitor failing and the scheduler says so.
@@ -276,11 +278,14 @@ Avviso n. 72 del 2026 · emesso 21/08/2026 11:00
 Bollettino non ancora emesso.
 ```
 
-A quiet day, from a monitor set to 🟢 Sempre:
+A quiet day, from a monitor set to 🟢 Sempre — no avviso, so no window, so no hours:
 
 ```
-📅 OGGI — dal 24/08/2026 14:00 al 25/08/2026 14:00
+📅 OGGI (24/08/2026)
 🟢 Nessuna allerta su tutte le zone.
+
+📅 DOMANI (25/08/2026)
+Bollettino non ancora emesso.
 ```
 
 The bulletin repeats the same phenomena and scenario text on every zone in alert, so within each day they are de-duplicated and printed once.
