@@ -8,9 +8,9 @@ Why this module exists
 ──────────────────────
 Both ring monitors need to answer the same question — *where does this monitor
 think it is, and should you believe it* — and neither of them needed to answer it
-before, because a monitor that cannot trust its position simply goes silent. That
-silence is correct behaviour and useless diagnostics: from the outside, "frozen
-because the fix is 40 minutes old" and "nothing is happening" look identical.
+before, because a monitor that cannot trust its position simply went silent. That
+silence was correct behaviour and useless diagnostics: from the outside, "frozen
+because the fix is 40 minutes old" and "nothing is happening" looked identical.
 
 `current()`, deliberately, not `usable()`
 ─────────────────────────────────────────
@@ -18,14 +18,24 @@ because the fix is 40 minutes old" and "nothing is happening" look identical.
 None when they are not met — which is precisely the case a diagnostic command
 exists to explain. Asking it would reduce the interesting answer to "no
 position". `current()` returns the last fix whatever its state, and the
-thresholds are then applied HERE, so the report can say *why* the monitor is not
-using it.
+thresholds are then applied HERE, so the report can say what is imperfect about
+the point the monitor is measuring from.
+
+`describe_origin` follows the same chain the monitors do
+────────────────────────────────────────────────────────
+Since v4.8.0 an old fix is a legitimate origin, so this module grades rather than
+rejects: `usable` means "the monitor can measure from here" and `reason` says
+what is wrong with the point. A report that called a 41-minute-old fix blindness
+while the monitor was alerting from that very fix would be worse than no report.
+
+`origin_line` is the alert's half of the same vocabulary. It is the only thing in
+this module that reaches a real alert, and it exists because the fallback is only
+defensible when the message admits which origin it used.
 
 Describing is not resolving
 ───────────────────────────
-Nothing in this module feeds a decision. `_resolve_origin()` stays untouched in
-both monitors, so the storm front's shipped and tested decision path is not
-disturbed by a feature that only ever reads.
+Nothing here feeds a decision. `_resolve_origin()` owns the chain in both
+monitors; this module reads the same inputs and renders them.
 """
 
 import html
@@ -34,7 +44,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .geo import direction_label
-from .position import position_manager
+from .position import (ORIGIN_FALLBACK, ORIGIN_FRESH, ORIGIN_PARKED,
+                       position_manager)
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,11 @@ class OriginInfo:
     course_deg: float | None = None
     moving: bool = False
     missing: bool = False            # follows a position that no longer exists
+    # True when the coordinates above are the monitor's OWN configured point
+    # rather than a fix — it follows a position it has never heard from. The
+    # monitor still measures, so `usable` stays True; this is what keeps the
+    # report from presenting a fallback as the phone.
+    fallback: bool = False
 
     @property
     def has_fix(self) -> bool:
@@ -67,8 +83,7 @@ class OriginInfo:
         """
         if not self.has_fix:
             return ""
-        return (f"https://www.openstreetmap.org/?mlat={self.lat:.5f}"
-                f"&mlon={self.lon:.5f}#map=13/{self.lat:.5f}/{self.lon:.5f}")
+        return map_url(self.lat, self.lon)
 
     def heading_label(self, lang: str) -> str | None:
         if not self.moving or self.course_deg is None:
@@ -81,8 +96,15 @@ def describe_origin(monitor, now: float) -> OriginInfo:
 
     `monitor` is a StormFrontLiveMonitor or a RainFrontLiveMonitor; only the
     configuration attributes they share are read.
+
+    It follows the same chain `_resolve_origin` does, because a diagnostic that
+    reported "blind, the fix is 41 minutes old" while the monitor was cheerfully
+    alerting from that very fix would be worse than no diagnostic at all. What
+    it adds is the WHY: `usable` says the monitor can measure, and `reason` says
+    what is imperfect about the point it measures from.
     """
     fixed = (float(monitor.latitude), float(monitor.longitude))
+    has_point = bool(fixed[0] or fixed[1])
 
     if not monitor.position_id:
         return OriginInfo(
@@ -91,20 +113,22 @@ def describe_origin(monitor, now: float) -> OriginInfo:
         )
 
     name = position_manager.name_of(monitor.position_id)
-    if name is None:
-        # The position was deleted and the monitor still points at it. It cannot
-        # alert at all, and nothing else about it is worth reporting.
-        return OriginInfo(
-            lat=None, lon=None, following=True, source_name=monitor.position_id,
-            usable=False, missing=True,
-            reason="the position it follows no longer exists",
-        )
-
     state = position_manager.current(monitor.position_id, now)
+
     if state is None:
+        # Either the position was deleted, or nothing has ever arrived from it.
+        # Both fall back to the monitor's own coordinates; only having none of
+        # those is actual blindness.
+        missing = name is None
+        why = ("the position it follows no longer exists" if missing
+               else "no fix received yet")
         return OriginInfo(
-            lat=None, lon=None, following=True, source_name=name, usable=False,
-            reason="no fix received yet",
+            lat=fixed[0] if has_point else None,
+            lon=fixed[1] if has_point else None,
+            following=True, source_name=name or monitor.position_id,
+            usable=has_point, missing=missing, fallback=has_point,
+            reason=(f"{why} — measuring from the fallback location" if has_point
+                    else f"{why}, and no fallback location is configured"),
         )
 
     max_age = position_manager.max_age_sec(monitor.position_id)
@@ -113,8 +137,11 @@ def describe_origin(monitor, now: float) -> OriginInfo:
 
     reason = ""
     if state.age_sec > max_age:
+        parked = getattr(state, "stationary_at_last_report", False)
         reason = (f"the last fix is {state.age_sec / 60:.0f} min old, past the "
                   f"{max_age / 60:.0f} min limit")
+        reason += (" — but it was standing still when it last reported" if parked
+                   else ", and it was moving when it last reported")
     elif (max_accuracy is not None and state.accuracy_m is not None
             and state.accuracy_m > max_accuracy):
         reason = (f"the fix is accurate to ±{state.accuracy_m:.0f} m, past the "
@@ -127,7 +154,7 @@ def describe_origin(monitor, now: float) -> OriginInfo:
     # false anchor from `/monitors`; it must not come back through a diagnostic.
     return OriginInfo(
         lat=state.lat, lon=state.lon, following=True, source_name=name,
-        usable=not reason, reason=reason,
+        usable=True, reason=reason,
         age_sec=state.age_sec, accuracy_m=state.accuracy_m,
         speed_kmh=state.speed_kmh, course_deg=state.course_deg,
         moving=state.moving,
@@ -331,8 +358,16 @@ def _format_origin(origin, it: bool, voice: bool = False) -> list[str]:
     # following a position that was deleted is silently watching nowhere, and
     # that has to be said however you are listening.
     if origin.missing:
-        return ["⚠️ " + ("Segue una posizione che non esiste più."
-                         if it else "It follows a position that no longer exists.")]
+        lines = ["⚠️ " + ("Segue una posizione che non esiste più."
+                          if it else "It follows a position that no longer exists.")]
+        if not origin.fallback:
+            return lines
+        lines.append("   " + ("Misura dalla posizione di ripiego." if it
+                              else "Measuring from the fallback location."))
+        if voice:
+            return lines
+        lines.append(f"   <code>{origin.lat:.5f}, {origin.lon:.5f}</code>")
+        return lines
 
     # Everything below answers "is the instrument telling the truth" — where it
     # believes it is, to five decimals, with a map to check against, how old the
@@ -343,7 +378,12 @@ def _format_origin(origin, it: bool, voice: bool = False) -> list[str]:
     if voice:
         return []
 
-    if origin.following:
+    if origin.following and origin.fallback:
+        head = (f"📍 Origine: ripiego — nessun dato da "
+                f"«{html.escape(origin.source_name)}»" if it else
+                f"📍 Origin: fallback — no data from "
+                f"“{html.escape(origin.source_name)}”")
+    elif origin.following:
         head = (f"📍 Origine: posizione «{html.escape(origin.source_name)}»" if it
                 else f"📍 Origin: position “{html.escape(origin.source_name)}”")
     else:
@@ -360,7 +400,7 @@ def _format_origin(origin, it: bool, voice: bool = False) -> list[str]:
     lines.append(f"   <code>{origin.lat:.5f}, {origin.lon:.5f}</code> · "
                  f"<a href=\"{origin.map_url}\">{label}</a>")
 
-    if origin.following:
+    if origin.following and not origin.fallback:
         bits = []
         if origin.age_sec is not None:
             bits.append(f"fix {_ago(origin.age_sec, it)}")
@@ -463,13 +503,65 @@ def _tz(tz_name: str) -> ZoneInfo:
 
 
 def _ago(seconds: float, it: bool) -> str:
-    """How stale a fix is, worded so a fresh one does not read as "0 s ago"."""
+    """How stale a fix is, worded so a fresh one does not read as "0 s ago".
+
+    Hours above ninety minutes, because "di 232 min fa" is a number the reader has
+    to divide before it means anything — and a fix that old is exactly the case
+    this wording exists to make obvious.
+    """
     if seconds < 15:
         return "appena aggiornato" if it else "just updated"
     if seconds < 90:
         return f"di {seconds:.0f} s fa" if it else f"{seconds:.0f} s old"
-    return f"di {seconds / 60:.0f} min fa" if it else f"{seconds / 60:.0f} min old"
+    if seconds < 5400:
+        return f"di {seconds / 60:.0f} min fa" if it else f"{seconds / 60:.0f} min old"
+    return f"di {seconds / 3600:.1f} h fa" if it else f"{seconds / 3600:.1f} h old"
 
 
-__all__ = ["OriginInfo", "Snapshot", "describe_origin", "preview_alert",
-           "format_caption"]
+def map_url(lat: float, lon: float) -> str:
+    """A link the reader can tap to see a point on a real map."""
+    return (f"https://www.openstreetmap.org/?mlat={lat:.5f}"
+            f"&mlon={lon:.5f}#map=13/{lat:.5f}/{lon:.5f}")
+
+
+def origin_line(lat: float, lon: float, grade: str, lang: str = "it", *,
+                age_sec: float | None = None, position_name: str = "") -> str:
+    """One line naming the point every distance in the message was measured from.
+
+    An alert used to identify its origin by NAME alone — "Cellulare di Procolo" —
+    which was enough while a monitor following a position either had a fresh fix
+    or said nothing at all. It stopped being enough the moment an old fix became
+    a legitimate origin: the same header would then head an alert measured three
+    hours and two hundred kilometres away from where the reader is standing.
+
+    So the coordinates and the age are the price of the fallback, not an
+    ornament. The reader can tap the link and settle in one second the only
+    question that matters — is this measured from where I actually am.
+    """
+    it = lang == "it"
+    coords = f"{lat:.4f}, {lon:.4f}"
+    where = f"<a href=\"{map_url(lat, lon)}\">{coords}</a>"
+
+    if grade == ORIGIN_FALLBACK:
+        if position_name:
+            tail = (f"posizione fissa — nessun dato da «{html.escape(position_name)}»"
+                    if it else
+                    f"fixed point — no data from “{html.escape(position_name)}”")
+        else:
+            tail = "posizione fissa" if it else "fixed point"
+    elif grade == ORIGIN_FRESH:
+        tail = (f"fix {_ago(age_sec, it)}" if age_sec is not None
+                else ("fix attuale" if it else "current fix"))
+    else:
+        # PARKED and STALE differ by one word, and it is the word that says
+        # whether the age is explained or merely reported.
+        tail = (f"ultimo dato {_ago(age_sec or 0.0, it)}" if it
+                else f"last known {_ago(age_sec or 0.0, it)}")
+        if grade == ORIGIN_PARKED:
+            tail += " (fermo)" if it else " (stationary)"
+
+    return f"📌 {where} · {tail}"
+
+
+__all__ = ["OriginInfo", "Snapshot", "describe_origin", "map_url", "origin_line",
+           "preview_alert", "format_caption"]

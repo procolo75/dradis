@@ -1465,11 +1465,11 @@ mqtt_statestream:
             <label for="pos-f-max-age">Maximum fix age (minutes)</label>
             <input type="number" id="pos-f-max-age" min="1" max="240" step="1" style="width:100px">
             <small style="color:var(--text-muted);margin-top:4px;display:block">
-              Older than this and a monitor following this position stops alerting until it
-              comes back — there is no fallback, because watching somewhere else instead
-              would answer a different question without saying so. While a storm is in
-              progress this budget is tripled, so losing GPS in a tunnel does not blind the
-              monitor mid-event.
+              How fresh a fix has to be to be treated as <i>current</i>. Past this the fix is
+              still used — a phone that stops moving stops publishing, so an old fix is
+              usually the evidence that you have not moved — but the alert says so, printing
+              the coordinates it measured from and their age. While a storm is in progress
+              this budget is tripled, so losing GPS in a tunnel does not even count as old.
             </small>
           </div>
 
@@ -4279,7 +4279,7 @@ function renderLiveMonitorForm(monitor) {
       </div>
 
       <div class="form-group" id="lm-location-block">
-        <label for="lm-location">Location</label>
+        <label for="lm-location" id="lm-location-label">Location</label>
         <input type="text" id="lm-location" value="${monitor.location || ""}" placeholder="e.g. Bacoli, Rome...">
         <div class="model-hint" id="lm-location-hint"></div>
         <input type="hidden" id="lm-latitude"  value="${monitor.latitude  || 0}">
@@ -4378,6 +4378,7 @@ function renderLiveMonitorForm(monitor) {
 
           <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:6px">A typical alert looks like this:</div>
           <pre style="margin:0 0 12px 0;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-size:0.76rem;line-height:1.5;white-space:pre-wrap">🌧️ Pioggia nel raggio &mdash; Casa
+📌 40.7988, 14.1123 · fix di 3 min fa
 📍 Fronte a 26 km a O (270°)
 🌧️ Intensità massima 18.0 mm/h (forte)
 🎯 Anello 1/4 · entro 30 km
@@ -4429,6 +4430,7 @@ function renderLiveMonitorForm(monitor) {
 
           <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:6px">A typical alert looks like this:</div>
           <pre style="margin:0 0 12px 0;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-size:0.76rem;line-height:1.5;white-space:pre-wrap">⚡ Storm closing in &mdash; Bacoli
+📌 40.7988, 14.1123 · fix 3 min old
 📍 Front at 18 km to NW (307°)
 🎯 Ring 2/4 · within 20 km
 🧭 Constant bearing: heading straight for you
@@ -4523,16 +4525,20 @@ function renderLiveMonitorForm(monitor) {
   `;
 
   function _lmApplyOrigin() {
-    // Following a position, the Location field is not a fallback — it is nothing
-    // at all, so it disappears. Showing a place to watch next to "follow my
-    // phone" was a contradiction no label could explain away.
+    // Following a position, Location is the FALLBACK the monitor drops to when it
+    // has never heard from the phone. It used to disappear here, because a place
+    // to watch next to "follow my phone" read as a contradiction — and that left
+    // a monitor with nowhere to go, frozen and silent, exactly when the phone had
+    // simply stopped publishing. It is shown, relabelled, and explained instead.
     const select = document.getElementById("lm-position-id");
     const desc   = document.getElementById("lm-position-desc");
     const block  = document.getElementById("lm-location-block");
+    const label  = document.getElementById("lm-location-label");
     if (!select || !desc || !block) return;
 
     const followed = !!select.value;
-    block.style.display = followed ? "none" : "";
+    block.style.display = "";
+    if (label) label.textContent = followed ? "Fallback location" : "Location";
     if (!followed) {
       desc.textContent = "The radar is centred on the location below and stays there.";
       return;
@@ -4540,12 +4546,15 @@ function renderLiveMonitorForm(monitor) {
     const known = positions.some(p => p.id === select.value);
     desc.innerHTML = known
       ? "The radar follows this phone, so while travelling the distances — and the " +
-        "\"heading straight for you\" verdict — are about <b>where it is</b>. If its " +
-        "position goes missing or stale the monitor stops alerting until it comes back: " +
-        "there is no fallback, because watching somewhere else would answer a different " +
-        "question without saying so."
-      : "⚠️ This monitor follows a position that no longer exists, so it cannot alert at " +
-        "all. Pick another, or add it again in <b>Settings → Positions</b>.";
+        "\"heading straight for you\" verdict — are about <b>where it is</b>. A fix " +
+        "past its age limit is still used rather than discarded — a phone that stops " +
+        "moving stops publishing, and refusing that silence used to freeze the monitor " +
+        "for hours at home. If no fix has <i>ever</i> arrived it falls back to the " +
+        "location below. Every alert prints the coordinates it measured from and how " +
+        "old they are, so a fallback can never pass itself off as your phone."
+      : "⚠️ This monitor follows a position that no longer exists. It falls back to the " +
+        "location below; pick another position, or add it again in " +
+        "<b>Settings → Positions</b>.";
   }
 
   document.getElementById("lm-position-id")
@@ -5000,7 +5009,7 @@ function renderPositionsList() {
         <div style="font-size:0.82em;color:var(--text-muted);">${escHtml(p.lat_entity)} · ${escHtml(p.lon_entity)}</div>
       </div>
       <button class="btn-icon" title="Edit this position" onclick="editPosition('${p.id}')">✏️</button>
-      <button class="btn-icon" title="Delete — monitors following it will stop alerting until you pick another" onclick="deletePosition('${p.id}')">🗑️</button>
+      <button class="btn-icon" title="Delete — monitors following it fall back to their own coordinates until you pick another" onclick="deletePosition('${p.id}')">🗑️</button>
     </div>
   `).join("");
 }
@@ -5011,7 +5020,8 @@ function renderPositionSelector(currentId) {
     opts.push(`<option value="${p.id}"${currentId === p.id ? " selected" : ""}>📍 ${escHtml(p.name)}</option>`);
   }
   // A monitor pointing at a deleted position must not silently look like a fixed
-  // one: it is frozen, and the cause has to be visible.
+  // one: it has fallen back to its own coordinates, and the cause has to be
+  // visible — the alerts say where they measured from, but not why.
   if (currentId && !positions.some(p => p.id === currentId)) {
     opts.push(`<option value="${currentId}" selected>⚠️ Missing position — pick another</option>`);
   }

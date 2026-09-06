@@ -1,9 +1,10 @@
 """
 tests/test_storm_front_position.py
 ───────────────────────────────────
-The monitor's side of the dynamic origin: choosing where the radar is centred,
-going blind when that is unknown, noticing a relocation, aiming the feed, and
-wording the own-motion line.
+The monitor's side of the dynamic origin: the chain that chooses where the radar
+is centred, the one case left that still blinds it, noticing a relocation, aiming
+the feed, saying which point the message was measured from, and wording the
+own-motion line.
 
     cd dradis && python3 -m unittest discover tests
 
@@ -46,6 +47,9 @@ if "aiomqtt" not in sys.modules:
 
 from dradis.live_monitors import storm_front as SF                # noqa: E402
 from dradis.live_monitors.blitzortung import BlitzortungFeed      # noqa: E402
+from dradis.live_monitors.position import (                       # noqa: E402
+    ORIGIN_FALLBACK, ORIGIN_FRESH, ORIGIN_PARKED, ORIGIN_STALE,
+)
 from dradis.live_monitors.position_core import PositionState      # noqa: E402
 from dradis.live_monitors.storm_front_core import (               # noqa: E402
     EVENT_ACTIVE, EVENT_IDLE, TRACK_CLOSING,
@@ -79,27 +83,41 @@ def make_send(_cfg):
 
 
 def state(lat=41.10, lon=14.55, age=30.0, speed=None, course=None,
-          accuracy=15.0, discontinuity=0) -> PositionState:
+          accuracy=15.0, discontinuity=0, parked=False) -> PositionState:
     return PositionState(
         lat=lat, lon=lon, t=T0 - age, age_sec=age, accuracy_m=accuracy,
         speed_kmh=speed, course_deg=course,
         moving=speed is not None and speed >= 15.0,
         discontinuity=discontinuity,
+        stationary_at_last_report=parked,
     )
 
 
 class FakeManager:
-    """Stands in for the singleton position manager."""
+    """Stands in for the singleton position manager.
 
-    def __init__(self, usable=None, name="My phone", max_age=900.0):
+    `resolve` is what the monitor asks now; `usable` is kept because the
+    diagnostic path still asks it, and because the budget assertions read the
+    same call log either way.
+    """
+
+    def __init__(self, usable=None, name="My phone", max_age=900.0,
+                 grade=ORIGIN_FRESH):
         self._usable = usable
         self._name = name
         self._max_age = max_age
+        self._grade = grade
         self.calls = []
 
     def usable(self, position_id, now=None, max_age_sec=None):
         self.calls.append((position_id, max_age_sec))
         return self._usable
+
+    def resolve(self, position_id, now=None, max_age_sec=None):
+        self.calls.append((position_id, max_age_sec))
+        if self._usable is None:
+            return None
+        return self._usable, self._grade
 
     def current(self, position_id, now=None):
         return self._usable
@@ -131,15 +149,34 @@ class OriginSelectionTest(unittest.TestCase):
         with mock.patch.object(SF, "position_manager", manager):
             self.assertEqual(monitor._resolve_origin(T0), (41.10, 14.55))
 
-    def test_no_usable_fix_means_no_origin_at_all(self):
-        # THE design point: there is no fallback. Watching the configured house
-        # while the user is elsewhere answers a different question without saying
-        # so, and None is how the monitor says "I do not know where I am".
+    def test_a_stale_fix_is_still_an_origin(self):
+        # THE change of v4.8.0. A phone standing still stops publishing, so an old
+        # fix is the commonest evidence of "I have not moved" — refusing it froze
+        # the monitor for hours at home, in silence.
+        manager = FakeManager(usable=state(age=7200.0, parked=True),
+                              grade=ORIGIN_PARKED)
+        monitor = self._monitor(position_id=POSITION_ID)
+        with mock.patch.object(SF, "position_manager", manager):
+            self.assertEqual(monitor._resolve_origin(T0), (41.10, 14.55))
+        self.assertEqual(monitor._origin_grade, ORIGIN_PARKED)
+        self.assertEqual(monitor._origin_age_sec, 7200.0)
+
+    def test_no_fix_at_all_falls_back_to_the_configured_point(self):
         manager = FakeManager(usable=None)
         monitor = self._monitor(position_id=POSITION_ID)
         with mock.patch.object(SF, "position_manager", manager):
-            self.assertIsNone(monitor._resolve_origin(T0))
+            self.assertEqual(monitor._resolve_origin(T0), HOME)
         self.assertIsNone(monitor._motion)
+        self.assertEqual(monitor._origin_grade, ORIGIN_FALLBACK)
+
+    def test_neither_a_fix_nor_coordinates_means_no_origin_at_all(self):
+        # The one blindness left. 0,0 is the Atlantic: alerting from there is
+        # worse than the silence it would replace.
+        manager = FakeManager(usable=None)
+        monitor = self._monitor(position_id=POSITION_ID, latitude=0.0,
+                                longitude=0.0)
+        with mock.patch.object(SF, "position_manager", manager):
+            self.assertIsNone(monitor._resolve_origin(T0))
 
     def test_an_open_event_buys_patience_with_a_stale_fix(self):
         # Losing GPS in a tunnel mid-storm must not blind the monitor while the
@@ -160,22 +197,27 @@ class OriginSelectionTest(unittest.TestCase):
             monitor._resolve_origin(T0)
         self.assertEqual(manager.calls, [(POSITION_ID, None)])
 
-    def test_a_deleted_position_is_simply_unknown(self):
-        # Deleting a position must not throw; the monitor goes blind, which is the
-        # same honest answer as a phone that stopped reporting.
+    def test_a_deleted_position_falls_back_rather_than_throwing(self):
         manager = FakeManager(usable=None, name=None)
         monitor = self._monitor(position_id="gone")
         with mock.patch.object(SF, "position_manager", manager):
-            self.assertIsNone(monitor._resolve_origin(T0))
+            self.assertEqual(monitor._resolve_origin(T0), HOME)
 
 
 class BlindnessTest(unittest.IsolatedAsyncioTestCase):
-    """No position, no perception. The dangerous failure is announcing calm while
-    blind, so that is what gets asserted."""
+    """Nothing to centre on, no perception. The dangerous failure is announcing
+    calm while blind, so that is what gets asserted.
+
+    Since v4.8.0 reaching this state takes both halves — no fix ever received AND
+    no configured coordinates to fall back to — so these monitors are built
+    without coordinates. Everything asserted below is the behaviour that must
+    survive the fallback, not the fallback itself.
+    """
 
     def _monitor(self, manager):
-        monitor = SF.StormFrontLiveMonitor(config(position_id=POSITION_ID),
-                                           send_ok, "Europe/Rome")
+        monitor = SF.StormFrontLiveMonitor(
+            config(position_id=POSITION_ID, latitude=0.0, longitude=0.0),
+            send_ok, "Europe/Rome")
         monitor._feed = mock.MagicMock()
         monitor._feed.strikes.return_value = []
         monitor._feed.feed_ok.return_value = True
@@ -247,6 +289,67 @@ class BlindnessTest(unittest.IsolatedAsyncioTestCase):
             await monitor._tick(notify=True)
         self.assertEqual(monitor._tracker.event_state, EVENT_ACTIVE)
         self.assertEqual(monitor._tracker.notified_ring, 2)
+
+
+class OriginLineTest(unittest.TestCase):
+    """Every alert says which point it was measured from, and how old it is.
+
+    The fallback is only defensible because of this line: an alert measured from
+    a three-hour-old fix and one measured from the phone in your pocket used to
+    be typographically identical.
+    """
+
+    def _monitor(self, **kw):
+        return SF.StormFrontLiveMonitor(config(**kw), send_ok, "Europe/Rome")
+
+    def _line(self, manager, **kw):
+        monitor = self._monitor(position_id=POSITION_ID, **kw)
+        with mock.patch.object(SF, "position_manager", manager):
+            monitor._resolve_origin(T0)
+            return monitor._origin_line()
+
+    def test_a_fresh_fix_carries_its_coordinates_and_age(self):
+        line = self._line(FakeManager(usable=state(age=180.0)))
+        self.assertIn("41.1000, 14.5500", line)
+        self.assertIn("3 min", line)
+
+    def test_a_parked_fix_says_it_is_parked(self):
+        line = self._line(FakeManager(usable=state(age=7200.0, parked=True),
+                                      grade=ORIGIN_PARKED))
+        self.assertIn("ultimo dato", line)
+        self.assertIn("fermo", line)
+
+    def test_a_stale_fix_does_not_claim_to_be_parked(self):
+        line = self._line(FakeManager(usable=state(age=7200.0),
+                                      grade=ORIGIN_STALE))
+        self.assertIn("ultimo dato", line)
+        self.assertNotIn("fermo", line)
+
+    def test_the_fallback_names_the_position_it_heard_nothing_from(self):
+        line = self._line(FakeManager(usable=None, name="Cellulare di Procolo"))
+        self.assertIn("40.8500, 14.2700", line)
+        self.assertIn("posizione fissa", line)
+        self.assertIn("Cellulare di Procolo", line)
+
+    def test_a_fixed_monitor_says_fixed_and_nothing_else(self):
+        monitor = self._monitor()
+        line = monitor._origin_line()
+        self.assertIn("40.8500, 14.2700", line)
+        self.assertIn("posizione fissa", line)
+        self.assertNotIn("«", line)
+
+    def test_the_line_reaches_both_kinds_of_message(self):
+        from dradis.live_monitors.storm_front_core import ClearAlert
+        monitor = self._monitor(position_id=POSITION_ID)
+        manager = FakeManager(usable=state(age=180.0))
+        with mock.patch.object(SF, "position_manager", manager):
+            monitor._resolve_origin(T0)
+            ring = monitor._format(ring_alert())
+            clear = monitor._format(ClearAlert(
+                ring_count=4, radius_km=30.0, closest_km=12.0, closest_ring=3,
+                closest_at=T0 - 1800, quiet_sec=600.0, event_duration_sec=3600.0))
+        self.assertIn("📌", ring)
+        self.assertIn("📌", clear)
 
 
 class LazyFeedTest(unittest.IsolatedAsyncioTestCase):

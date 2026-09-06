@@ -491,6 +491,8 @@ Repeat the three sensors per phone, with distinct names.
 
 `round(5)` is ~1 metre of resolution — precise enough for anything the storm front does, and it damps the GPS jitter that would otherwise republish constantly. The `availability` guard keeps `unknown` off the topic while the app has no fix yet.
 
+**A phone that stops moving stops publishing**, because `mqtt_statestream` fires on state *changes* and a parked phone has none. That silence used to be indistinguishable from a phone that had vanished, and both froze the monitor. Since v4.8.0 it no longer has to be distinguished by guesswork: the fix history says whether the observer was standing still when it last reported, and a standstill keeps its coordinates valid for as long as it lasts. See [Four grades of origin](#four-grades-of-origin).
+
 **If you already have an `mqtt_statestream` block, merge into it.** Home Assistant accepts only one, and a second would silently drop your current includes.
 
 **Keep `publish_timestamps: true`.** It publishes `last_updated` next to each value, which is the only way to date the *retained* message received on connect. Without it a position from yesterday arrives looking brand new and no staleness check can catch it.
@@ -505,7 +507,7 @@ Finally, raise the Companion app's location update frequency (*Settings → Comp
 | Latitude entity | *(blank)* | Topic path after the prefix, e.g. `sensor/phone_latitude`. |
 | Longitude entity | *(blank)* | As above. Both are required. |
 | GPS accuracy entity | *(blank)* | Optional. When unset, the accuracy threshold is not applied. |
-| Maximum fix age | `15` min | Older and a monitor following this position stops alerting until it comes back. Tripled while a storm is in progress. |
+| Maximum fix age | `15` min | How fresh a fix must be to count as *current*. Past it the fix is still used — and the alert says how old it is. Tripled while a storm is in progress. |
 | Maximum GPS accuracy | `500` m | Vaguer fixes are not used. |
 | Statestream prefix override | *(blank)* | Defaults to the global MQTT prefix. |
 
@@ -513,7 +515,7 @@ Finally, raise the Companion app's location update frequency (*Settings → Comp
 
 **Test connection** uses the values **currently on screen**, saved or not: testing a form you have not saved yet is the normal case. It connects with its own throwaway client, so the running manager is never disturbed. It reports the fix, its age, its accuracy and your speed, and names the threshold that failed — "no position at all" and "a position from two hours ago" are different problems with different fixes.
 
-**Deleting a position** does not rewrite the monitors following it. Silently converting them back to a fixed place would put them somewhere you never asked to watch, so they freeze instead, and their form shows the dangling reference.
+**Deleting a position** does not rewrite the monitors following it. They fall back to their own configured coordinates — saying so on every alert — and their form shows the dangling reference so the cause is visible rather than inferred.
 
 ### Scheduled Monitors
 
@@ -753,8 +755,8 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 
 | Type | Required fields |
 |------|----------------|
-| 🌩️ Storm front / CBDR | Where to watch, Location *(fixed only)*, Radius (km), Updates per storm, Radar, Language, Quiet hours *(optional)* |
-| 🌧️ Rain front | Where to watch, Location *(fixed only)*, Radius (km), Updates per event, Minimum intensity, Hail *(optional)*, Radar, Language, Quiet hours *(optional)* |
+| 🌩️ Storm front / CBDR | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per storm, Radar, Language, Quiet hours *(optional)* |
+| 🌧️ Rain front | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per event, Minimum intensity, Hail *(optional)*, Radar, Language, Quiet hours *(optional)* |
 | 🌍 Seismic live | Areas, Quiet hours |
 | ⚽ Football Betting | Minute windows, Quiet hours (API pause) |
 
@@ -832,7 +834,7 @@ These replace the threshold tuning of the previous six generations, and both are
 
 ##### Where to watch — a fixed place, or a phone
 
-**Where to watch** chooses where the radar is centred. `📌 A fixed place` (the default, and what every monitor configured before v4.1.0 inherits) uses the Location field and never consults the position manager. Selecting a position instead makes the monitor follow that phone — and the Location field disappears, because it is no longer used for anything.
+**Where to watch** chooses where the radar is centred. `📌 A fixed place` (the default, and what every monitor configured before v4.1.0 inherits) uses the Location field and never consults the position manager. Selecting a position instead makes the monitor follow that phone, and the Location field is relabelled **Fallback location**: it is what the monitor centres on if it has never heard from that phone at all. It used to disappear at that point — a place to watch beside "follow my phone" read as a contradiction — which left a following monitor with nowhere to go and no way to configure one.
 
 Nothing in the collision logic changed for this, and the reason is worth stating. The strike buffer holds **absolute** coordinates and the geometry is rebuilt against the current origin on every poll, so a moving origin simply produces a different — and correct — frame. CBDR then follows for free: it compares bearings and ranges *measured from the origin*, so a moving origin turns those into **relative** bearings and ranges, which is exactly what the mariner's rule was always defined on. Constant relative bearing with decreasing relative range means collision whether or not you are under way.
 
@@ -858,13 +860,38 @@ The 🚗 line appears when your course is within 45° of the front, otherwise `�
 
 The header is the **position's name**, not the configured place: it says where these distances were measured from, which is what you need to know when several phones are monitored.
 
-###### With no usable position, it freezes
+###### Four grades of origin
 
-There is **no fallback**. When the fix is missing, too old or too imprecise — or the position was deleted — the monitor does not know where it is and therefore perceives nothing.
+Until v4.8.0 the question was binary — is this fix usable? — and "no" meant the monitor perceived nothing. That is the right answer for a phone that vanished mid-journey and the wrong one for a phone parked at home, because `mqtt_statestream` publishes on change: **standing still and going quiet produce the same silence on the wire**. A monitor could therefore freeze for an entire night, in silence, while the reader was sitting under the storm it had stopped watching for.
 
-That is the same blindness it already handles when the strike feed drops, and it is handled the same way rather than with new state: no alerts, and **no all-clear**. A monitor that cannot tell "nothing is happening" from "I cannot see" would otherwise cheerfully report that the storm has cleared. The freeze is silent and lifts by itself when the position returns; the CBDR history is dropped at that point, since the bearings from before the blackout were measured wherever you were then.
+So the origin is now graded, and the monitor takes the best grade available:
 
-While a storm is in progress the age budget is **tripled**, so losing GPS in a tunnel does not blind the monitor mid-event: the last known position is still the best evidence available.
+| Grade | When | Origin |
+|---|---|---|
+| `FRESH` | fix within the age budget and inside the accuracy limit | the fix |
+| `PARKED` | older, but the fix history **proves** it was standing still when it last reported | the fix |
+| `STALE` | older, with nothing to say what happened next (or a fix vaguer than the accuracy limit) | the fix |
+| `FALLBACK` | no fix ever received, or the position was deleted | the monitor's own Location |
+
+`PARKED` is a property of the history rather than of the clock, so it does not decay: two fixes at least a minute apart and less than 150 m from each other say the observer was parked, and nothing measured since says otherwise. The same evidence is deliberately **not** used to keep a speed alive — `speed_kmh` still expires after five minutes, so a parked phone contributes zero own-velocity to the geometry, which is exactly what a parked phone is.
+
+**The freeze that remains** is having neither a fix nor coordinates: 0,0 is the Atlantic, and alerting from there is worse than the silence it would replace. That case is handled as it always was — no alerts, and **no all-clear**, because a monitor that cannot tell "nothing is happening" from "I cannot see" would otherwise cheerfully report that the storm has cleared. When the position returns, the CBDR history is dropped, since the bearings from before the blackout were measured wherever you were then.
+
+While a storm is in progress the age budget is **tripled**. That now moves the `FRESH`↔`PARKED` boundary rather than the boundary between seeing and not seeing.
+
+###### The price of the fallback: every alert says where it measured from
+
+The old refusal had a real argument behind it — watching your house while you are two hundred kilometres away answers a different question without saying so — and it is answered by *saying so*. Under the header, every ring alert and every all-clear now carries the point the distances were measured from, tappable, with the age of the fix behind it:
+
+```
+⚡ Temporale più vicino — Cellulare di Procolo
+📌 40.7988, 14.1123 · ultimo dato di 2.6 h fa (fermo)
+📍 Fronte a 18 km a N (0°)
+```
+
+Four forms, one per grade: `fix di 3 min fa`, `ultimo dato di 2.6 h fa (fermo)`, `ultimo dato di 2.6 h fa`, and `posizione fissa — nessun dato da «Cellulare di Procolo»`. A monitor watching a fixed place prints `posizione fissa` and nothing else. The age is printed even when it is small, because a reader who only ever sees it when something is wrong has no idea what right looks like.
+
+The header keeps naming the *position* — that is what the monitor follows — and the line below names the *point*, which is what it measured. When those two disagree, the disagreement is the information.
 
 Blitzortung topics are geohash cells (~110 km each) derived from the origin, so the subscription is rebuilt only when you travel far enough to change the cell set — in practice almost never. Without it the monitor would quietly stop hearing the sky you moved into while still reporting itself healthy. The strike buffer survives a re-aim: absolute coordinates stay true wherever you go. A monitor following a position connects on its **first fix** rather than at start-up, since until then it has nothing to derive topics from.
 
@@ -1015,7 +1042,9 @@ So the alert can say `🧭 Rotta d'incontro: ti raggiunge fra 26 min` or `🧭 T
 
 ##### Three ways it can go blind
 
-An unusable position, a raster older than 25 minutes, or a disc the radar network cannot see into. All three are the same problem the storm front already solves — *not knowing* is not the same as *nothing happening* — and all three are handled the same way: no alerts, and **no all-clear**. `-9999` in the product means "outside coverage", never "no rain"; confusing the two would turn the edge of the network into a permanent dry spell.
+No origin at all, a raster older than 25 minutes, or a disc the radar network cannot see into. All three are the same problem the storm front already solves — *not knowing* is not the same as *nothing happening* — and all three are handled the same way: no alerts, and **no all-clear**. `-9999` in the product means "outside coverage", never "no rain"; confusing the two would turn the edge of the network into a permanent dry spell.
+
+The first of those three is now much rarer than it was. A stale fix is no longer "no origin": the rain front inherits the storm front's [four grades of origin](#four-grades-of-origin) unchanged, falls back through an old fix to its own coordinates, and prints the `📌` line on every alert saying which it used. Only a monitor with neither a fix nor coordinates is blind for want of a position.
 
 ##### Settings
 

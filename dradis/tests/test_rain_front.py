@@ -45,6 +45,9 @@ if "aiomqtt" not in sys.modules:
     sys.modules["aiomqtt"] = stub
 
 from dradis.live_monitors import rain_front as RF                     # noqa: E402
+from dradis.live_monitors.position import (                           # noqa: E402
+    ORIGIN_FRESH as RF_FRESH, ORIGIN_PARKED as RF_PARKED,
+)
 from dradis.live_monitors.geo import distance_km, offset_km           # noqa: E402
 from dradis.live_monitors.radar_core import (                         # noqa: E402
     FieldMotion, GeoTransform, RadarGrid, build_rain_frame, pixel_to_latlon,
@@ -82,13 +85,16 @@ class Fix:
     """Stand-in for a PositionState."""
 
     def __init__(self, moving=True, speed_kmh=100.0, course_deg=0.0,
-                 discontinuity=0, lat=None, lon=None):
+                 discontinuity=0, lat=None, lon=None, age_sec=30.0,
+                 stationary_at_last_report=False):
         self.moving = moving
         self.speed_kmh = speed_kmh
         self.course_deg = course_deg
         self.discontinuity = discontinuity
         self.lat = ORIGIN[0] if lat is None else lat
         self.lon = ORIGIN[1] if lon is None else lon
+        self.age_sec = age_sec
+        self.stationary_at_last_report = stationary_at_last_report
 
 
 def ring_alert(**overrides) -> RingAlert:
@@ -628,6 +634,81 @@ class ManagerTest(unittest.TestCase):
 
     def test_status_of_an_unknown_monitor_is_stopped(self):
         self.assertEqual(self.manager.status("nope"), "stopped")
+
+
+class OriginChainTest(unittest.TestCase):
+    """The rain front's half of the v4.8.0 chain.
+
+    Identical in shape to the storm front's, and asserted separately because the
+    two monitors share a design rather than a class: a change to one that misses
+    the other would go unnoticed until a real storm.
+    """
+
+    class FakeManager:
+        def __init__(self, resolved=None, name="Cellulare di Procolo",
+                     max_age=900.0):
+            self._resolved = resolved
+            self._name = name
+            self._max_age = max_age
+
+        def resolve(self, position_id, now=None, max_age_sec=None):
+            return self._resolved
+
+        def usable(self, position_id, now=None, max_age_sec=None):
+            return None if self._resolved is None else self._resolved[0]
+
+        def current(self, position_id, now=None):
+            return None if self._resolved is None else self._resolved[0]
+
+        def max_age_sec(self, position_id):
+            return self._max_age
+
+        def name_of(self, position_id):
+            return self._name
+
+    def _with(self, manager, **cfg):
+        mon = monitor(position_id="p1", **cfg)
+        original = RF.position_manager
+        RF.position_manager = manager
+        try:
+            origin = mon._resolve_origin(T0)
+            return mon, origin, mon._origin_line()
+        finally:
+            RF.position_manager = original
+
+    def test_a_stale_fix_still_centres_the_disc(self):
+        fix = Fix(moving=False, speed_kmh=None, course_deg=None, age_sec=7200.0,
+                  stationary_at_last_report=True, lat=41.10, lon=14.55)
+        mon, origin, line = self._with(
+            self.FakeManager((fix, RF_PARKED)))
+        self.assertEqual(origin, (41.10, 14.55))
+        self.assertIn("ultimo dato", line)
+        self.assertIn("fermo", line)
+
+    def test_no_fix_falls_back_to_the_configured_point(self):
+        mon, origin, line = self._with(self.FakeManager(None))
+        self.assertEqual(origin, ORIGIN)
+        self.assertIn("posizione fissa", line)
+        self.assertIn("Cellulare di Procolo", line)
+
+    def test_neither_a_fix_nor_coordinates_is_still_blind(self):
+        mon, origin, _ = self._with(self.FakeManager(None), latitude=0.0,
+                                    longitude=0.0)
+        self.assertIsNone(origin)
+
+    def test_a_parked_fix_contributes_no_own_velocity(self):
+        # The fallback must not resurrect a speed from an old fix: `moving` is
+        # False, so the CPA sees a stationary observer, which is what a parked
+        # phone is.
+        fix = Fix(moving=False, speed_kmh=None, course_deg=None, age_sec=7200.0,
+                  stationary_at_last_report=True)
+        self.assertEqual(RF._velocity_of(fix), (0.0, 0.0))
+
+    def test_the_line_reaches_a_ring_message(self):
+        mon, _, _ = self._with(self.FakeManager((Fix(age_sec=120.0), RF_FRESH)))
+        mon._grid_t = T0
+        text = mon._format(ring_alert(), 8.4, None, T0 + 600.0)
+        self.assertIn("📌", text)
 
 
 if __name__ == "__main__":

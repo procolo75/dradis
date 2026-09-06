@@ -162,6 +162,57 @@ class MotionTest(unittest.TestCase):
         self.assertFalse(state.moving)
 
 
+class StandstillEvidenceTest(unittest.TestCase):
+    """`stationary_at_last_report` — the fact that lets a monitor keep using an
+    old fix instead of going blind.
+
+    Unlike `speed_kmh` it is a property of the history rather than of the present,
+    so it must survive an arbitrary silence: a phone that reported twice from the
+    same spot and then stopped publishing was parked, and nothing measured since
+    says otherwise.
+    """
+
+    def test_a_parked_phone_still_says_it_is_parked_hours_later(self):
+        history = FixHistory()
+        for minute in range(5):
+            feed(history, *at_km(0.0, 0.0), T0 + minute * 60)
+        state = history.current(T0 + 4 * 60 + 3 * 3600)
+        self.assertTrue(state.stationary_at_last_report)
+        # And the speed is still unknown rather than zero: "it was parked when it
+        # last spoke" and "it is not moving now" are different claims.
+        self.assertIsNone(state.speed_kmh)
+
+    def test_a_phone_that_vanished_mid_journey_makes_no_such_claim(self):
+        history = FixHistory()
+        for minute in range(5):
+            feed(history, *at_km(minute * 1.5, 0.0), T0 + minute * 60)
+        state = history.current(T0 + 4 * 60 + 3 * 3600)
+        self.assertFalse(state.stationary_at_last_report)
+
+    def test_a_single_fix_proves_nothing(self):
+        history = FixHistory()
+        feed(history, *at_km(0.0, 0.0), T0)
+        self.assertFalse(history.current(T0 + 60).stationary_at_last_report)
+
+    def test_two_fixes_seconds_apart_prove_nothing_either(self):
+        # Below MOTION_MIN_DT_SEC the pair is noise over a small number, which is
+        # the classic way to manufacture a confident wrong answer.
+        history = FixHistory()
+        feed(history, *at_km(0.0, 0.0), T0)
+        feed(history, *at_km(0.0, 0.0), T0 + 5)
+        self.assertFalse(history.current(T0 + 10).stationary_at_last_report)
+
+    def test_gps_jitter_counts_as_parked(self):
+        # The whole point of the noise floor: a phone on a table is parked, and
+        # the few metres it drifts between fixes must not read as travel.
+        history = FixHistory()
+        jitter = [(0.0, 0.0), (0.02, -0.01), (-0.015, 0.02), (0.01, 0.01)]
+        for minute, (north, east) in enumerate(jitter):
+            feed(history, *at_km(north, east), T0 + minute * 60)
+        self.assertTrue(
+            history.current(T0 + 3 * 60 + 7200).stationary_at_last_report)
+
+
 class DiscontinuityTest(unittest.TestCase):
 
     def test_a_lone_wild_fix_does_not_move_the_observer(self):

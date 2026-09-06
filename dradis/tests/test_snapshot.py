@@ -291,24 +291,33 @@ class DescribeOriginTest(unittest.TestCase):
         self.assertEqual(origin.heading_label("it"), "NE")
         self.assertAlmostEqual(origin.lat, 45.0, places=6)
 
-    def test_a_stale_fix_is_shown_WITH_the_reason_it_is_unusable(self):
-        """`usable()` would return None here, which is exactly the moment the
-        user needs an answer. `current()` plus the threshold gives them one."""
+    def test_a_stale_fix_is_used_and_the_reason_is_still_given(self):
+        """The monitor measures from this fix, so the report must not call it
+        blindness — but the age is exactly what the user opened the command to
+        find out, so it is still spelled out."""
         state = FakeState(45.0, 9.0, age_sec=2460.0)
         with mock.patch.object(SNAP, "position_manager",
                                FakeManager(state=state, max_age=900.0)):
             origin = describe_origin(rain_monitor(position_id="p1"), T0)
-        self.assertFalse(origin.usable)
+        self.assertTrue(origin.usable)
         self.assertIn("41 min old", origin.reason)
         self.assertTrue(origin.has_fix)          # still shown, not swallowed
         self.assertIn("45.00000", origin.map_url)
+
+    def test_a_stale_fix_says_whether_the_phone_was_parked(self):
+        parked = FakeState(45.0, 9.0, age_sec=2460.0)
+        parked.stationary_at_last_report = True
+        with mock.patch.object(SNAP, "position_manager",
+                               FakeManager(state=parked, max_age=900.0)):
+            origin = describe_origin(rain_monitor(position_id="p1"), T0)
+        self.assertIn("standing still", origin.reason)
 
     def test_an_imprecise_fix_is_shown_with_its_reason(self):
         state = FakeState(45.0, 9.0, age_sec=10.0, accuracy_m=1200.0)
         with mock.patch.object(SNAP, "position_manager",
                                FakeManager(state=state, max_accuracy=500.0)):
             origin = describe_origin(rain_monitor(position_id="p1"), T0)
-        self.assertFalse(origin.usable)
+        self.assertTrue(origin.usable)
         self.assertIn("1200 m", origin.reason)
 
     def test_a_deleted_position_is_named_as_such(self):
@@ -317,13 +326,26 @@ class DescribeOriginTest(unittest.TestCase):
         with mock.patch.object(SNAP, "position_manager", manager):
             origin = describe_origin(rain_monitor(position_id="gone"), T0)
         self.assertTrue(origin.missing)
+        # It falls back to the monitor's own point rather than going blind, and
+        # says which of the two it is measuring from.
+        self.assertTrue(origin.usable)
+        self.assertTrue(origin.fallback)
+        self.assertTrue(origin.has_fix)
+
+    def test_a_deleted_position_with_nowhere_to_fall_back_to_is_blind(self):
+        manager = FakeManager()
+        manager.name_of = lambda pid: None
+        with mock.patch.object(SNAP, "position_manager", manager):
+            origin = describe_origin(
+                rain_monitor(position_id="gone", latitude=0.0, longitude=0.0), T0)
         self.assertFalse(origin.usable)
         self.assertFalse(origin.has_fix)
 
-    def test_no_fix_yet_is_distinct_from_a_stale_one(self):
+    def test_no_fix_yet_falls_back_and_says_so(self):
         with mock.patch.object(SNAP, "position_manager", FakeManager(state=None)):
             origin = describe_origin(rain_monitor(position_id="p1"), T0)
-        self.assertFalse(origin.usable)
+        self.assertTrue(origin.usable)
+        self.assertTrue(origin.fallback)
         self.assertIn("no fix", origin.reason)
         self.assertFalse(origin.missing)
 

@@ -47,9 +47,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .blitzortung import BlitzortungFeed
 from .geo import direction_label, distance_km
-from .position import position_manager
+from .position import ORIGIN_FALLBACK, position_manager
 from .position_core import MAX_PLAUSIBLE_KMH
-from .snapshot import Snapshot, describe_origin, preview_alert
+from .snapshot import Snapshot, describe_origin, origin_line, preview_alert
 from .storm_front_core import (
     CLEAR_DWELL_SEC, EVENT_IDLE, OBSERVE_FACTOR, POLL_INTERVAL_SEC, WINDOW_MIN,
     TRACK_CLOSING, TRACK_GRAZING,
@@ -99,6 +99,10 @@ CHART_TIMEOUT_SEC = 20.0
 # tunnel mid-storm should not blind the monitor, because the last known position
 # is still the best evidence available. Outside an event there is no history to
 # protect and the normal budget applies.
+#
+# Since v4.8.0 this only moves the FRESH↔PARKED boundary. It used to be the
+# difference between seeing and not seeing, which made it load-bearing for a
+# reason it was never designed to carry.
 EVENT_STALE_FACTOR = 3.0
 
 # Two consecutive origins further apart than this many km per hour of elapsed time
@@ -173,6 +177,13 @@ class StormFrontLiveMonitor:
 
         # Origin bookkeeping — only ever used when following a position.
         self._motion = None                       # PositionState | None
+        # What this poll's origin is worth, and how old the fix behind it is.
+        # Read by the message, which has to say where it measured from.
+        # Before the first poll the configured point is all there is, which is
+        # exactly what FALLBACK means — and all a fixed monitor ever reports.
+        self._origin_grade = ORIGIN_FALLBACK
+        self._origin_age_sec: float | None = None
+        self._origin_point: tuple[float, float] = (self.latitude, self.longitude)
         self._last_origin: tuple[float, float] | None = None
         self._last_origin_at = 0.0
         self._last_discontinuity: int | None = None
@@ -280,13 +291,26 @@ class StormFrontLiveMonitor:
         happens — a monitor that has not opted in never consults the position
         manager and never causes it to connect.
 
-        Following a position, there is NO fallback. Watching the configured house
-        while the user is two hundred kilometres away is not a gentle degradation:
-        it answers a different question without saying so. None means "I do not
-        know where I am", and the caller treats that as blindness.
+        Following a position, this is a CHAIN rather than a yes/no, and the
+        reason is in `position_core`: statestream only fires on change, so a
+        phone standing still and a phone that vanished produce the same silence
+        on the wire. Refusing both froze the monitor for hours at home — no
+        alerts, no all-clear, and no way to tell that from a quiet sky.
+
+            fresh fix  →  old fix that PROVES it was parked  →  old fix anyway
+                       →  the monitor's own configured coordinates
+
+        The old objection to a fallback — that watching your house while you are
+        two hundred kilometres away answers a different question without saying
+        so — is answered by saying so: every alert now carries `_origin_line()`
+        with the coordinates it measured from and the age of the fix behind them.
+        The only remaining blindness is having neither a fix nor coordinates,
+        because 0,0 is the Atlantic.
         """
         if not self.position_id:
-            return (self.latitude, self.longitude)
+            self._origin_grade, self._origin_age_sec = ORIGIN_FALLBACK, None
+            self._origin_point = (self.latitude, self.longitude)
+            return self._origin_point
 
         # A storm in progress buys patience: a fix that went stale in a tunnel is
         # still the best evidence available, and changing frame mid-event would
@@ -295,13 +319,23 @@ class StormFrontLiveMonitor:
         if self._tracker.event_state != EVENT_IDLE:
             budget = position_manager.max_age_sec(self.position_id) * EVENT_STALE_FACTOR
 
-        state = position_manager.usable(self.position_id, now, max_age_sec=budget)
-        if state is None:
-            self._motion = None
-            return None
+        resolved = position_manager.resolve(self.position_id, now, max_age_sec=budget)
+        if resolved is not None:
+            state, grade = resolved
+            self._motion = state
+            self._origin_grade, self._origin_age_sec = grade, state.age_sec
+            self._origin_point = (state.lat, state.lon)
+            return self._origin_point
 
-        self._motion = state
-        return state.lat, state.lon
+        # Nothing was ever heard from that position — it may not even exist any
+        # more. The configured point is a worse answer than a fix and a better
+        # one than silence, as long as the message admits which it is.
+        self._motion = None
+        if self.latitude or self.longitude:
+            self._origin_grade, self._origin_age_sec = ORIGIN_FALLBACK, None
+            self._origin_point = (self.latitude, self.longitude)
+            return self._origin_point
+        return None
 
     def _origin_jumped(self, origin: tuple[float, float], now: float) -> bool:
         """True when the observer was relocated rather than having travelled.
@@ -457,10 +491,14 @@ class StormFrontLiveMonitor:
             picture=picture, **common)
 
     def _origin_debug(self, origin: tuple[float, float]) -> str:
-        if not self.position_id or self._motion is None:
+        if not self.position_id:
             return ""
+        if self._motion is None:
+            return (f" origin={self._origin_grade} "
+                    f"{origin[0]:.4f},{origin[1]:.4f}")
         speed = self._motion.speed_kmh
-        return (f" origin={origin[0]:.4f},{origin[1]:.4f} "
+        return (f" origin={self._origin_grade} "
+                f"{origin[0]:.4f},{origin[1]:.4f} "
                 f"age={self._motion.age_sec:.0f}s "
                 f"v={'—' if speed is None else f'{speed:.0f}km/h'}")
 
@@ -614,10 +652,25 @@ class StormFrontLiveMonitor:
         return (f"🚗 In movimento a {speed:.0f} km/h verso {heading}" if it
                 else f"🚗 Moving at {speed:.0f} km/h towards {heading}")
 
+    def _origin_line(self) -> str:
+        """Where these distances were measured from, and how old that is.
+
+        Printed on every alert, not only on a stale one. The age of a fix is the
+        difference between a measurement and a claim, and a reader who only ever
+        sees it when something is wrong has no idea what right looks like.
+        """
+        lat, lon = self._origin_point
+        return origin_line(
+            lat, lon, self._origin_grade, self.language,
+            age_sec=self._origin_age_sec,
+            position_name=(position_manager.name_of(self.position_id) or ""
+                           if self.position_id else ""),
+        )
+
     def _fmt_ring(self, alert: RingAlert) -> str:
         it = self.language == "it"
         heading = direction_label(alert.bearing_deg, self.language)
-        lines = [self._head(alert)]
+        lines = [self._head(alert), self._origin_line()]
         lines.append(
             (f"📍 Fronte a <b>{alert.front_km:.0f} km</b> a {heading} "
              f"({alert.bearing_deg:.0f}°)") if it else
@@ -666,7 +719,8 @@ class StormFrontLiveMonitor:
     def _fmt_clear(self, alert: ClearAlert) -> str:
         it = self.language == "it"
         lines = [(f"✅ <b>Temporale cessato — {self._loc()}</b>" if it
-                  else f"✅ <b>Storm cleared — {self._loc()}</b>")]
+                  else f"✅ <b>Storm cleared — {self._loc()}</b>"),
+                 self._origin_line()]
         quiet_min = alert.quiet_sec / 60.0
         lines.append(
             (f"🔇 Nessuna attività entro {alert.radius_km:.0f} km "

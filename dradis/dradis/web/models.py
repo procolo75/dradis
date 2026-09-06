@@ -94,9 +94,15 @@ class LiveMonitorPayload(BaseModel):
     hail:            bool      = False
     # Storm front and rain front — empty centres the radar on latitude/longitude
     # (the historical behaviour, and the default). Otherwise it is the id of a
-    # named position, and the monitor follows THAT and nothing else: there is no
-    # fallback, because watching your house instead of you is not a gentle
-    # degradation, it is answering a different question without saying so.
+    # named position and the monitor follows that phone, falling back through an
+    # old fix to these coordinates rather than going blind. It used to refuse the
+    # fallback outright, on the grounds that watching your house instead of you
+    # answers a different question without saying so — which was right about the
+    # danger and wrong about the remedy, since a phone standing still stops
+    # publishing and the monitor then froze in silence at home. Every alert now
+    # names the coordinates it measured from and the age of the fix behind them,
+    # so the different question is asked out loud. latitude/longitude are
+    # therefore live configuration for a following monitor too.
     position_id:     str       = ""
 
 

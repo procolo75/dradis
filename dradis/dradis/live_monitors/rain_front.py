@@ -59,7 +59,7 @@ from datetime import datetime, time as time_t
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .geo import direction_label, distance_km, offset_km
-from .position import position_manager
+from .position import ORIGIN_FALLBACK, position_manager
 from .position_core import MAX_PLAUSIBLE_KMH
 from .radar import PRODUCT_HAIL, PRODUCT_RAIN, radar_feed
 from .radar_core import (
@@ -67,7 +67,7 @@ from .radar_core import (
     field_motion, intensity_label, peak_in_disc, rain_points, sample,
     velocity_components,
 )
-from .snapshot import Snapshot, describe_origin, preview_alert
+from .snapshot import Snapshot, describe_origin, origin_line, preview_alert
 from .storm_front_core import (
     CBDR_CLOSING_KM, CBDR_GRAZING_KM, EVENT_IDLE, OBSERVE_FACTOR,
     POLL_INTERVAL_SEC, TRACK_CLOSING, TRACK_GRAZING, TRACK_UNKNOWN,
@@ -241,6 +241,11 @@ class RainFrontLiveMonitor:
 
         self._fix = None                       # PositionState | None
         self._field = None                     # FieldMotion | None
+        # What this poll's origin is worth, how old the fix behind it is, and
+        # where it put the disc. Read by the message, which has to say so.
+        self._origin_grade = ORIGIN_FALLBACK
+        self._origin_age_sec: float | None = None
+        self._origin_point: tuple[float, float] = (self.latitude, self.longitude)
         self._last_origin: tuple[float, float] | None = None
         self._last_origin_at = 0.0
         self._last_discontinuity: int | None = None
@@ -334,24 +339,45 @@ class RainFrontLiveMonitor:
     def _resolve_origin(self, now: float) -> tuple[float, float] | None:
         """Where the disc is centred this poll, or None if that is unknown.
 
-        Identical in intent to the storm front's: following a position there is no
-        fallback to the configured point, because watching the house while the
-        user is elsewhere answers a different question without saying so.
+        The storm front's chain, for the same reason and with the same guarantee:
+        a fresh fix, else an old one — the commonest reason a phone goes quiet is
+        that it stopped moving — else the configured point, and blindness only
+        when there is neither. What buys the fallback is `_origin_line()` on every
+        message, naming the coordinates and the age of the fix behind them.
         """
         if not self.position_id:
-            return (self.latitude, self.longitude)
+            self._origin_grade, self._origin_age_sec = ORIGIN_FALLBACK, None
+            self._origin_point = (self.latitude, self.longitude)
+            return self._origin_point
 
         budget = None
         if self._tracker.event_state != EVENT_IDLE:
             budget = position_manager.max_age_sec(self.position_id) * EVENT_STALE_FACTOR
 
-        state = position_manager.usable(self.position_id, now, max_age_sec=budget)
-        if state is None:
-            self._fix = None
-            return None
+        resolved = position_manager.resolve(self.position_id, now, max_age_sec=budget)
+        if resolved is not None:
+            state, grade = resolved
+            self._fix = state
+            self._origin_grade, self._origin_age_sec = grade, state.age_sec
+            self._origin_point = (state.lat, state.lon)
+            return self._origin_point
 
-        self._fix = state
-        return state.lat, state.lon
+        self._fix = None
+        if self.latitude or self.longitude:
+            self._origin_grade, self._origin_age_sec = ORIGIN_FALLBACK, None
+            self._origin_point = (self.latitude, self.longitude)
+            return self._origin_point
+        return None
+
+    def _origin_line(self) -> str:
+        """Where these distances were measured from, and how old that is."""
+        lat, lon = self._origin_point
+        return origin_line(
+            lat, lon, self._origin_grade, self.language,
+            age_sec=self._origin_age_sec,
+            position_name=(position_manager.name_of(self.position_id) or ""
+                           if self.position_id else ""),
+        )
 
     def _origin_jumped(self, origin: tuple[float, float], now: float) -> bool:
         if self._last_origin is None:
@@ -604,9 +630,12 @@ class RainFrontLiveMonitor:
                         f"{self._field.bearing_deg:.0f}° psr={self._field.psr:.1f}")
         else:
             bits.append("field=—")
-        if self.position_id and self._fix is not None:
-            speed = self._fix.speed_kmh
-            bits.append(f"own={'—' if speed is None else f'{speed:.0f}km/h'}")
+        if self.position_id:
+            bits.append(f"origin={self._origin_grade}")
+            if self._fix is not None:
+                speed = self._fix.speed_kmh
+                bits.append(f"age={self._fix.age_sec:.0f}s "
+                            f"own={'—' if speed is None else f'{speed:.0f}km/h'}")
         return " ".join(bits)
 
     # ── Dispatch ──────────────────────────────────────────────────────────────
@@ -845,7 +874,7 @@ class RainFrontLiveMonitor:
         it = self.language == "it"
         heading = direction_label(alert.bearing_deg, self.language)
         overhead = self._is_overhead(overhead_mmh)
-        lines = [self._head(alert, overhead)]
+        lines = [self._head(alert, overhead), self._origin_line()]
         lines.append(
             (f"📍 Fronte a <b>{alert.front_km:.0f} km</b> a {heading} "
              f"({alert.bearing_deg:.0f}°)") if it else
@@ -908,7 +937,8 @@ class RainFrontLiveMonitor:
     def _fmt_clear(self, alert: ClearAlert, now: float) -> str:
         it = self.language == "it"
         lines = [(f"✅ <b>Pioggia cessata — {self._loc()}</b>" if it
-                  else f"✅ <b>Rain cleared — {self._loc()}</b>")]
+                  else f"✅ <b>Rain cleared — {self._loc()}</b>"),
+                 self._origin_line()]
         quiet_min = alert.quiet_sec / 60.0
         lines.append(
             (f"🔇 Niente pioggia entro {alert.radius_km:.0f} km "

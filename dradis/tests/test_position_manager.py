@@ -21,6 +21,7 @@ if "aiomqtt" not in sys.modules:
     sys.modules["aiomqtt"] = types.ModuleType("aiomqtt")
 
 from dradis.live_monitors.position import (               # noqa: E402
+    ORIGIN_FRESH, ORIGIN_PARKED, ORIGIN_STALE,
     PositionManager, PositionSource, _parse_timestamp, probe,
 )
 
@@ -240,6 +241,72 @@ class UsableTest(unittest.TestCase):
 
     def test_accuracy_is_not_required(self):
         self.assertIsNotNone(self._manager(age=30, accuracy=None).usable("p1"))
+
+
+class ResolveTest(unittest.TestCase):
+    """`resolve` grades a fix instead of rejecting it.
+
+    `usable` asks "would you bet the geometry on this?" and answers None for a
+    phone that has simply been sitting still — which is how the monitors ended up
+    frozen and silent at home. This grades the same fix so the caller can use it
+    and say what it is worth.
+    """
+
+    def _manager(self, age=0.0, accuracy="12", moved_km=0.0):
+        manager = configured(MINE)
+        if accuracy is not None:
+            deliver(manager, MINE["accuracy_entity"], accuracy)
+        # Two fixes three minutes apart, so the history can say whether the
+        # observer was moving when it last reported.
+        for index, offset in enumerate((age + 180.0, age)):
+            stamp = iso(-offset)
+            deliver(manager, MINE["lat_entity"], stamp, "last_updated")
+            deliver(manager, MINE["lon_entity"], stamp, "last_updated")
+            deliver(manager, MINE["lat_entity"],
+                    f"{40.82731 + index * moved_km / 111.0:.5f}")
+            deliver(manager, MINE["lon_entity"], "14.13902")
+        return manager
+
+    def test_a_fresh_fix_is_fresh(self):
+        state, grade = self._manager(age=30).resolve("p1")
+        self.assertEqual(grade, ORIGIN_FRESH)
+        self.assertAlmostEqual(state.lat, 40.82731, places=4)
+
+    def test_a_stale_fix_from_a_parked_phone_is_parked(self):
+        state, grade = self._manager(age=7200).resolve("p1")
+        self.assertEqual(grade, ORIGIN_PARKED)
+
+    def test_a_stale_fix_from_a_moving_phone_is_only_stale(self):
+        # 6 km in three minutes is 120 km/h: whatever this phone was doing, it was
+        # not parked, and the monitor must not be told otherwise.
+        state, grade = self._manager(age=7200, moved_km=6.0).resolve("p1")
+        self.assertEqual(grade, ORIGIN_STALE)
+
+    def test_an_imprecise_fix_is_demoted_rather_than_dropped(self):
+        # 500 m of GPS error is fatal to a fix you are about to call fresh and a
+        # rounding error against a front 20 km away.
+        state, grade = self._manager(age=30, accuracy="5000").resolve("p1")
+        self.assertIsNotNone(state)
+        self.assertNotEqual(grade, ORIGIN_FRESH)
+
+    def test_a_caller_may_still_extend_the_budget(self):
+        manager = self._manager(age=1200)
+        self.assertEqual(manager.resolve("p1")[1], ORIGIN_PARKED)
+        self.assertEqual(manager.resolve("p1", max_age_sec=2700.0)[1],
+                         ORIGIN_FRESH)
+
+    def test_nothing_heard_is_still_nothing(self):
+        # The fallback belongs to the monitor, which owns the coordinates. The
+        # manager has nothing to offer and says so.
+        self.assertIsNone(configured(MINE).resolve("p1"))
+
+    def test_an_unknown_position_is_nothing_too(self):
+        self.assertIsNone(self._manager(age=30).resolve("nope"))
+
+    def test_usable_is_unchanged_by_any_of_this(self):
+        manager = self._manager(age=7200)
+        self.assertIsNone(manager.usable("p1"))
+        self.assertIsNotNone(manager.current("p1"))
 
 
 class ConfigureTest(unittest.TestCase):

@@ -56,6 +56,17 @@ DEGRADED_SILENCE_SEC = 1800
 DEFAULT_MAX_AGE_MIN = 15.0
 DEFAULT_MAX_ACCURACY_M = 500.0
 
+# ── Origin grades ─────────────────────────────────────────────────────────────
+# How much a fix is worth, rather than whether it is worth anything at all. The
+# monitors used to ask a yes/no question and go blind on "no", which is the right
+# answer for a phone that vanished mid-journey and the wrong one for a phone
+# parked at home: statestream only fires on change, so standing still and going
+# quiet are the same signal on the wire.
+ORIGIN_FRESH    = "FRESH"      # within the age and accuracy budgets
+ORIGIN_PARKED   = "PARKED"     # older, but the history proves it was standing still
+ORIGIN_STALE    = "STALE"      # older, with nothing to say what happened next
+ORIGIN_FALLBACK = "FALLBACK"   # no fix at all — the monitor's configured coordinates
+
 
 def _parse_timestamp(raw: str) -> float | None:
     """Parse statestream's `last_updated` (ISO 8601) into an epoch.
@@ -182,6 +193,34 @@ class PositionSource:
             return None
         return state
 
+    def resolve(self, now: float | None = None,
+                max_age_sec: float | None = None
+                ) -> tuple[PositionState, str] | None:
+        """The latest fix and what it is worth, or None if none was ever heard.
+
+        `usable()` answers "would you bet the geometry on this?"; this answers
+        "what is the best I have, and how good is it?". The difference is the
+        whole point: a fix that fails the age budget is not an absence of
+        information, and treating it as one froze the monitors in silence for the
+        commonest reason a phone stops publishing — it stopped moving.
+
+        The accuracy budget demotes rather than rejects. Five hundred metres of
+        GPS error is a real problem for a fix you are about to call fresh and a
+        rounding error against a front 20 km away, so a vague fix is still better
+        than the monitor's configured house.
+        """
+        state = self.current(now)
+        if state is None:
+            return None
+        budget = self.max_age_sec if max_age_sec is None else max_age_sec
+        vague = (state.accuracy_m is not None
+                 and state.accuracy_m > self.max_accuracy_m)
+        if state.age_sec <= budget and not vague:
+            return state, ORIGIN_FRESH
+        if state.stationary_at_last_report:
+            return state, ORIGIN_PARKED
+        return state, ORIGIN_STALE
+
 
 # ── The manager ───────────────────────────────────────────────────────────────
 
@@ -264,6 +303,11 @@ class PositionManager:
                max_age_sec: float | None = None):
         source = self.get(position_id)
         return source.usable(now, max_age_sec) if source else None
+
+    def resolve(self, position_id: str, now: float | None = None,
+                max_age_sec: float | None = None):
+        source = self.get(position_id)
+        return source.resolve(now, max_age_sec) if source else None
 
     def max_age_sec(self, position_id: str) -> float:
         source = self.get(position_id)
@@ -391,4 +435,5 @@ position_manager = PositionManager()
 
 __all__ = ["PositionSource", "PositionManager", "position_manager", "probe",
            "RECONNECT_DELAY", "DEGRADED_SILENCE_SEC",
-           "DEFAULT_MAX_AGE_MIN", "DEFAULT_MAX_ACCURACY_M"]
+           "DEFAULT_MAX_AGE_MIN", "DEFAULT_MAX_ACCURACY_M",
+           "ORIGIN_FRESH", "ORIGIN_PARKED", "ORIGIN_STALE", "ORIGIN_FALLBACK"]

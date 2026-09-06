@@ -105,6 +105,7 @@ When you are moving, ring alerts carry an extra line:
 
 ```
 ⚡ Temporale più vicino — Cellulare di Procolo
+📌 40.7988, 14.1123 · fix di 3 min fa
 📍 Fronte a 18 km a N (0°)
 🎯 Anello 2/4 · entro 20 km
 🧭 Rotta costante: ti arriva addosso
@@ -115,15 +116,26 @@ When you are moving, ring alerts carry an extra line:
 
 The 🚗 line appears when your course is within 45° of the front, otherwise `🚗 In movimento a 90 km/h verso NE`. It **explains** the track verdict above it rather than competing with it: the CBDR reading already accounts for your motion, so the two lines can never disagree. Below the GPS noise floor the monitor reports nothing at all rather than inventing a heading — a fabricated course on a 20 km lever arm is enough to claim you are driving into a storm.
 
-The header is the **position's name**, not the configured place: it says where these distances were measured from, which is what you need to know when several phones are monitored.
+The header is the **position's name**, and the `📌` line under it is the **point**: it says where these distances were actually measured from, and how old that measurement is. The two are not the same thing, and when they disagree the disagreement is what you need to know.
 
-#### With no usable position, it freezes
+#### Four grades of origin (v4.8.0)
 
-There is **no fallback**. When the fix is missing, too old or too imprecise — or the position was deleted — the monitor does not know where it is and therefore perceives nothing.
+Until v4.8.0 the question was binary — is this fix usable? — and "no" meant the monitor perceived nothing. That is right for a phone that vanished mid-journey and wrong for a phone parked at home, because `mqtt_statestream` publishes on change: **standing still and going quiet are the same silence on the wire**. A monitor could be dark all night while you sat under the storm it had stopped watching for.
 
-That is the same blindness it already handles when the strike feed drops, and it is handled the same way rather than with new state: no alerts, and **no all-clear**. A monitor that cannot tell "nothing is happening" from "I cannot see" would otherwise cheerfully report that the storm has cleared. The freeze is silent and lifts by itself when the position returns; the CBDR history is dropped at that point, since the bearings from before the blackout were measured wherever you were then.
+| Grade | When | Origin |
+|---|---|---|
+| `FRESH` | fix within the age budget and inside the accuracy limit | the fix |
+| `PARKED` | older, but the history **proves** it was standing still when it last reported | the fix |
+| `STALE` | older, with nothing to say what happened next | the fix |
+| `FALLBACK` | no fix ever received, or the position was deleted | the monitor's own Location |
 
-While a storm is in progress the age budget is **tripled**, so losing GPS in a tunnel does not blind the monitor mid-event: the last known position is still the best evidence available.
+`PARKED` is a property of the history rather than of the clock — two fixes at least a minute apart and under 150 m from each other — so it does not decay. The same evidence is deliberately **not** used to keep a speed alive: `speed_kmh` still expires after five minutes, so a parked phone contributes zero own-velocity, which is exactly what a parked phone is.
+
+**The price of the fallback** is the `📌` line on every alert: `fix di 3 min fa`, `ultimo dato di 2.6 h fa (fermo)`, `ultimo dato di 2.6 h fa`, or `posizione fissa — nessun dato da «Cellulare di Procolo»`. The old refusal to fall back had a real argument behind it — watching your house while you are two hundred kilometres away answers a different question without saying so — and this is the answer: say so, on every message.
+
+**What still freezes** is having neither a fix nor coordinates: 0,0 is the Atlantic. That case keeps the original treatment — no alerts and **no all-clear**, because a monitor that cannot tell "nothing is happening" from "I cannot see" would otherwise cheerfully report that the storm has cleared. When the position returns the CBDR history is dropped, since the bearings from before the blackout were measured wherever you were then.
+
+While a storm is in progress the age budget is **tripled**. That now moves the `FRESH`↔`PARKED` boundary rather than the boundary between seeing and not seeing.
 
 Blitzortung topics are geohash cells (~110 km each) derived from the origin, so the subscription is rebuilt only when you travel far enough to change the cell set — in practice almost never. Without it the monitor would quietly stop hearing the sky you moved into while still reporting itself healthy. The strike buffer survives a re-aim: absolute coordinates stay true wherever you go. A monitor following a position connects on its **first fix** rather than at start-up, since until then it has nothing to derive topics from.
 
@@ -136,6 +148,7 @@ Every ring message carries a polar plot — rings and sectors *are* the model, s
 **Ring:**
 ```
 ⚡ Temporale più vicino — Bacoli
+📌 40.7988, 14.1123 · posizione fissa
 📍 Fronte a 18 km a NO (307°)
 🎯 Anello 2/4 · entro 20 km
 🧭 Rotta costante: ti arriva addosso
@@ -178,6 +191,7 @@ Language:          🇮🇹 Italiano
 **Travelling:**
 ```
 ⚡ Temporale più vicino — Cellulare di Procolo
+📌 41.2140, 14.0021 · fix di 40 s fa
 📍 Fronte a 18 km a N (0°)
 🎯 Anello 2/4 · entro 20 km
 🧭 Rotta costante: ti arriva addosso
@@ -247,7 +261,7 @@ And when it is over:
 
 | Field | What it does |
 |-------|--------------|
-| **Where to watch** | A fixed place, or a phone to follow — identical to the Storm front, including the rule that a monitor following a phone has *no* fallback and freezes when the position is lost. |
+| **Where to watch** | A fixed place, or a phone to follow — identical to the Storm front, including the four grades of origin and the `📌` line naming the point every distance was measured from. |
 | **Alert radius** | 10–60 km. At 30 km you get roughly half an hour of warning for a front moving at 60 km/h. |
 | **Updates per rain event** | Hard cap of 2, 3 or 4 messages per event. Not a sensitivity setting — it changes how often you are told, never what the monitor decides. |
 | **Rain worth telling you about** | The minimum intensity that counts. See the table below. |

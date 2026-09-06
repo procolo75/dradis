@@ -95,6 +95,13 @@ class PositionState:
     # jumped. A consumer that stores geometry derived from this position watches
     # this number: when it changes, that geometry describes a different place.
     discontinuity: int
+    # True when the history proves the observer was standing still AT THE MOMENT
+    # OF THE LAST REPORT. Unlike `speed_kmh` this is a property of the history
+    # rather than of the present, so it does not decay: a phone that reported
+    # twice from the same spot and then went quiet was parked, and is still
+    # parked as far as anything measured can say. That is what lets a consumer
+    # keep using an old fix instead of going blind.
+    stationary_at_last_report: bool = False
 
 
 class FixHistory:
@@ -215,22 +222,41 @@ class FixHistory:
             course_deg=course,
             moving=speed is not None and speed >= MOVING_MIN_KMH,
             discontinuity=self._discontinuity,
+            stationary_at_last_report=self._motion_at_last_report()[0] == 0.0,
         )
 
     def _motion(self, now: float) -> tuple[float | None, float | None]:
-        """(speed_kmh, course_deg).
+        """(speed_kmh, course_deg) — motion NOW, or the absence of evidence for it.
 
         `(None, None)` means "no evidence" — too few fixes, or none recent enough
         to say anything about the present. `(0.0, None)` means "stationary", which
         is a real answer: there is evidence, and it says the observer is not
         moving. The distinction matters to the caller, which must not print a
         course in either case but may print "stationary" only in the second.
+
+        The age gate stays here and nowhere else. A fix from an hour ago says
+        nothing about the speed at this instant, and a consumer that wants to
+        know what the observer was doing when they last reported asks
+        `_motion_at_last_report` instead.
+        """
+        if not self._fixes:
+            return None, None
+        if now - self._fixes[-1].t > MOTION_MAX_AGE_SEC:
+            return None, None
+        return self._motion_at_last_report()
+
+    def _motion_at_last_report(self) -> tuple[float | None, float | None]:
+        """(speed_kmh, course_deg) as measured at the newest fix, however old.
+
+        The same geometry as `_motion` with the clock left out, because "was the
+        phone moving when it last spoke" has an answer that does not expire. A
+        phone parked in a driveway keeps that answer for as long as it stays
+        parked, which is exactly the case a statestream that only fires on change
+        stops reporting.
         """
         if len(self._fixes) < 2:
             return None, None
         newest = self._fixes[-1]
-        if now - newest.t > MOTION_MAX_AGE_SEC:
-            return None, None
 
         reference = None
         for fix in reversed(self._fixes[:-1]):

@@ -131,7 +131,7 @@ Finally, raise the Companion app's location update frequency (*Settings → Comp
 | Latitude entity | *(blank)* | Topic path after the prefix, e.g. `sensor/phone_latitude`. |
 | Longitude entity | *(blank)* | As above. Both are required. |
 | GPS accuracy entity | *(blank)* | Optional. When unset, the accuracy threshold is not applied. |
-| Maximum fix age | `15` min | Older and a monitor following this position stops alerting until it comes back. Tripled while a storm is in progress. |
+| Maximum fix age | `15` min | How fresh a fix must be to count as *current*. Past it the fix is still used — and the alert says how old it is. Tripled while a storm is in progress. |
 | Maximum GPS accuracy | `500` m | Vaguer fixes are not used. |
 | Statestream prefix override | *(blank)* | Defaults to the global MQTT prefix. |
 
@@ -139,7 +139,7 @@ Finally, raise the Companion app's location update frequency (*Settings → Comp
 
 **Test connection** uses the values **currently on screen**, saved or not: testing a form you have not saved yet is the normal case. It connects with its own throwaway client, so the running manager is never disturbed. It reports the fix, its age, its accuracy and your speed, and names the threshold that failed — "no position at all" and "a position from two hours ago" are different problems with different fixes.
 
-**Deleting a position** does not rewrite the monitors following it. Silently converting them back to a fixed place would put them somewhere you never asked to watch, so they freeze instead, and their form shows the dangling reference.
+**Deleting a position** does not rewrite the monitors following it. They fall back to their own configured coordinates — saying so on every alert — and their form shows the dangling reference so the cause is visible rather than inferred.
 
 ---
 

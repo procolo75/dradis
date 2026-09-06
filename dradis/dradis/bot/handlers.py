@@ -206,14 +206,14 @@ def _live_monitor_detail(m: dict) -> str:
         return ", ".join(m.get("areas", [])) or "—"
     if t == "football_betting":
         return "⚽ live"
-    # A monitor following a position does not use `location` at all, and showing
-    # it would name a place the monitor is not watching — the stale default a
-    # storm front was created with, most likely.
+    # A monitor following a position is named by the position, not by `location`:
+    # that field is only its fallback, and showing it here would name the place
+    # the monitor is watching only in the case it has never heard from the phone.
     position_id = (m.get("position_id") or "").strip()
     if position_id:
         name = next((p.get("name") for p in load_positions()
                      if p.get("id") == position_id), None)
-        return f"📍 {name}" if name else "⚠️ missing position"
+        return f"📍 {name}" if name else "⚠️ missing position (using the fallback)"
     return m.get("location", "?")
 
 
