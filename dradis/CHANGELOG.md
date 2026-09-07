@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [4.8.1] - 2026-09-07
+
+**Every rain and storm front card in `/monitors` was headed by a place the monitor had stopped watching.** Tap a monitor centred on a phone in Bacoli and the card said `📍 Roma`. Nothing in the code hardcodes Rome: that is the monitor's `location` field, and since v4.1.0 a monitor that follows a **position** does not watch that place — `location` is only its **fallback**, relabelled *Fallback location* in the Web UI and used exactly when the phone has never reported. The card printed it unconditionally, so the one line naming where the monitor looks was the one line guaranteed to be wrong precisely for the monitors that move.
+
+**The same mistake was found and fixed once already, one line higher up.** v4.1.1 taught the button *labels* to resolve the position name — `_live_monitor_detail`, with a regression test asserting `"Roma"` must not appear — and v4.8.0 taught every *alert* to print the origin it measured from. The detail card sitting between those two was never touched by either, and went on contradicting both.
+
+- **Fix — the card names the origin, not the fallback.** The `📍 Roma` line is replaced by the origin block `/rain` and `/storm` already print: the position it follows, the coordinates, a tappable map link, and the age, accuracy and motion of the fix. `📍 Origine: posizione «Cellulare di Procolo»`. A monitor on fixed coordinates is unchanged in substance and now says so explicitly — `📍 Origine: coordinate fisse — Roma` — and one whose position has never reported is headed `📍 Origine: ripiego — nessun dato da «…»` rather than presented as the phone. One function now serves the card and the snapshot, which is what stops the wording drifting apart a third time.
+- **Feat — the fix is dated by the clock, not only by its age.** `fix di 3 min fa (17:44)`, in the timezone configured in DRADIS and never the container's UTC. "Di 3 min fa" read at 17:47 and read again at 21:10 are the same three words about two different fixes, and a status card is the thing you open hours later. The clock reaches `/rain` and `/storm` too, for the same reason.
+- **Feat — the card works for a monitor that is switched off.** `describe_origin_config` reads the origin from a monitor's saved configuration rather than from a running instance, which a disabled monitor does not have — and `/monitors` lists disabled monitors on purpose. It resolves the same chain the running monitor does, so the two can never disagree.
+- **Fix — a rain front monitor was presented as a storm one.** The branch was hardcoded `🌩️` and *"1 cessato per temporale"* for both types. Now `🌧️` and *"per pioggia"* where that is what it is.
+
+No reverse geocoding, deliberately: there is none in the tree, it would mean a network call inside a button press, and the question a coordinate raises — *is that actually where I am* — is settled by tapping the map link, not by a city name. No distance from `location` either; `snapshot.py` records why that false anchor was removed in v4.1.1.
+
+Nothing to reconfigure and no migration: the card reads the configuration that is already there.
+
+Tests: 614 (was 603 in an environment where 27 are skipped for the missing LLM and Google SDKs) — 11 new in `test_snapshot.py`. `DescribeOriginConfigTest` (5: a followed position is named and `"Roma"` is absent, a fixed monitor still reports its point, a config missing every optional key does not raise, a deleted position still warns, a position with no fallback coordinates is blind); `FormatOriginTest` (6: the epoch is carried, the age is printed beside the clock, the clock follows the configured timezone rather than the container's, an unknown timezone falls back instead of raising, a fixed point has no fix line to date, voice mode still drops the whole block).
+
 ## [4.8.0] - 2026-09-06
 
 **A phone that stops moving stops publishing, and both ring monitors read that as blindness.** `mqtt_statestream` fires on state *changes*, so a phone sitting on a kitchen table produces exactly the same silence on the wire as a phone that fell in a river. `position_core` has said so in a comment since v4.1.0 — *"A stationary phone stops publishing"* — and the monitors froze on it anyway: past **Maximum fix age** (15 minutes) `usable()` returned None, `_resolve_origin` returned None, and `_go_blind` refused to say anything at all. No alerts, no all-clear, no badge, no line in the message. A storm front watching a phone at home could be dark for an entire night, and from the outside that is indistinguishable from a quiet sky.

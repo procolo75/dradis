@@ -18,7 +18,9 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -57,7 +59,8 @@ from dradis.live_monitors.radar_core import (                        # noqa: E40
     GeoTransform, RadarGrid, latlon_to_pixel, pixel_to_latlon,
 )
 from dradis.live_monitors.snapshot import (                          # noqa: E402
-    OriginInfo, Snapshot, describe_origin, format_caption, preview_alert,
+    OriginInfo, Snapshot, describe_origin, describe_origin_config,
+    format_caption, format_origin, preview_alert,
 )
 from dradis.live_monitors.storm_front_core import (                  # noqa: E402
     EVENT_ACTIVE, build_frame, ring_edges,
@@ -356,6 +359,111 @@ class DescribeOriginTest(unittest.TestCase):
 
     def test_no_fix_means_no_map_url(self):
         self.assertEqual(OriginInfo(None, None, True, "x", False).map_url, "")
+
+
+# ── The origin of a monitor CONFIG, and how it is rendered ────────────────────
+#
+# `/monitors` offers a status card for every monitor in live_monitors.json,
+# disabled ones included, so it has no instance to ask. These two — the config
+# adapter and the block it feeds — are what stopped that card heading a monitor
+# with the `location` field alone.
+
+RAIN_CFG = {"id": "r1", "name": "Casa", "location": "Roma", "language": "it",
+            "latitude": SITE[0], "longitude": SITE[1], "radius_km": 30.0,
+            "ring_count": 4}
+
+
+class DescribeOriginConfigTest(unittest.TestCase):
+
+    def test_a_config_following_a_position_names_it_not_the_location(self):
+        """The bug this exists for: "Roma" over a monitor centred on a phone.
+
+        `location` is the FALLBACK once a position is followed, and the card
+        printed it as though it were the place being watched.
+        """
+        state = FakeState(45.0, 9.0, age_sec=180.0, accuracy_m=12.0)
+        with mock.patch.object(SNAP, "position_manager",
+                               FakeManager(name="Telefono", state=state)):
+            origin = describe_origin_config({**RAIN_CFG, "position_id": "p1"}, T0)
+            block = "\n".join(format_origin(origin, it=True))
+        self.assertTrue(origin.following)
+        self.assertEqual(origin.source_name, "Telefono")
+        self.assertAlmostEqual(origin.lat, 45.0, places=6)
+        self.assertIn("Telefono", block)
+        self.assertNotIn("Roma", block)
+
+    def test_a_config_with_no_position_reports_its_fixed_point(self):
+        origin = describe_origin_config(RAIN_CFG, T0)
+        self.assertFalse(origin.following)
+        self.assertTrue(origin.usable)
+        self.assertAlmostEqual(origin.lat, SITE[0], places=6)
+        self.assertIn("Roma", "\n".join(format_origin(origin, it=True)))
+
+    def test_a_config_missing_every_optional_key_does_not_raise(self):
+        """The card is offered for whatever is in live_monitors.json, and the
+        adapter must coerce like the monitors' own constructors do rather than
+        trusting the keys to be there."""
+        origin = describe_origin_config({"id": "x", "name": "Senza"}, T0)
+        self.assertFalse(origin.following)
+        self.assertEqual((origin.lat, origin.lon), (0.0, 0.0))
+
+    def test_a_position_with_no_fallback_coordinates_is_blind(self):
+        with mock.patch.object(SNAP, "position_manager", FakeManager(state=None)):
+            origin = describe_origin_config(
+                {**RAIN_CFG, "position_id": "p1",
+                 "latitude": 0.0, "longitude": 0.0}, T0)
+        self.assertFalse(origin.usable)
+        self.assertFalse(origin.has_fix)
+
+    def test_a_deleted_position_still_warns_through_the_block(self):
+        manager = FakeManager()
+        manager.name_of = lambda pid: None
+        with mock.patch.object(SNAP, "position_manager", manager):
+            origin = describe_origin_config({**RAIN_CFG, "position_id": "gone"}, T0)
+            block = "\n".join(format_origin(origin, it=True))
+        self.assertTrue(origin.missing)
+        self.assertIn("non esiste pi\u00f9", block)
+
+
+class FormatOriginTest(unittest.TestCase):
+
+    def _origin(self, age_sec=180.0):
+        state = FakeState(45.0, 9.0, age_sec=age_sec, accuracy_m=12.0)
+        with mock.patch.object(SNAP, "position_manager", FakeManager(state=state)):
+            return describe_origin_config({**RAIN_CFG, "position_id": "p1"}, T0)
+
+    def test_the_fix_carries_the_epoch_it_was_taken_at(self):
+        self.assertAlmostEqual(self._origin().fix_t, T0 - 180.0, places=3)
+
+    def test_the_age_is_printed_beside_the_clock(self):
+        block = "\n".join(format_origin(self._origin(), it=True,
+                                        tz_name="Europe/Rome"))
+        clock = datetime.fromtimestamp(
+            T0 - 180.0, ZoneInfo("Europe/Rome")).strftime("%H:%M")
+        self.assertIn("di 3 min fa", block)
+        self.assertIn(f"({clock})", block)
+
+    def test_the_clock_follows_the_configured_timezone_not_the_container(self):
+        """The same trap `_tz` was added for: the add-on's clock is UTC."""
+        origin = self._origin()
+        rome = "\n".join(format_origin(origin, it=True, tz_name="Europe/Rome"))
+        utc = "\n".join(format_origin(origin, it=True, tz_name="UTC"))
+        self.assertNotEqual(rome, utc)
+
+    def test_an_unknown_timezone_falls_back_instead_of_raising(self):
+        block = "\n".join(format_origin(self._origin(), it=True,
+                                        tz_name="Mars/Olympus"))
+        self.assertIn("di 3 min fa", block)
+
+    def test_a_fixed_point_has_no_fix_line_to_date(self):
+        block = "\n".join(format_origin(describe_origin_config(RAIN_CFG, T0),
+                                        it=True, tz_name="Europe/Rome"))
+        self.assertNotIn("fix", block)
+
+    def test_voice_mode_still_drops_the_whole_block(self):
+        self.assertEqual(
+            format_origin(self._origin(), it=True, voice=True,
+                          tz_name="Europe/Rome"), [])
 
 
 # ── Preview alert ─────────────────────────────────────────────────────────────

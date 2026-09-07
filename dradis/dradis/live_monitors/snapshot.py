@@ -2,7 +2,7 @@
 live_monitors/snapshot.py
 ──────────────────────────
 Shared vocabulary for the on-demand snapshots behind the `/rain` and `/storm`
-Telegram commands.
+Telegram commands, and for the origin block `/monitors` shows on a status card.
 
 Why this module exists
 ──────────────────────
@@ -41,6 +41,7 @@ monitors; this module reads the same inputs and renders them.
 import html
 from dataclasses import dataclass
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .geo import direction_label
@@ -69,6 +70,12 @@ class OriginInfo:
     # monitor still measures, so `usable` stays True; this is what keeps the
     # report from presenting a fallback as the phone.
     fallback: bool = False
+    # WHEN the fix was taken, as an epoch, beside `age_sec`'s "how long ago".
+    # A relative age answers "is this current"; a clock answers "was that before
+    # or after I left the house", which is what a card read hours later is
+    # actually being asked. Rendering it needs a timezone, so it is carried raw
+    # and formatted by whoever knows which one applies.
+    fix_t: float | None = None
 
     @property
     def has_fix(self) -> bool:
@@ -155,10 +162,34 @@ def describe_origin(monitor, now: float) -> OriginInfo:
     return OriginInfo(
         lat=state.lat, lon=state.lon, following=True, source_name=name,
         usable=True, reason=reason,
-        age_sec=state.age_sec, accuracy_m=state.accuracy_m,
+        age_sec=state.age_sec, accuracy_m=state.accuracy_m, fix_t=state.t,
         speed_kmh=state.speed_kmh, course_deg=state.course_deg,
         moving=state.moving,
     )
+
+
+def describe_origin_config(cfg: dict, now: float) -> OriginInfo:
+    """`describe_origin` for a monitor's CONFIG rather than a live instance.
+
+    The reason this exists is `/monitors`: the card is offered for every monitor
+    in live_monitors.json, and a DISABLED one has no instance in any manager to
+    ask. Building a StormFrontLiveMonitor — a tracker, a ring geometry and a
+    Blitzortung feed object — merely to find out where it would look is a lot of
+    machinery for five attributes, and it would have to branch on the type to
+    pick the class.
+
+    So the dict is dressed as the object `describe_origin` expects, with the same
+    coercions the two monitors apply in their own constructors. Nothing here
+    decides anything: the origin reported is the one the running monitor resolves
+    from the same position manager, whether or not it happens to be running.
+    """
+    return describe_origin(SimpleNamespace(
+        latitude=float(cfg.get("latitude", 0) or 0),
+        longitude=float(cfg.get("longitude", 0) or 0),
+        position_id=(cfg.get("position_id") or "").strip(),
+        location=cfg.get("location", ""),
+        name=cfg.get("name", ""),
+    ), now)
 
 
 def preview_alert(frame, edges: list[float], ring_count: int):
@@ -293,7 +324,7 @@ def format_caption(snap, voice: bool = False) -> str:
     if source:
         lines.append(source)
     lines.append("")
-    lines += _format_origin(snap.origin, it, voice)
+    lines += format_origin(snap.origin, it, voice, tz_name=snap.tz_name)
 
     if snap.blind_reason:
         lines.append("")
@@ -353,7 +384,17 @@ def _format_source_health(snap, it: bool) -> str:
     return ""
 
 
-def _format_origin(origin, it: bool, voice: bool = False) -> list[str]:
+def format_origin(origin, it: bool, voice: bool = False,
+                  tz_name: str = "UTC") -> list[str]:
+    """The origin as a block of lines: where, how sure, how old.
+
+    Public because `/monitors` needs the same block. Its status card used to head
+    a monitor with the `location` field alone — "📍 Roma" over a monitor centred
+    on a phone in Bacoli, because for a monitor that follows a position that
+    field is not where it watches, it is only the fallback. Repeating the
+    wording here would have repeated the bug in a second place; one function is
+    what keeps the card and the snapshot saying the same thing.
+    """
     # The warning survives voice mode; the description does not. A monitor
     # following a position that was deleted is silently watching nowhere, and
     # that has to be said however you are listening.
@@ -403,7 +444,16 @@ def _format_origin(origin, it: bool, voice: bool = False) -> list[str]:
     if origin.following and not origin.fallback:
         bits = []
         if origin.age_sec is not None:
-            bits.append(f"fix {_ago(origin.age_sec, it)}")
+            # The clock beside the age, because a card is often opened long after
+            # the thing it describes: "di 3 min fa" read at 18:40 and read again
+            # at 21:10 are the same three words about two different fixes.
+            clock = ""
+            if origin.fix_t is not None:
+                clock = (" ("
+                         + datetime.fromtimestamp(origin.fix_t,
+                                                  _tz(tz_name)).strftime("%H:%M")
+                         + ")")
+            bits.append(f"fix {_ago(origin.age_sec, it)}{clock}")
         if origin.accuracy_m is not None:
             bits.append(f"±{origin.accuracy_m:.0f} m")
         heading = origin.heading_label("it" if it else "en")
@@ -563,5 +613,6 @@ def origin_line(lat: float, lon: float, grade: str, lang: str = "it", *,
     return f"📌 {where} · {tail}"
 
 
-__all__ = ["OriginInfo", "Snapshot", "describe_origin", "map_url", "origin_line",
-           "preview_alert", "format_caption"]
+__all__ = ["OriginInfo", "Snapshot", "describe_origin", "describe_origin_config",
+           "map_url", "origin_line", "preview_alert", "format_caption",
+           "format_origin"]

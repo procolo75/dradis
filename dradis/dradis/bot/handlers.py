@@ -24,7 +24,8 @@ from bot.scheduler import (
 )
 from live_monitors.ha import ha_monitor_manager
 from live_monitors.rain_front import rain_front_monitor_manager
-from live_monitors.snapshot import format_caption
+from live_monitors.snapshot import (describe_origin_config, format_caption,
+                                    format_origin)
 from live_monitors.storm_front import storm_front_monitor_manager
 from web.store import (
     load_tasks,
@@ -388,14 +389,30 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Status: {badge}\n"
                f"Polling: 300s")
     else:
+        # The `location` field is NOT where a monitor following a position looks
+        # — it is only its fallback, and this card printed it unconditionally:
+        # "📍 Roma" over a monitor centred on a phone two hundred kilometres
+        # away. The button labels stopped making that mistake in v4.1.1; the card
+        # underneath them kept making it. `describe_origin_config` resolves the
+        # same chain the monitor does, and works for a disabled one too — which
+        # is the whole reason the card exists for monitors that are switched off.
+        rain  = mtype == "rain_front"
+        it    = monitor.get("language", "it") == "it"
         rings = monitor.get("ring_count", 4)
-        msg = (f"🌩️ <b>{html.escape(monitor['name'])}</b>\n"
-               f"📍 {html.escape(monitor.get('location', '?'))}\n"
-               f"Status: {badge}\n"
-               f"Raggio: {monitor.get('radius_km', '?')} km — {rings} anelli\n"
-               f"Al massimo {rings} avvisi di avvicinamento + 1 cessato "
-               f"per temporale — Polling: 60s")
-    await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        origin = describe_origin_config(monitor, time.time())
+        lines = [f"{'🌧️' if rain else '🌩️'} <b>{html.escape(monitor['name'])}</b>"]
+        lines += format_origin(origin, it, tz_name=_tz_name())
+        lines += [
+            f"Status: {badge}",
+            f"Raggio: {monitor.get('radius_km', '?')} km — {rings} anelli",
+            f"Al massimo {rings} avvisi di avvicinamento + 1 cessato "
+            f"per {'pioggia' if rain else 'temporale'} — Polling: 60s",
+        ]
+        msg = "\n".join(lines)
+    # The origin block carries a map link, and Telegram would otherwise paste an
+    # OpenStreetMap card under a four-line status message.
+    await query.message.reply_text(msg, parse_mode=ParseMode.HTML,
+                                   disable_web_page_preview=True)
 
 
 # ── /rain and /storm — on-demand snapshots ────────────────────────────────────

@@ -4550,8 +4550,9 @@ function renderLiveMonitorForm(monitor) {
         "past its age limit is still used rather than discarded — a phone that stops " +
         "moving stops publishing, and refusing that silence used to freeze the monitor " +
         "for hours at home. If no fix has <i>ever</i> arrived it falls back to the " +
-        "location below. Every alert prints the coordinates it measured from and how " +
-        "old they are, so a fallback can never pass itself off as your phone."
+        "location below. Every alert — and the status card behind <code>/monitors</code> — " +
+        "prints the coordinates it measured from and how old they are, so a fallback " +
+        "can never pass itself off as your phone."
       : "⚠️ This monitor follows a position that no longer exists. It falls back to the " +
         "location below; pick another position, or add it again in " +
         "<b>Settings → Positions</b>.";

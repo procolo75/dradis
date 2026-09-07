@@ -7,7 +7,7 @@ All commands are available only to the user ID configured in `telegram_allowed_c
 | `/menu` | Show all available commands with descriptions |
 | `/info` | Show current configuration: provider, model, history, and which tools are enabled |
 | `/tasks` | List all tasks (✅ enabled / ⏸ disabled) as inline buttons. Tap a button to run the task immediately regardless of its enabled state |
-| `/monitors` | List all scheduled and live monitors as inline buttons. Tap a scheduled monitor to run it; tap a live monitor to see its 🟢/🔴 status |
+| `/monitors` | List all scheduled and live monitors as inline buttons. Tap a scheduled monitor to run it; tap a live monitor to see its 🟢/🔴 status. A rain or storm front card also names the **origin it measures from** — the position it follows, coordinates, map link, and the age and clock time of the last fix. See [below](#rain-and-storm) |
 | `/hamonitors` | List all HA monitors with 🟢/🔴 running status. Tap one to see its name, mode, cooldown, and entity list |
 | `/rain` | Snapshot of a 🌧️ Rain front monitor — the radar picture it would send right now, and where it believes it is. See [below](#rain-and-storm) |
 | `/storm` | The same for a 🌩️ Storm front monitor |
@@ -30,7 +30,7 @@ They answer with **one message**: the picture the monitor would attach to a real
 
 📍 Origine: posizione «Telefono di Procolo»
    44.89930, 7.11060 · apri la mappa
-   fix di 47 s fa · ±12 m · 96 km/h verso NE
+   fix di 47 s fa (17:42) · ±12 m · 96 km/h verso NE
 
 📡 Radar delle 17:35 (8 min fa) · copertura 100%
 🌧️ Fronte a 12 km a SO · max 19.4 mm/h (forte)
@@ -55,9 +55,9 @@ That restraint is not tidiness. The guarantee that one storm can only ever produ
 
 The caption shows the coordinates to five decimals and a **tap-to-open map link** — because no number answers *"is it actually where I am"* as directly as looking.
 
-For a monitor that follows a phone it also reports how old the fix is, how precise it is, and how fast you are moving and in which direction.
+For a monitor that follows a phone it also reports how old the fix is — with the clock time it was taken, because *"di 3 min fa"* read two hours later is the same three words about a different fix — how precise it is, and how fast you are moving and in which direction.
 
-It deliberately does **not** report a distance from the monitor's `location` field. For a monitor that follows a phone those coordinates are dead configuration — whatever default it happened to be created with — so a line like *"176 km from the configured location"* measures from nowhere. `/monitors` used to make the same mistake and stopped in v4.1.1.
+It deliberately does **not** report a distance from the monitor's `location` field. For a monitor that follows a phone those coordinates are dead configuration — whatever default it happened to be created with — so a line like *"176 km from the configured location"* measures from nowhere. The button labels in `/monitors` stopped making that mistake in v4.1.1, and in v4.8.1 the status card behind them stopped heading a monitor with `location` too: it prints this same origin block.
 
 When a monitor is blind, the command says so *and still shows the fix*:
 
