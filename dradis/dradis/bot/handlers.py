@@ -218,6 +218,65 @@ def _live_monitor_detail(m: dict) -> str:
     return m.get("location", "?")
 
 
+# ── Live monitor status, in words ─────────────────────────────────────────────
+#
+# A live monitor reports one of five states, and until v4.8.2 three of them
+# arrived as "🟠 Degraded (no data from the feed)" — a sentence that named a
+# symptom and left the reader to guess at the cause. The worst of the three was
+# the commonest: a storm front subscribes to a geohash cell about 110 km across,
+# so outside a storm nothing is published from it and a perfectly healthy monitor
+# was badged 🟠 for hours at a stretch. A warning that is on almost always is not
+# a warning, and it buried the one case that needs acting on.
+#
+# `quiet` is now healthy and says why it is silent; `degraded` means the feed
+# itself is failing; `blind` means the monitor knows it must not speak, which is
+# a different instruction to the reader and deserves a different badge.
+
+_LIVE_ICONS = {"running": "🟢", "quiet": "🟢", "degraded": "🟠", "blind": "🟠"}
+
+
+def _live_icon(status: str) -> str:
+    return _LIVE_ICONS.get(status, "🔴")
+
+
+def _live_badge(status: str, mtype: str, monitor_id: str, it: bool) -> str:
+    """The status as a full line, saying what is wrong rather than that
+    something is."""
+    if status == "running":
+        return "🟢 Attivo" if it else "🟢 Running"
+
+    if status == "quiet":
+        # Storm fronts only: the radar publishes on a timer whatever the weather,
+        # so a silent rain feed is never this.
+        return ("🟢 Attivo — feed connesso, nessun fulmine nel raggio da 15 min"
+                if it else
+                "🟢 Running — feed connected, no lightning within range for 15 min")
+
+    if status == "blind":
+        if mtype == "rain_front":
+            monitor = rain_front_monitor_manager.get(monitor_id)
+            why = monitor.blind_reason_label("it" if it else "en") if monitor else ""
+        else:
+            why = ("non sa da dove misurare" if it
+                   else "it does not know where to measure from")
+        head = "🟠 Cieco" if it else "🟠 Blind"
+        tail = (" — non manda avvisi, e non manda nemmeno il cessato allarme"
+                if it else
+                " — no alerts, and no all-clear either")
+        return f"{head}: {why}{tail}" if why else f"{head}{tail}"
+
+    if status == "degraded":
+        if mtype == "rain_front":
+            return ("🟠 Degradato — il radar non risponde o l'ultima immagine è "
+                    "troppo vecchia" if it else
+                    "🟠 Degraded — the radar is not answering, or the last image "
+                    "is too old")
+        return ("🟠 Degradato — feed fulmini non connesso" if it else
+                "🟠 Degraded — lightning feed not connected")
+
+    return "🔴 Spento" if it else "🔴 Stopped"
+
+
 async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != _state.ALLOWED_CHAT_ID:
         return
@@ -251,8 +310,7 @@ async def cmd_monitors(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback_data=f"monitor:{m['id']}",
         )])
     for m in _by_name(live):
-        status = _live_status_dispatcher(m["id"])
-        badge  = "🟢" if status == "running" else "🔴"
+        badge  = _live_icon(_live_status_dispatcher(m["id"]))
         label  = f"{badge} {m['name']} ({_live_monitor_detail(m)})"
         keyboard.append([InlineKeyboardButton(label, callback_data=f"live:{m['id']}")])
     sections = []
@@ -366,12 +424,8 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
         return
     mtype  = monitor.get("type", "storm_front")
     status = _live_status_dispatcher(item_id)
-    # "degraded" = the task is alive but the feed is not delivering. Without it a
-    # broken monitor and a quiet sky looked identical from here.
-    badge  = {
-        "running":  "🟢 Running",
-        "degraded": "🟠 Degraded (no data from the feed)",
-    }.get(status, "🔴 Stopped")
+    badge  = _live_badge(status, mtype, item_id,
+                         monitor.get("language", "it") == "it")
     if mtype == "seismic":
         areas = ", ".join(monitor.get("areas", [])) or "—"
         msg = (f"🌍 <b>{html.escape(monitor['name'])}</b>\n"
@@ -442,8 +496,7 @@ def _snapshot_configs(kind: str) -> list[dict]:
 def _build_snapshot_keyboard(kind: str, configs: list[dict]) -> InlineKeyboardMarkup:
     rows = []
     for m in configs:
-        status = _live_status_dispatcher(m["id"])
-        badge = {"running": "🟢", "degraded": "🟠"}.get(status, "🔴")
+        badge = _live_icon(_live_status_dispatcher(m["id"]))
         rows.append([InlineKeyboardButton(
             f"{badge} {m['name']} ({_live_monitor_detail(m)})",
             callback_data=f"snap:{kind}:{m['id']}")])

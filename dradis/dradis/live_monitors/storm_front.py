@@ -237,8 +237,17 @@ class StormFrontLiveMonitor:
         return self._poll_task is not None and not self._poll_task.done()
 
     def status(self) -> str:
+        """stopped / blind / degraded / quiet / running.
+
+        Blindness is checked before the feed, because it outranks it: a monitor
+        that does not know where it is will not alert however healthy the
+        subscription is, and reporting the feed's cheerful "running" over that
+        was the badge saying the opposite of the truth.
+        """
         if not self.is_running():
             return "stopped"
+        if self._blind_since:
+            return "blind"
         return self._feed.status()
 
     # ── State persistence ─────────────────────────────────────────────────────

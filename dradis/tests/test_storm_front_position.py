@@ -14,6 +14,7 @@ aiomqtt is stubbed before the import under test, as in test_storm_front_manager.
 import asyncio
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -504,6 +505,70 @@ class LocationLabelTest(unittest.TestCase):
                                            send_ok, "Europe/Rome")
         with mock.patch.object(SF, "position_manager", FakeManager(name=None)):
             self.assertEqual(monitor._plain_location(), "Bacoli")
+
+
+class FeedStatusTest(unittest.TestCase):
+    """A silent feed is not a broken one, and the badge stopped saying it was.
+
+    The subscription covers a geohash cell about 110 km across. Outside a storm
+    nothing is published from it, so the fifteen-minute silence budget fired on a
+    perfectly healthy monitor for hours at a time and reported "degraded" — a
+    warning that is on almost always, hiding the one case worth acting on.
+    """
+
+    def _feed(self, connected=True, failures=0, last_msg=None, running=True):
+        feed = BlitzortungFeed(name="t", monitor_id="sf1", lat=HOME[0],
+                               lon=HOME[1], coverage_radius_km=48.0,
+                               window_sec=600.0)
+        feed._connected = connected
+        feed._connect_failures = failures
+        feed._last_msg_ts = time.time() if last_msg is None else last_msg
+        feed.is_running = lambda: running
+        return feed
+
+    def test_a_connected_feed_receiving_strikes_is_running(self):
+        self.assertEqual(self._feed().status(), "running")
+
+    def test_a_connected_feed_with_a_clear_sky_is_quiet_not_degraded(self):
+        feed = self._feed(last_msg=time.time() - 3600)
+        self.assertEqual(feed.status(), "quiet")
+
+    def test_a_disconnected_feed_is_degraded_however_long_it_has_been_silent(self):
+        """The connection is checked FIRST: a dead feed is silent too, and
+        calling that "quiet" would report the symptom of a fault as weather."""
+        feed = self._feed(connected=False, last_msg=time.time() - 3600)
+        self.assertEqual(feed.status(), "degraded")
+
+    def test_repeated_connection_failures_are_degraded(self):
+        self.assertEqual(self._feed(failures=3).status(), "degraded")
+
+    def test_a_feed_that_has_never_heard_anything_is_not_yet_quiet(self):
+        """`_last_msg_ts` of 0 means "just connected", not "silent since 1970"."""
+        self.assertEqual(self._feed(last_msg=0.0).status(), "running")
+
+    def test_a_stopped_feed_is_stopped(self):
+        self.assertEqual(self._feed(running=False).status(), "stopped")
+
+
+class MonitorStatusTest(unittest.TestCase):
+
+    def _monitor(self, blind=False):
+        monitor = SF.StormFrontLiveMonitor(config(), send_ok, "Europe/Rome")
+        monitor.is_running = lambda: True
+        monitor._feed.is_running = lambda: True
+        monitor._feed._connected = True
+        monitor._feed._last_msg_ts = time.time()
+        if blind:
+            monitor._blind_since = time.time()
+        return monitor
+
+    def test_a_blind_monitor_outranks_a_healthy_feed(self):
+        """It will not alert whatever the subscription is doing, and the badge
+        used to report the feed's cheerful "running" over exactly that."""
+        self.assertEqual(self._monitor(blind=True).status(), "blind")
+
+    def test_a_seeing_monitor_reports_its_feed(self):
+        self.assertEqual(self._monitor().status(), "running")
 
 
 class FeedRetuneTest(unittest.IsolatedAsyncioTestCase):

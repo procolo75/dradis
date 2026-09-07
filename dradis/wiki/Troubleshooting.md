@@ -87,13 +87,38 @@ Since 4.4.2 a timeout logs `delivery UNCONFIRMED — committed anyway` instead a
 
 ---
 
-## Live monitor shows 🟠 Degraded
+## What a live monitor's badge means
 
-The task is alive but the feed is not delivering: either no message has arrived for 15 minutes, or reconnection keeps failing. Previously this state was indistinguishable from a quiet sky — the monitor reported 🟢 Running while silently receiving nothing.
+Five states, and only two of them are a problem.
+
+| Badge | Meaning | Is something wrong? |
+|-------|---------|---------------------|
+| 🟢 **Running** | Connected, data arriving. | No |
+| 🟢 **Quiet** | Connected and healthy, nothing to send. Storm fronts only. | **No** |
+| 🟠 **Degraded** | The feed is failing: connection down, or no usable radar image. | Yes |
+| 🟠 **Blind** | Running, but it knows it cannot see and has gone deliberately silent. **No alerts, and no all-clear either.** | Yes |
+| 🔴 **Stopped** | Disabled, or not started. | Only if you did not disable it |
+
+### 🟢 Quiet is not a fault
+
+A storm front subscribes to a ring of geohash cells about 110 km across. Outside a storm **nothing at all is published from them**, so the feed is legitimately silent for hours. Until v4.8.2 that silence was badged 🟠 Degraded, so a perfectly healthy monitor was amber for most of the year — and it buried the real failures. Nothing to do here.
+
+A rain front never reports Quiet: the radar publishes on a timer whatever the weather, so a silent radar feed is always a fault.
+
+### 🟠 Degraded
 
 - Check the log for repeated `disconnected: … retry in 15s` lines with a rising `failures=` count.
 - The Blitzortung broker (`blitzortung.ha.sed.pl:1883`) is a public service; an outage there shows up exactly this way.
-- Note that Degraded during genuinely calm weather is still meaningful — it means no strike data at all is arriving, not that there are no storms nearby.
+- For a rain front, it means the radar is not answering or the last image is past 25 minutes old — the source publishes every 5 minutes with about 10 minutes of natural lag, so anything under 25 minutes is normal.
+- Try disabling and re-enabling the monitor to force a reconnect.
+
+### 🟠 Blind
+
+The monitor is alive and has stopped speaking on purpose, because it does not trust what it can see. **Its silence carries no information** — it is not telling you the sky is clear. The card in `/monitors` names the cause:
+
+- *non sa da dove misurare* — it follows a position that has never reported and has no fallback coordinates, or the position was deleted. Check **Settings → Positions**.
+- *nessuna immagine radar recente* — same cause as Degraded above, seen from the monitor's side.
+- *il radar non copre l'area sorvegliata* — the watched disc falls outside the radar network's coverage. Reduce the radius, or move the location.
 
 ---
 

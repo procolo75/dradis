@@ -235,7 +235,7 @@ class Snapshot:
     kind: str                        # "rain" or "storm"
     language: str
     tz_name: str
-    status: str                      # running / degraded / stopped
+    status: str                      # running / quiet / blind / degraded / stopped
     origin: OriginInfo
     running: bool
 

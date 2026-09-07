@@ -289,12 +289,42 @@ class RainFrontLiveMonitor:
     def is_running(self) -> bool:
         return self._poll_task is not None and not self._poll_task.done()
 
+    # What each blind reason means to a reader, as opposed to what it means to a
+    # log line. `_blind_reason` is a code word — "position", "radar", "coverage" —
+    # and a badge that printed it raw would be a fourth way of saying "something
+    # is wrong" without saying what.
+    BLIND_LABELS = {
+        "position": ("non sa da dove misurare",
+                     "it does not know where to measure from"),
+        "radar":    ("nessuna immagine radar recente",
+                     "no recent radar image"),
+        "coverage": ("il radar non copre l'area sorvegliata",
+                     "the radar does not cover the watched area"),
+    }
+
     def status(self) -> str:
+        """stopped / blind / degraded / running.
+
+        Blindness is its own state rather than a degradation. The three things
+        that cause it — an unusable position, a stale raster, a disc the radar
+        network cannot see into — are not a feed in poor health; they are the
+        monitor knowing it must not speak. Collapsing them into "degraded" left
+        one badge covering two different instructions to the reader.
+        """
         if not self.is_running():
             return "stopped"
         if self._blind_since:
-            return "degraded"
+            return "blind"
         return radar_feed.status()
+
+    def blind_reason_label(self, lang: str = "it") -> str:
+        """Why it is blind, in words, or "" when it is not."""
+        if not self._blind_since:
+            return ""
+        pair = self.BLIND_LABELS.get(self._blind_reason)
+        if pair is None:
+            return self._blind_reason
+        return pair[0] if lang == "it" else pair[1]
 
     # ── State persistence ─────────────────────────────────────────────────────
 

@@ -33,8 +33,20 @@ MQTT_HOST       = "blitzortung.ha.sed.pl"
 MQTT_PORT       = 1883
 RECONNECT_DELAY = 15
 
-# Connected but silent for this long → report "degraded" rather than pretending
-# everything is fine.
+# Connected but silent for this long → report "quiet", NOT "degraded".
+#
+# This used to be a degradation and it was the wrong word for the commonest state
+# this feed is ever in. The subscription covers a geohash cell about 110 km
+# across; outside a storm nothing at all is published from it, so a perfectly
+# healthy monitor is silent for hours at a time and was badged 🟠 for every one
+# of them. A warning that is on almost always is not a warning, and it made the
+# one badge that matters — the feed is genuinely down — indistinguishable from a
+# clear sky.
+#
+# Silence alone cannot tell a dead subscription from calm weather, which is why
+# it is reported as its own state rather than folded into either: it says what is
+# observed ("connected, nothing coming"), and leaves the fault reporting to the
+# connection, which can actually be checked.
 DEGRADED_SILENCE_SEC = 900
 # Hard cap so a burst between polls cannot grow the buffer without bound.
 MAX_BUFFER_STRIKES = 20000
@@ -132,14 +144,18 @@ class BlitzortungFeed:
         return True
 
     def status(self) -> str:
+        """stopped / degraded / quiet / running.
+
+        The connection is checked BEFORE the silence: a feed that is down is also
+        silent, and reporting that as "quiet" would describe the symptom of a
+        fault as the weather.
+        """
         if not self.is_running():
             return "stopped"
-        if self._connect_failures >= 3:
+        if self._connect_failures >= 3 or not self._connected:
             return "degraded"
         if self._last_msg_ts and time.time() - self._last_msg_ts > DEGRADED_SILENCE_SEC:
-            return "degraded"
-        if not self._connected:
-            return "degraded"
+            return "quiet"
         return "running"
 
     # ── Health, as inputs to the decision core ────────────────────────────────

@@ -287,14 +287,34 @@ class BlindnessTest(unittest.TestCase):
         self.assertIsNone(mon._field)
         self.assertIsNone(mon._tracker._field)
 
-    def test_status_is_degraded_while_blind_and_stopped_when_not_running(self):
+    def test_status_is_blind_while_blind_and_stopped_when_not_running(self):
+        """Blindness is its own state, not a degraded feed.
+
+        The two are different instructions to the reader — "the radar is behind"
+        against "I do not know where you are and will not speak" — and one badge
+        covering both said neither.
+        """
         mon = monitor()
         mon._poll_task = _FakeTask(done=True)
         self.assertEqual(mon.status(), "stopped")
 
         mon._poll_task = _FakeTask(done=False)
         mon._go_blind(T0, "position")
-        self.assertEqual(mon.status(), "degraded")
+        self.assertEqual(mon.status(), "blind")
+
+    def test_the_blind_reason_is_given_in_words_not_in_code_words(self):
+        mon = monitor()
+        mon._poll_task = _FakeTask(done=False)
+        self.assertEqual(mon.blind_reason_label(), "")
+        mon._go_blind(T0, "coverage")
+        self.assertIn("radar non copre", mon.blind_reason_label("it"))
+        self.assertIn("does not cover", mon.blind_reason_label("en"))
+
+    def test_an_unknown_blind_reason_is_passed_through_rather_than_swallowed(self):
+        mon = monitor()
+        mon._poll_task = _FakeTask(done=False)
+        mon._go_blind(T0, "something new")
+        self.assertEqual(mon.blind_reason_label(), "something new")
 
 
 class _FakeTask:

@@ -102,6 +102,69 @@ class MonitorLabelTest(unittest.TestCase):
         self.assertEqual(self.detail({"type": "football_betting"}), "⚽ live")
 
 
+class StatusBadgeTest(unittest.TestCase):
+    """What /monitors says about a live monitor's health.
+
+    Three of the five states used to arrive as one line — "🟠 Degraded (no data
+    from the feed)" — which named a symptom and left the cause to be guessed. The
+    worst of the three was the commonest: a storm front hears a geohash cell
+    about 110 km across, so outside a storm nothing is published from it and a
+    healthy monitor was amber for hours at a stretch. A warning that is on almost
+    always is not a warning.
+    """
+
+    def test_a_quiet_sky_is_green_and_says_why_it_is_silent(self):
+        badge = handlers._live_badge("quiet", "storm_front", "s1", it=True)
+        self.assertTrue(badge.startswith("🟢"))
+        self.assertIn("nessun fulmine", badge)
+
+    def test_a_quiet_monitor_is_green_in_the_list_too(self):
+        """The list badge read `"🟢" if running else "🔴"`, so a quiet monitor —
+        the normal state — was shown as switched off."""
+        self.assertEqual(handlers._live_icon("quiet"), "🟢")
+        self.assertEqual(handlers._live_icon("running"), "🟢")
+        self.assertEqual(handlers._live_icon("degraded"), "🟠")
+        self.assertEqual(handlers._live_icon("blind"), "🟠")
+        self.assertEqual(handlers._live_icon("stopped"), "🔴")
+        self.assertEqual(handlers._live_icon("something else"), "🔴")
+
+    def test_a_degraded_storm_front_names_the_lightning_feed(self):
+        badge = handlers._live_badge("degraded", "storm_front", "s1", it=True)
+        self.assertIn("feed fulmini", badge)
+        self.assertNotIn("radar", badge)
+
+    def test_a_degraded_rain_front_names_the_radar(self):
+        badge = handlers._live_badge("degraded", "rain_front", "r1", it=True)
+        self.assertIn("radar", badge)
+        self.assertNotIn("fulmini", badge)
+
+    def test_a_blind_rain_front_reports_the_reason_it_is_blind(self):
+        class _Blind:
+            def blind_reason_label(self, lang="it"):
+                return "non sa da dove misurare"
+
+        with mock.patch.object(handlers.rain_front_monitor_manager, "get",
+                               lambda mid: _Blind()):
+            badge = handlers._live_badge("blind", "rain_front", "r1", it=True)
+        self.assertIn("Cieco", badge)
+        self.assertIn("non sa da dove misurare", badge)
+        # The consequence, which is the part that tells the reader what to do
+        # with the badge: silence from here means nothing at all.
+        self.assertIn("cessato allarme", badge)
+
+    def test_a_blind_monitor_with_no_instance_still_produces_a_badge(self):
+        with mock.patch.object(handlers.rain_front_monitor_manager, "get",
+                               lambda mid: None):
+            badge = handlers._live_badge("blind", "rain_front", "r1", it=True)
+        self.assertIn("Cieco", badge)
+
+    def test_english_is_available_for_every_state(self):
+        for status in ("running", "quiet", "degraded", "blind", "stopped"):
+            badge = handlers._live_badge(status, "storm_front", "s1", it=False)
+            self.assertTrue(badge)
+            self.assertNotIn("Attivo", badge)
+
+
 class DeliveryOutcomeTest(unittest.TestCase):
     """A timeout is not a refusal.
 

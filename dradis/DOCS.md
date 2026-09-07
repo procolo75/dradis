@@ -762,6 +762,24 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 
 There is no cron field and no "run now" action — the monitor is always-on when enabled.
 
+#### The five states of a live monitor
+
+Shown as a badge in the Web UI, next to the name in `/monitors`, and in full on the card you get by tapping one.
+
+| Badge | Meaning | Is something wrong? |
+|-------|---------|---------------------|
+| 🟢 **Running** | Connected, and data is arriving. | No |
+| 🟢 **Quiet** | Connected and healthy, with nothing to send. Storm fronts only. | **No** |
+| 🟠 **Degraded** | The feed itself is failing — the connection is down, or the radar has not produced a usable image. | Yes, but usually not yours to fix |
+| 🟠 **Blind** | The monitor is running and has decided it must not speak: it does not know where to measure from, or the data it has is unusable. **No alerts, and no all-clear either.** | Yes — check the reason on the card |
+| 🔴 **Stopped** | Disabled, or not started. | Only if you did not disable it |
+
+**Why Quiet exists.** A storm front subscribes to a ring of geohash cells about 110 km across. Outside a storm nothing at all is published from them, so the feed is legitimately silent for hours at a time. Until v4.8.2 that silence was reported as 🟠 Degraded, which meant the badge was amber for most of the year — and an alarm that is on almost always is not an alarm. It hid the one case that needs acting on. Silence alone cannot distinguish a dead subscription from calm weather, so it is reported as what it is: *connected, nothing coming*. The connection, which **can** be checked, is what decides between 🟢 and 🟠.
+
+A rain front never reports Quiet: the radar publishes on a timer whatever the weather, so a silent radar feed is always a fault.
+
+**Why Blind is not Degraded.** They are different instructions to you. Degraded says *the source is struggling*; Blind says *the monitor knows it is not seeing and has deliberately gone silent* — which matters because its silence then means nothing at all, not even "no storm". The card names the cause: an unusable position, no recent radar image, or an area the radar network cannot see into.
+
 #### Storm front / CBDR
 
 Subscribes to the geohash MQTT topics covering the configured location. Incoming strikes are buffered for **10 minutes** as `(time, lat, lon)` — deliberately **without** their distance, which is derived at evaluation time.
@@ -826,7 +844,7 @@ These replace the threshold tuning of the previous six generations, and both are
 2. Blitzortung's own strike timestamp is used when present, so a reconnect backlog ages out instead of counting as current.
 3. A diagnostic line is logged each poll: `[StormFront] name | ring=2/4 notified=2 front=18.3km sec=10 act=3 n=22 evt=ACTIVE`.
 4. The state advances **on a confirmed Telegram send, and on an unconfirmed one**; only a *refused* send is retried on the next poll, rebuilt from the *current* frame so the retry is never stale. Delivery is three-valued — `DELIVERED`, `REFUSED`, `UNCONFIRMED` — because a `TimedOut` on a photo upload means the answer never came back, not that nothing arrived, and with a chart attached it usually did. Treating that as a failure re-sent every ring message of an event. The trade: an unconfirmed send that arrived would duplicate every message, one that did not costs a single ring out of a ladder that still has the deeper rings and the all-clear.
-5. If the feed goes down, everything freezes: no alerts, and the all-clear countdown restarts from zero on reconnect. A dead socket and a clear sky are indistinguishable if you only count strikes, so the monitor refuses to guess. After 15 minutes of silence, or repeated connection failures, it reports **🟠 Degraded**.
+5. If the feed goes down, everything freezes: no alerts, and the all-clear countdown restarts from zero on reconnect. A dead socket and a clear sky are indistinguishable if you only count strikes, so the monitor refuses to guess. A lost connection, or repeated connection failures, is reported as **🟠 Degraded**; fifteen minutes of silence on a *healthy* connection is **🟢 Quiet** — see [The five states of a live monitor](#the-five-states-of-a-live-monitor).
 
 **Quiet hours** silence the outer rings and the all-clear. A front already within 40 % of the radius always gets through. Suppressed alerts are still committed, so they are not retried every minute until the window ends.
 
@@ -1390,7 +1408,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/info` | Show status and configuration of all agents (provider, model, history, sub-agents) |
 | `/menu` | List all available commands |
 | `/tasks` | List all enabled tasks as Telegram inline buttons. Tap a button to run the task immediately — DRADIS confirms launch and delivers the result to Telegram. |
-| `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see 🟢 Running / 🟠 Degraded / 🔴 Stopped status). A rain or storm front card also reports the **origin it measures from** — the position it follows, the coordinates, a map link, and how old that fix is with the clock time it was taken. A monitor following a position is never headed by its `location` field: that is only its fallback. |
+| `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see their state — see [The five states of a live monitor](#the-five-states-of-a-live-monitor)). A rain or storm front card also reports the **origin it measures from** — the position it follows, the coordinates, a map link, and how old that fix is with the clock time it was taken. A monitor following a position is never headed by its `location` field: that is only its fallback. |
 | `/rain` | Snapshot of a 🌧️ Rain front monitor: the radar picture it would send right now, plus where it thinks it is. One monitor, straight to the picture; several, inline buttons; `/rain <name>` to pick one directly. Works even on a disabled monitor — the radar image is fetched on demand. **Changes nothing**: it perceives without deciding, so it can never suppress or duplicate a real alert. |
 | `/storm` | The same for a 🌩️ Storm front monitor. Lightning can only be buffered while the subscription is up, so a stopped monitor reports its position and configuration and says why it cannot show more. |
 | `/car` | Toggle 🚗 **Car Mode** — messages rewritten as plain spoken prose, with no icons, links or charts, so CarPlay can read them aloud. `/car on` and `/car off` set it explicitly, so a dictated command cannot flip it back by accident. State is shown by `/info` and persists across restarts. See [Settings → Car Mode](#settings--car-mode). |

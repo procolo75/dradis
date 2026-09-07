@@ -203,7 +203,7 @@ See [Live-Monitors](Live-Monitors) for full details.
 |--------|-------------|
 | `+` button | Create a new live monitor. |
 | Sidebar item | Open the form. Green/red dot = running/stopped. |
-| Status badge | 🟢 Running / 🟠 Degraded / 🔴 Stopped — fetched live. |
+| Status badge | 🟢 Running / 🟢 Quiet / 🟠 Degraded / 🟠 Blind / 🔴 Stopped — fetched live. *Quiet* is healthy: the feed is connected and simply has nothing to send. |
 | **📡 Test radar coverage** | *Rain front only.* Fetches the newest radar product and reports reachability, how late it was published, how much of the watched disc the network can actually see, and the current intensity at your point. |
 | **⎘ Copy** | Duplicate the monitor (disabled by default). |
 | **🗑 Delete** | Remove the monitor. |

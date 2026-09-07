@@ -4799,11 +4799,15 @@ function renderLiveMonitorForm(monitor) {
     sg.style.display = "";
     api("GET", `/api/live-monitors/${monitor.id}/status`).then(data => {
       const badge = document.getElementById("lm-status-badge");
-      // "degraded" = task alive but the feed is silent — a broken monitor used to
-      // be indistinguishable from a quiet sky.
+      // Five states, and three of them used to arrive as one 🟠 badge reading
+      // "nessun dato dal feed". The commonest was not a fault at all: a storm
+      // front hears a geohash cell ~110 km across, so outside a storm nothing is
+      // published from it and a healthy monitor was amber for hours.
       badge.textContent = {
         running:  "🟢 Running",
-        degraded: "🟠 Degraded — nessun dato dal feed",
+        quiet:    "🟢 Running — feed connesso, nessun fulmine da 15 min",
+        degraded: "🟠 Degradato — il feed non risponde",
+        blind:    "🟠 Cieco — non sa da dove misurare, non manda avvisi",
       }[data.status] || "🔴 Stopped";
     }).catch(() => {});
   }

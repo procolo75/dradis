@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## [4.8.2] - 2026-09-07
+
+**`🟠 Degraded (no data from the feed)` named a symptom, left the cause to guesswork, and was wrong most of the time it appeared.** Three different situations arrived as that one line, and the commonest of the three was not a fault at all: a storm front subscribes to a ring of geohash cells about 110 km across, and outside a storm **nothing whatsoever is published from them**. The fifteen-minute silence budget therefore fired on a perfectly healthy monitor for hours at a stretch — most of the year, in most places. An alarm that is on almost always is not an alarm; it trained the reader to ignore the badge, and buried the one case that needs acting on underneath the one that never does.
+
+**Silence cannot tell a dead subscription from calm weather, and pretending otherwise was the mistake.** The connection *can* be checked, so the connection decides between green and amber, and the silence is reported as what it actually is — *connected, nothing coming* — instead of being read as a verdict it cannot support.
+
+- **Feat — five states instead of three, and each says what it means.** `running`, **`quiet`** (new: connected and healthy, nothing to send — storm fronts only, since the radar publishes on a timer whatever the weather), `degraded` (the feed itself is failing), **`blind`** (new: the monitor knows it cannot see and has gone deliberately silent) and `stopped`. Quiet is green, because it is.
+- **Fix — the badge names the cause instead of the symptom.** `🟢 Attivo — feed connesso, nessun fulmine nel raggio da 15 min`. `🟠 Degradato — feed fulmini non connesso` for a storm front, `🟠 Degradato — il radar non risponde o l'ultima immagine è troppo vecchia` for a rain front. One wording for both was one wording for neither.
+- **Fix — blindness is not a degraded feed, and the difference is what to do about it.** Degraded says *the source is struggling*; blind says *I know I am not seeing, and I have stopped speaking* — which matters because that silence then means nothing at all, not even "no storm". The badge says so explicitly: `🟠 Cieco: nessuna immagine radar recente — non manda avvisi, e non manda nemmeno il cessato allarme`. `_blind_reason` was already recorded per cause and never shown; `blind_reason_label` turns the code word into the sentence.
+- **Fix — a storm front that did not know where it was reported 🟢.** `StormFrontLiveMonitor.status()` returned the feed's health and never consulted `_blind_since`, so a monitor frozen for want of a position was badged as running by the very object that had frozen it. Blindness now outranks the feed in both monitors.
+- **Fix — the `/monitors` list badge read `"🟢" if running else "🔴"`,** so a quiet monitor — the ordinary state of a storm front — appeared in the list as switched off. One icon table now serves the list, the snapshot picker and the card.
+
+The Web UI badge and the Troubleshooting page follow the same five states, and `DOCS.md` gains **The five states of a live monitor** with the table and the reasoning.
+
+Nothing to reconfigure. `DEGRADED_SILENCE_SEC` keeps its name and its fifteen minutes; only the word it produces changed.
+
+Tests: 688 (was 671 in an environment where 4 unrelated errors pre-exist) — 17 new. `test_storm_front_position.py` gains `FeedStatusTest` (6: a clear sky is quiet and not degraded, a disconnected feed is degraded however long it has been silent, the connection is checked first, repeated failures, a feed that has never heard anything is not yet quiet, stopped) and `MonitorStatusTest` (2: blindness outranks a healthy feed); `test_live_monitor_reload.py` gains `StatusBadgeTest` (7: quiet is green in the badge and in the list, each type names its own feed, a blind rain front reports its reason and the consequence, a missing instance still produces a badge, English for every state); `test_rain_front.py` gains 2 and renames the one that asserted the old collapse.
+
 ## [4.8.1] - 2026-09-07
 
 **Every rain and storm front card in `/monitors` was headed by a place the monitor had stopped watching.** Tap a monitor centred on a phone in Bacoli and the card said `📍 Roma`. Nothing in the code hardcodes Rome: that is the monitor's `location` field, and since v4.1.0 a monitor that follows a **position** does not watch that place — `location` is only its **fallback**, relabelled *Fallback location* in the Web UI and used exactly when the phone has never reported. The card printed it unconditionally, so the one line naming where the monitor looks was the one line guaranteed to be wrong precisely for the monitors that move.
