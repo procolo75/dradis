@@ -301,7 +301,6 @@ def md_to_html(text: str) -> str:
 # and what is left of the minute's token budget.
 _READ_URL_MAX_CHARS = 12000
 
-
 async def _fetch_via_jina(client, url: str, *, as_text: bool = False) -> str:
     from urllib.parse import quote
     headers = {"Accept": "text/plain"}
@@ -321,7 +320,42 @@ async def _fetch_via_jina(client, url: str, *, as_text: bool = False) -> str:
     return resp.text
 
 
-async def read_url(url: str) -> str:
+async def _fetch_link_summary(client, url: str) -> list[tuple[str, str]]:
+    """Ask the reader for the page's links instead of its text.
+
+    The readability pass that picks the content also picks which links belong
+    to it, and on an index built as cards it drops the ones that lead
+    somewhere. `X-With-Links-Summary: all` reports every anchor in the HTML.
+    """
+    from urllib.parse import quote
+    resp = await client.get(
+        f"https://r.jina.ai/{quote(url, safe=':/?&=#%+,;@!$~*()[]')}",
+        headers={"Accept": "application/json", "X-With-Links-Summary": "all"},
+        follow_redirects=True,
+    )
+    if resp.status_code >= 400:
+        raise agent_core.ToolError(
+            f"HTTP {resp.status_code} from r.jina.ai reading the links of {url}")
+    try:
+        links = resp.json()["data"]["links"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise agent_core.ToolError(
+            f"r.jina.ai returned no link summary for {url} ({e})") from e
+    # Measured on 2026-09-09 the reader answers with a list of [label, href]
+    # pairs; its own documentation describes a {label: href} mapping. Both
+    # shapes are in circulation, so both are read.
+    if isinstance(links, dict):
+        pairs = list(links.items())
+    elif isinstance(links, list):
+        pairs = [item[:2] for item in links
+                 if isinstance(item, (list, tuple)) and len(item) >= 2]
+    else:
+        raise agent_core.ToolError(
+            f"r.jina.ai returned an unreadable link summary for {url}")
+    return [(str(label), str(href)) for label, href in pairs]
+
+
+async def read_url(url: str, links: str | None = None) -> str:
     """Fetch a page as text through the Jina reader.
 
     Two checks sit on top of the fetch. The status check, from v4.5.0: Jina
@@ -336,12 +370,25 @@ async def read_url(url: str) -> str:
     three rounds and a refused request. When what comes back is nearly all
     addresses, the page is read again as plain text and the richer of the two
     wins. That costs one HTTP request and no model tokens.
+
+    `links` answers the other half of that failure, the half the prose check
+    cannot see. pretemp.it's home page comes back as 3 626 characters of
+    perfectly good prose — share 0.71, so no second read — carrying none of the
+    three links to the forecasts that are in its HTML. The page is not the
+    thing to read; it is the way to find it. Asked for its links instead, the
+    reader returns them, and the model spends one cheap round choosing before
+    it spends an expensive one reading.
     """
     import httpx
     if not url.startswith("http://") and not url.startswith("https://"):
         raise agent_core.ToolError(
             f"{url!r} is not a valid URL — it must start with http:// or https://")
     async with httpx.AsyncClient(timeout=30) as client:
+        if links is not None:
+            # The link branch returns addresses, not prose: neither the prose
+            # share nor the character cap has anything to say about it.
+            return agent_core.format_links(
+                await _fetch_link_summary(client, url), links, url)
         page  = agent_core.clean_page(await _fetch_via_jina(client, url))
         prose = agent_core.prose_chars(page)
         if page and prose / len(page) < agent_core.MIN_PROSE_SHARE:
@@ -358,8 +405,11 @@ async def read_url(url: str) -> str:
 
 READ_URL_TOOL = {
     "name": "read_url", "fn": read_url, "capability": None,
-    "description": "Fetch and return the text content of a web page. Call this only when the user explicitly provides an http:// or https:// URL. Do NOT call it for questions or search queries.",
-    "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
+    "description": "Fetch and return the text content of a web page. Call this only when the user explicitly provides an http:// or https:// URL. Do NOT call it for questions or search queries. If the page you need is only reachable through a link on that page, call this first with the 'links' argument to find its address.",
+    "parameters": {"type": "object", "properties": {
+        "url": {"type": "string"},
+        "links": {"type": "string", "description": "Optional. Return the page's links whose text or address contains this string, instead of the page content; then call read_url again on the address you picked. Empty string returns every link."},
+    }, "required": ["url"]},
 }
 
 # Capability metadata: id + UI label + settings key holding extra instructions.

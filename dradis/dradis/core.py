@@ -254,6 +254,12 @@ _BARE_URL_RE = re.compile(r'https?://\S+')
 # compared and the richer one wins.
 MIN_PROSE_SHARE = 0.30
 
+# A link list is a menu to choose from, not a page to read. Thirty entries is
+# already more than a model needs to pick one, and a label long enough to
+# recognise a link is short enough that thirty of them still fit in a round.
+MAX_LINKS      = 30
+MAX_LINK_LABEL = 120
+
 
 def clean_page(text: str) -> str:
     """Drop what a text model cannot use but pays for anyway.
@@ -267,6 +273,47 @@ def clean_page(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
     return text.strip()
+
+
+def format_links(pairs, needle: str, url: str) -> str:
+    """Render a page's links as the smallest thing a model can choose from.
+
+    The companion to `clean_page`, for the failure `prose_chars` cannot see.
+    Readability decides what a page's content is, and on an index built as
+    cards it decides the cards are not it: pretemp.it's home page arrives as
+    3 626 characters of perfectly good prose — share 0.71, so the text-mode
+    reread never fires — carrying none of the three links to the forecasts
+    that are in its HTML. That page is not the thing to read, it is the way to
+    find it, and what it owes the model is four lines, not four thousand
+    characters.
+    """
+    seen: dict[str, str] = {}
+    for label, href in pairs:
+        label = " ".join(label.split())
+        # One address arrives under several labels — pretemp.it lists the
+        # current forecast three times and only one of the three says "Ultima
+        # previsione". The longest label is the one that identifies it. The
+        # membership test is not decoration: an icon link has no label at all,
+        # and comparing lengths alone would throw it away.
+        if href not in seen or len(label) > len(seen[href]):
+            seen[href] = label
+    wanted = needle.lower()
+    hits = [(label, href) for href, label in seen.items()
+            if not wanted or wanted in label.lower() or wanted in href.lower()]
+    if not hits:
+        # An empty result is what taught a model to call the tool again with
+        # invented arguments, so name what was searched and what was not found.
+        return (f"No link on {url} matches {needle!r}. "
+                f"The page has {len(seen)} distinct links.")
+    dropped = len(hits) - MAX_LINKS
+    lines = []
+    for label, href in hits[:MAX_LINKS]:
+        if len(label) > MAX_LINK_LABEL:
+            label = label[:MAX_LINK_LABEL - 1].rstrip() + "…"
+        lines.append(f"- {label} — {href}" if label else f"- {href}")
+    if dropped > 0:
+        lines.append(f"[… {dropped} more links not shown — narrow the filter …]")
+    return "\n".join(lines)
 
 
 def prose_chars(text: str) -> int:

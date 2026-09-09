@@ -252,6 +252,10 @@ When enabled, DRADIS automatically decides which tool to call — no prompt engi
 
 Two things happen to the page before the model sees it. **Image tags are removed** — a page of signed thumbnail URLs costs thousands of tokens and says nothing. And **the extraction is checked**: Jina decides for itself which part of a page is the content, and it gets it wrong on pages built as lists. On a school news archive it kept the month menu and dropped all eighteen headlines, leaving the model a navigation bar to summarise — which it answered by calling `read_url` again. When what comes back is nearly all addresses rather than words, DRADIS reads the page a second time as plain text and keeps whichever reading carries more prose. That second read costs one HTTP request and no model tokens.
 
+**And the page that is not the thing to read, but the way to find it.** Since v4.9.0 `read_url` takes an optional `links` argument: given one, it returns the page's links whose text or address contains that string — one `- label — address` per line — instead of the page's content. This is the other half of the extraction failure, and the prose check cannot see it. `pretemp.it` serves its home page as 3 626 characters of perfectly good Italian, prose share 0.71, so the text-mode reread never fires — and none of the three links to the day's forecasts, which are in the HTML, survive readability. There is no stable address to skip the page with either: `/previsioni` answers 204 and the forecast's id changes daily. Asked for its links instead, the reader hands back four lines the model can choose from, and the second call reads the forecast itself. Two rounds of about 3 500 tokens together, where appending every link to every page read would have cost 11 900 and been refused by Groq's per-minute ceiling.
+
+The link list is deduplicated by address, keeping the longest label — the same forecast is listed three times on that page and only one of the three labels says *Ultima previsione* — capped at 30 entries and 120 characters of label, and a filter that matches nothing says so rather than returning an empty result. Nothing changes for a call without `links`: same readability pass, same prose check, same 12 000-character cap.
+
 | Field | Default | Description |
 |-------|---------|-------------|
 | Enabled | `false` | Activate web search delegation. Requires `tavily_api_key` in the Configuration tab for query-based search. URL reading works without any additional key. |
@@ -1213,7 +1217,7 @@ DRADIS routes the request to the Web Search sub-agent (Tavily), retrieves up to 
 ### Read a specific URL
 > *"Summarise this article: https://www.example.com/article"*
 
-DRADIS calls `read_url` directly — no sub-agent, no extra LLM call — and reads the page with its own model. The content is fetched via Jina Reader, trimmed to fit the model's remaining budget, and summarised. No API key required. If the page cannot be fetched you get a `⚠️` notice saying so, rather than a summary of Jina's error page.
+DRADIS calls `read_url` directly — no sub-agent, no extra LLM call — and reads the page with its own model. The content is fetched via Jina Reader, trimmed to fit the model's remaining budget, and summarised. No API key required. If the page cannot be fetched you get a `⚠️` notice saying so, rather than a summary of Jina's error page. When the page you want is only reachable through a link on an index page, the model can ask `read_url` for that page's links first and read the address it picks — see the `links` argument above.
 
 ---
 

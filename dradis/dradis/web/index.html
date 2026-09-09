@@ -768,6 +768,15 @@
           time as plain text and keeps whichever reading carries more words. That second read costs
           one HTTP request and no model tokens.
         </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          Sometimes a page is not the thing to read but the way to find it, and that failure looks
+          like nothing at all: <b>pretemp.it</b> serves a home page of perfectly good Italian — so
+          the check above sees nothing wrong — with none of the three links to the day's forecasts
+          that are in its HTML, and no fixed address to reach them by. DRADIS can therefore ask a
+          page for its <b>links</b> instead of its text, filtered to what it is looking for: four
+          lines to choose from, then a second read of the address it picked. A task that must follow
+          a link says so in its own instructions — there is nothing to switch on here.
+        </p>
 
         <div class="form-group">
           <div class="toggle-row">

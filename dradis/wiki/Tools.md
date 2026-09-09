@@ -17,7 +17,7 @@ Powered by [Tavily](https://tavily.com) (query-based search) and [Jina Reader](h
 | Tool | Trigger | Backend |
 |------|---------|---------|
 | `search_web` | A question that needs current information | Tavily — up to 5 results, content trimmed to ~800 chars each |
-| `read_url` | The user provides a specific http/https URL | Jina Reader — page text as markdown, trimmed to the model's remaining budget |
+| `read_url` | The user provides a specific http/https URL | Jina Reader — page text as markdown, trimmed to the model's remaining budget; with `links`, the page's links instead |
 
 **Settings:** Enabled · Test connection · Additional instructions.
 
@@ -89,6 +89,25 @@ Token at `/data/google_tasks_token.json`.
 ## URL Fetch
 
 `read_url` fetches any page's text via Jina Reader (free, no key). Enable it under **Web UI → Tools → URL Fetch**.
+
+### Following a link that is on the page
+
+`read_url` takes an optional `links` argument. Given one, it returns the page's links whose text or address contains that string — one `- label — address` per line — **instead of** the page's content. The model then calls `read_url` again on the address it picked.
+
+This exists because readability throws links away. `pretemp.it`'s home page comes back as 3 626 characters of well-formed Italian carrying none of the three `/previsioni/NNNN` links that are in its HTML, and there is no stable address to skip it with — `/previsioni` answers 204 and the id changes daily. The prose check added in v4.5.1 cannot catch this one: the page *is* prose, share 0.71.
+
+```
+read_url(url="https://www.pretemp.it/", links="previsione")
+→ - Come funziona la previsione — https://www.pretemp.it/guida_alle_previsioni
+  - Ultima previsione Pericolosità 2 09 settembre 2026 … — https://www.pretemp.it/previsioni/3521
+  - Previsione Pericolosità 1 08 settembre 2026 … — https://www.pretemp.it/previsioni/3519
+```
+
+507 characters. Appending every link to every page read instead would have cost 1 800 tokens on *each* `read_url` anywhere in DRADIS, and taken a two-hop task from ~5 500 tokens in the minute to ~11 900 — past Groq's ceiling. The list is deduplicated by address keeping the longest label (that page lists the same forecast three times and only one label says *Ultima previsione*), capped at 30 entries and 120 characters of label, and a filter matching nothing says so instead of returning nothing. An empty string returns every link.
+
+A call without `links` is unchanged in every respect.
+
+### Rate limits
 
 The anonymous Jina tier is rate-limited, so a fetch fails from time to time. When it does, `read_url` raises a tool failure and you get a `⚠️` Telegram notice naming the HTTP status — it does *not* hand Jina's error page to the model as though it were the article. That mattered twice over: the model would either summarise the error as if it were content, or call `read_url` again, and on an 8K-per-minute budget that extra round was often what pushed the task over the ceiling.
 

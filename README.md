@@ -24,7 +24,7 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 
 The single agent calls these tools when relevant; each capability is enabled and authenticated independently:
 
-- **Web Search** — query search via Tavily (optional free API key) + URL reading via Jina Reader (free, no key required)
+- **Web Search** — query search via Tavily (optional free API key) + URL reading via Jina Reader (free, no key required). A page can also be asked for its *links* rather than its text, filtered to what is being looked for, so the agent can follow an index page to the article it actually has to read without paying for the index
 - **Weather** — powered by Open-Meteo (free, no API key); current conditions + up to 16-day forecast
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)

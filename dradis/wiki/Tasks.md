@@ -93,3 +93,32 @@ Cron: 0 9 * * 0
 Instructions: List all open tasks and send them to Telegram with a motivational note.
 ```
 *Requires: Google Tasks enabled.*
+
+### Following a link: the PRETEMP storm forecast
+
+The forecast lives at `pretemp.it/previsioni/<id>` and the id changes every day, so the task has to find the address before it can read it — and the home page, read normally, does not contain it (see [Tools → Following a link that is on the page](Tools#following-a-link-that-is-on-the-page)). Spell the two steps out; the model should not have to guess that the first read is not the answer.
+
+```
+Cron: 0 7,22 * * *
+Tools: read_url only
+Instructions:
+  Leggi la previsione temporali più recente di PRETEMP e riassumila.
+
+  Procedi in due passi, senza saltarne nessuno:
+  1. Chiama read_url con url="https://www.pretemp.it/" e links="previsione".
+     Ti tornerà solo l'elenco dei link alle previsioni. Scegli quello etichettato
+     "Previsione di oggi" oppure "Ultima previsione"; se non ci sono, prendi il
+     link con la data più recente.
+  2. Chiama read_url con l'indirizzo scelto, questa volta senza il parametro
+     links, e leggi la previsione.
+
+  Poi scrivi un riassunto in italiano, massimo 12 righe:
+  - data della previsione, livello di pericolosità massimo e autore;
+  - le regioni interessate da ciascun livello;
+  - i fenomeni attesi (grandine e diametri, raffiche, piogge intense, tornado);
+  - eventuali finestre orarie indicate.
+
+  Riporta solo ciò che c'è nel testo, non aggiungere previsioni tue. Se il secondo
+  passo fallisce, dillo: non riassumere l'elenco dei link.
+```
+*Requires: URL Fetch enabled. Two tool rounds of the three the default budget allows — about 5 500 tokens in the minute, inside the Groq ceiling.* `0 7,22 * * *` catches both editions: the forecast for the 9th was issued at 21:00 on the 8th, and revised by morning.

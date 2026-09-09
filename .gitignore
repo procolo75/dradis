@@ -5,6 +5,8 @@ data/
 # Google OAuth tokens generated at runtime
 *.json
 !repository.yaml
+# Captured reader responses the tests read back — data, not a runtime secret.
+!dradis/tests/fixtures/*.json
 
 # Python
 __pycache__/
