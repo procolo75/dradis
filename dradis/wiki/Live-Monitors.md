@@ -267,7 +267,7 @@ And when it is over:
 | **Rain worth telling you about** | The minimum intensity that counts. See the table below. |
 | **Also mention hail** | Adds a line when the approaching rain carries a real risk of hail. |
 | **Radar picture** | Attaches the radar image to each message. |
-| **Add what the rain gauges measured** | Adds one line naming the nearest ground station that is actually catching rain. Needs MeteoHub switched on under Settings. **Diagnostic only** — see below. |
+| **Add what the rain gauges measured** | Adds one line naming the nearest ground station that is actually catching rain. **Diagnostic only** — see below. Needs MeteoHub switched on under Settings; if it is off, the form tells you so in red and links you there. |
 
 #### Choosing the minimum intensity
 

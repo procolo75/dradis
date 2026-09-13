@@ -1096,7 +1096,7 @@ The first of those three is now much rarer than it was. A stale fix is no longer
 | **Rain worth telling you about** | Minimum intensity in mm/h: `0.2` even drizzle, **`1` proper rain (recommended)**, `4` a real shower, `10` heavy rain only. The radar sees down to a damp mist; set this too low and a grey afternoon keeps the event open for hours. |
 | **Also mention hail** | Fetches the probability-of-hail product too and adds a line when the approaching front carries a real risk. One extra download every 5 minutes. |
 | Radar picture | Attaches the actual radar crop to each ring message. |
-| Ground truth | Adds what the nearest MeteoHub rain gauge measured. Diagnostic only — it changes no decision. Needs **Settings → MeteoHub** switched on. |
+| Ground truth | Adds what the nearest MeteoHub rain gauge measured. Diagnostic only — it changes no decision. Needs **Settings → MeteoHub** switched on; with the source off the form says so in red and links to the panel, because a ticked box that does nothing is worse than no box. |
 
 **📡 Test radar coverage:** fetches the newest product on demand and reports whether the service is reachable, how late the product was published, what share of the watched disc the network can actually see, and the current intensity at your point. The coverage figure is the load-bearing one — a monitor watching a blind spot would report permanent calm. Points such as Pantelleria are genuinely outside the network and are reported as such.
 

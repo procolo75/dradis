@@ -2568,8 +2568,20 @@ document.getElementById("btn-save-weather").addEventListener("click", async () =
 
 // ── MeteoHub panel ────────────────────────────────────────────────────────────
 
+// Whether the source is switched on, cached so the live monitor form can warn
+// about a checkbox that would silently do nothing. Kept current by the loader
+// below and by the save handler — the two places the answer can change.
+let _meteohubEnabled = false;
+
+function _applyGroundTruthWarning() {
+  const warn = document.getElementById("lm-ground-truth-warn");
+  if (warn) warn.style.display = _meteohubEnabled ? "none" : "";
+}
+
 async function loadMeteoHubSettings() {
   const s = await api("GET", "/api/settings");
+  _meteohubEnabled = !!s.meteohub_enabled;
+  _applyGroundTruthWarning();
   document.getElementById("meteohub-enabled").checked       = !!s.meteohub_enabled;
   document.getElementById("meteohub-official-only").checked =
     s.meteohub_official_only !== false;
@@ -2604,6 +2616,13 @@ document.getElementById("btn-meteohub-test").addEventListener("click", async () 
   }
 });
 
+document.addEventListener("click", e => {
+  const link = e.target.closest("#lm-ground-truth-goto");
+  if (!link) return;
+  e.preventDefault();
+  navigateTo("meteohub", document.getElementById("nav-meteohub"));
+});
+
 document.getElementById("btn-save-meteohub").addEventListener("click", async () => {
   const btn = document.getElementById("btn-save-meteohub");
   btn.disabled = true;
@@ -2616,6 +2635,8 @@ document.getElementById("btn-save-meteohub").addEventListener("click", async () 
   };
   try {
     await api("PUT", "/api/settings", payload);
+    _meteohubEnabled = payload.meteohub_enabled;
+    _applyGroundTruthWarning();
     const dot = document.getElementById("meteohub-dot");
     if (dot) dot.classList.toggle("on", payload.meteohub_enabled);
     showToast("MeteoHub settings saved");
@@ -4514,7 +4535,11 @@ function renderLiveMonitorForm(monitor) {
             <input type="checkbox" id="lm-ground-truth" ${monitor.ground_truth === false ? "" : "checked"}>
             Add what the rain gauges measured
           </label>
-          <small style="color:var(--text-muted);margin-top:4px;display:block">Adds one line naming the nearest MeteoHub ground station that is actually catching rain, how much, and how far away. <b>Diagnostic only — it does not change when the alert fires</b>, which ring it reports, or when the all-clear arrives. Needs MeteoHub switched on under Settings.</small>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Adds one line naming the nearest MeteoHub ground station that is actually catching rain, how much, and how far away. <b>Diagnostic only — it does not change when the alert fires</b>, which ring it reports, or when the all-clear arrives.</small>
+          <div id="lm-ground-truth-warn" style="display:none;margin-top:6px;padding:8px 10px;border-radius:6px;border:1px solid var(--danger,#e57373);color:var(--danger,#e57373);font-size:0.8rem;line-height:1.45">
+            ⚠️ <b>MeteoHub is switched off</b>, so this line will not be printed whatever this box says.
+            <a href="#" id="lm-ground-truth-goto" style="color:inherit;text-decoration:underline">Open Settings → MeteoHub</a> to switch it on.
+          </div>
           <details style="margin-top:8px">
             <summary style="cursor:pointer;color:var(--text-muted);font-size:0.8rem">Why a dry gauge does not cancel the alert</summary>
             <div style="font-size:0.8rem;color:var(--text-muted);margin-top:6px;line-height:1.5">
@@ -4776,6 +4801,7 @@ function renderLiveMonitorForm(monitor) {
     document.getElementById("lm-stormfront-hint").style.display  = isStorm ? "" : "none";
     document.getElementById("lm-rainfront-hint").style.display   = isRain ? "" : "none";
     document.getElementById("lm-rain-block").style.display       = isRain ? "" : "none";
+    if (isRain) _applyGroundTruthWarning();
     document.getElementById("lm-chart-block").style.display      = isRing ? "" : "none";
     if (isRing) {
       // The payload is shared with the other live types and still defaults

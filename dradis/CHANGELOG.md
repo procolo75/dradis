@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [4.10.1] - 2026-09-13
+
+**A checkbox that silently does nothing is worse than no checkbox.** v4.10.0 put *Add what the rain gauges measured* in every rain front form, ticked by default, and gated it behind a global **MeteoHub** switch that ships off. Tick the box with the source switched off and nothing happens — no line, no error, no hint. The only warning was a sentence in the grey text underneath, which is exactly the kind of note nobody reads. Reported from the UI within the hour: *"che significa accendere meteohub? io vedo solo una check box in piu in rainfront"*.
+
+- **Fix — the form says so, in red, while you are looking at it.** With MeteoHub off the checkbox now carries *"MeteoHub is switched off, so this line will not be printed whatever this box says"* and a link that navigates straight to the panel. It appears and disappears live: switch the source on, save, and the warning is gone without reloading the form.
+- The two switches stay two, because they answer different questions — the global one owns properties of the SOURCE (which networks are trusted, how often to re-read) that would otherwise be duplicated on every monitor, and the per-monitor one lets a single rain front stay quiet without disabling the source for the others. What was wrong was not the pair, it was that only one of them was visible from where the decision is made.
+
+Nothing to reconfigure; no behaviour changed outside the form.
+
 ## [4.10.0] - 2026-09-13
 
 **`rain_front` has always had exactly one witness, and it does not measure rain.** The DPC composite infers rainfall from reflectivity, publishes about ten minutes late, and the module has been apologising for it in prose for four releases: `_fmt_ring` attaches *"a queste intensità può evaporare prima di toccare terra"* whenever the peak is below drizzle, and `_is_overhead` refuses to claim *"sei sotto la pioggia"* without a measurement — a measurement that did not exist, because the only instrument in the tree was the radar again.
