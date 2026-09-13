@@ -70,13 +70,65 @@ _LOGGER = logging.getLogger(__name__)
 API_URL = "https://meteohub.agenziaitaliameteo.it/api/observations"
 LICENSE_GROUP = "CCBY_COMPLIANT"
 
-# BUFR descriptors. Precipitation is the point; the other two ride along at no
-# extra cost because one request carries them all, and a gust at the moment of
-# an alert is worth having.
-VAR_PRECIP = "B13011"      # kg/m**2, i.e. mm, accumulated over the timerange
-VAR_TEMP   = "B12101"      # K
-VAR_GUST   = "B11041"      # m/s
-VAR_NAME   = "B01019"      # long station name
+# BUFR descriptors. One request carries as many as are asked for, so the only
+# cost of a wider set is bytes.
+VAR_PRECIP   = "B13011"    # kg/m**2, i.e. mm, accumulated over the timerange
+VAR_TEMP     = "B12101"    # K
+VAR_GUST     = "B11041"    # m/s, MAXIMUM over the timerange, not instantaneous
+VAR_HUMIDITY = "B13003"    # %
+VAR_PRESSURE = "B10004"    # Pa
+VAR_WIND     = "B11002"    # m/s
+VAR_WIND_DIR = "B11001"    # degrees true
+VAR_RIVER    = "B13215"    # m, stage above a LOCAL datum — see PLAUSIBLE_RANGE
+VAR_SNOW     = "B13013"    # m, total snow depth
+VAR_NAME     = "B01019"    # long station name
+
+# What `rain_front` asks for: the measurement it prints plus the two that ride
+# along for free in the same response.
+MONITOR_PRODUCTS = (VAR_PRECIP, VAR_TEMP, VAR_GUST)
+
+# What a readout asks for. Nine terms joined by " or " were verified against the
+# live service; the cost is bytes, not stations.
+READOUT_PRODUCTS = (VAR_PRECIP, VAR_TEMP, VAR_GUST, VAR_HUMIDITY, VAR_PRESSURE,
+                    VAR_WIND, VAR_WIND_DIR, VAR_RIVER)
+
+# VAR_SNOW is deliberately NOT in that list, and the constant is kept only so
+# the descriptor is documented.
+#
+# Measured on 13 September 2026, nationally: 191 snow-depth series, of which 83
+# report more than 5 cm. Barco (Emilia-Romagna lowland) reports 4.30, Torino
+# Giardini Reali — the city centre — 1.13, and several series swing between
+# -0.02 and +0.47 within three hours. Negative depths mean the sensors are
+# unreferenced, and it is not even possible to tell from the response whether a
+# network is publishing metres, as the descriptor claims, or centimetres: at
+# 4.3 cm and 1.13 cm those same numbers would be ordinary out-of-season noise.
+#
+# Unlike the river datum, which is wrong on 4% of stations, this is wrong on
+# most of them for most of the year, and there is nothing in the data to
+# separate a real 40 cm in January from a drifting sensor in September. A line
+# that is wrong most of the year is not a reading — the same conclusion v4.8.2
+# reached about a badge that was amber most of the year.
+
+# Bounds outside which a value is an instrument fault or a different quantity
+# wearing the same descriptor, in the units the service publishes.
+#
+# This is not defensive tidiness. B13215 carries -1000.0 flagged `rel=1` —
+# RELIABLE, by the service's own reliability flag — on 2 of 1091 gauges, and
+# about 42 more report a reservoir or lake surface in metres above sea level
+# (Piediluco at +368) rather than a river stage above a local datum. The service
+# cannot tell them apart and neither can a downstream consumer, so anything
+# outside a physically sane band is dropped where it is read.
+PLAUSIBLE_RANGE = {
+    VAR_PRECIP:   (0.0, 500.0),        # mm accumulated in one bucket
+    VAR_TEMP:     (173.15, 333.15),    # K, -100..+60 C
+    VAR_GUST:     (0.0, 120.0),        # m/s
+    VAR_HUMIDITY: (0.0, 100.0),        # %
+    VAR_PRESSURE: (80000.0, 110000.0), # Pa
+    VAR_WIND:     (0.0, 120.0),        # m/s
+    VAR_WIND_DIR: (0.0, 360.0),        # degrees
+    VAR_RIVER:    (-20.0, 20.0),       # m above a local datum
+    VAR_SNOW:     (0.0, 30.0),         # m
+}
 
 # How far back to ask.
 #
@@ -127,6 +179,20 @@ OFFICIAL_PREFIXES = ("dpcn-",)
 
 
 @dataclass(frozen=True)
+class Measurement:
+    """One quantity from one station, in the unit the service published it.
+
+    Carries its OWN timestamp. The gust is a maximum over the past hour and
+    arrives hourly; the rain arrives every ten minutes. A single age per station
+    would misdate one of them on every readout that prints both.
+    """
+
+    value: float
+    observed_at: float           # epoch of the newest sample behind it
+    window_min: int = 0          # 0 for an instantaneous reading
+
+
+@dataclass(frozen=True)
 class GaugeReading:
     """One station's latest word, already in the units a message prints."""
 
@@ -136,15 +202,59 @@ class GaugeReading:
     lon: float
     distance_km: float
     bearing_deg: float
-    mmh: float | None            # None: the station reports no precipitation at all
-    window_min: int              # over how long `mmh` was integrated
-    observed_at: float           # epoch of the newest sample behind it
-    gust_kmh: float | None = None
-    temp_c: float | None = None
+    measurements: dict            # BUFR descriptor -> Measurement
+
+    # ── Compatibility surface ────────────────────────────────────────────────
+    #
+    # `rain_front` reads these four and nothing else, so they stay exactly what
+    # they were before the station learned to report more than rain.
+
+    @property
+    def mmh(self) -> float | None:
+        """Rainfall rate. None: the station reports no precipitation at all."""
+        m = self.measurements.get(VAR_PRECIP)
+        return None if m is None else m.value
+
+    @property
+    def window_min(self) -> int:
+        m = self.measurements.get(VAR_PRECIP)
+        return 0 if m is None else m.window_min
+
+    @property
+    def observed_at(self) -> float:
+        """When the RAINFALL behind `mmh` was measured.
+
+        Deliberately the precipitation timestamp rather than the newest of all
+        of them. Each quantity now carries its own — `measurements[var].observed_at`
+        — because the gust is an hourly maximum while the rain arrives every ten
+        minutes, and one age per station was a false simplification the moment a
+        second quantity got printed.
+        """
+        m = self.measurements.get(VAR_PRECIP)
+        if m is not None:
+            return m.observed_at
+        return max((x.observed_at for x in self.measurements.values()), default=0.0)
+
+    @property
+    def gust_kmh(self) -> float | None:
+        m = self.measurements.get(VAR_GUST)
+        return None if m is None else m.value * 3.6
+
+    @property
+    def temp_c(self) -> float | None:
+        m = self.measurements.get(VAR_TEMP)
+        return None if m is None else m.value - 273.15
 
     @property
     def age_sec(self) -> float:
         return max(0.0, time.time() - self.observed_at)
+
+    def age_of(self, var: str, now: float | None = None) -> float | None:
+        """How old THIS quantity's reading is, or None if the station lacks it."""
+        m = self.measurements.get(var)
+        if m is None:
+            return None
+        return max(0.0, (time.time() if now is None else now) - m.observed_at)
 
 
 @dataclass(frozen=True)
@@ -170,9 +280,8 @@ def _reftime(now: float, window_min: int) -> str:
     return f"reftime:>={start.strftime(fmt)},<={end.strftime(fmt)}"
 
 
-def _query(now: float, window_min: int) -> str:
-    products = " or ".join((VAR_PRECIP, VAR_TEMP, VAR_GUST))
-    return (f"license:{LICENSE_GROUP};product:{products};"
+def _query(now: float, window_min: int, products) -> str:
+    return (f"license:{LICENSE_GROUP};product:{' or '.join(products)};"
             f"{_reftime(now, window_min)}")
 
 
@@ -186,14 +295,16 @@ def _bbox(lat: float, lon: float, radius_km: float) -> dict:
 
 
 def build_params(lat: float, lon: float, radius_km: float,
-                 now: float, window_min: int = WINDOW_MIN) -> dict:
+                 now: float, window_min: int = WINDOW_MIN,
+                 products=MONITOR_PRODUCTS) -> dict:
     """The complete query string set for one disc.
 
     Assembled here rather than at the call site so the two rules that bite are
     in one testable place: the mandatory licence group and UTC reftime, and the
     ` or ` product join that a comma silently turns into a partial answer.
     """
-    return {"q": _query(now, window_min), **_bbox(lat, lon, radius_km)}
+    return {"q": _query(now, window_min, products),
+            **_bbox(lat, lon, radius_km)}
 
 
 def _is_official(network: str) -> bool:
@@ -284,9 +395,39 @@ def _rate_mmh(product: dict, now: float) -> tuple[float | None, int, float] | No
     return total * 3600.0 / span, round(span / 60), newest
 
 
-def _newest(product: dict, now: float) -> float | None:
+def _newest(product: dict, now: float) -> tuple[float, float] | None:
+    """The latest usable (value, epoch) of an instantaneous series."""
     samples = _samples(product, now)
-    return samples[-1][1] if samples else None
+    return (samples[-1][1], samples[-1][0]) if samples else None
+
+
+def _window_min(product: dict) -> int:
+    """The span a non-accumulated value covers, in minutes.
+
+    A gust is `2,0,3600` — a MAXIMUM over the past hour, not a reading taken at
+    the timestamp it carries — and a readout that prints it as an instantaneous
+    value is wrong by up to an hour. An instantaneous series (`254,0,0`) has no
+    span and reports 0.
+    """
+    parts = (product.get("trange") or "").split(",")
+    if len(parts) != 3:
+        return 0
+    try:
+        pind, _p1, p2 = (int(x) for x in parts)
+    except ValueError:
+        return 0
+    return round(p2 / 60) if pind in (1, 2, 3) and p2 > 0 else 0
+
+
+def _plausible(var: str, value: float) -> bool:
+    """Whether a value is the quantity its descriptor claims.
+
+    See `PLAUSIBLE_RANGE`: the service flags a -1000 river stage as reliable,
+    and publishes reservoir surfaces in metres above sea level under the same
+    descriptor as a river stage above a local datum.
+    """
+    lo, hi = PLAUSIBLE_RANGE.get(var, (float("-inf"), float("inf")))
+    return lo <= value <= hi
 
 
 def parse(payload: dict, lat: float, lon: float, radius_km: float, *,
@@ -322,31 +463,30 @@ def parse(payload: dict, lat: float, lon: float, radius_km: float, *,
                 name = str(detail["val"])
                 break
 
-        mmh = gust = temp = None
-        window_min = 0
-        observed_at = 0.0
+        # Whatever the station published, in the unit it published it. The
+        # readout picks what it can use; nothing is special-cased here except
+        # precipitation, which is an accumulation and has to become a rate.
+        measurements: dict = {}
         for product in station.get("prod", ()):
             var = product.get("var")
             if var == VAR_PRECIP:
                 rate = _rate_mmh(product, now)
-                if rate is not None:
-                    mmh, window_min, observed_at = rate
-            elif var == VAR_GUST:
-                value = _newest(product, now)
-                gust = None if value is None else value * 3.6
-            elif var == VAR_TEMP:
-                value = _newest(product, now)
-                temp = None if value is None else value - 273.15
+                if rate is not None and _plausible(var, rate[0]):
+                    measurements[var] = Measurement(rate[0], rate[2], rate[1])
+            elif var in PLAUSIBLE_RANGE:
+                latest = _newest(product, now)
+                if latest is not None and _plausible(var, latest[0]):
+                    measurements[var] = Measurement(latest[0], latest[1],
+                                                    _window_min(product))
 
-        if mmh is None and gust is None and temp is None:
+        if not measurements:
             continue
 
         readings.append(GaugeReading(
             name=name or network or "?", network=network,
             lat=slat, lon=slon, distance_km=dist,
             bearing_deg=azimuth_deg(lat, lon, slat, slon),
-            mmh=mmh, window_min=window_min, observed_at=observed_at,
-            gust_kmh=gust, temp_c=temp,
+            measurements=measurements,
         ))
 
     # Wettest first so the caller can name the strongest without re-sorting, and

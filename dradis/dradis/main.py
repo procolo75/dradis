@@ -47,12 +47,14 @@ from bot.handlers import (
     cmd_car,
     cmd_rain,
     cmd_storm,
+    cmd_stations,
     handle_task_callback,
     handle_monitor_callback,
     handle_ha_monitor_callback,
     handle_live_monitor_callback,
     handle_mgmt_callback,
     handle_snapshot_callback,
+    handle_stations_callback,
 )
 from bot.commands import (
     cmd_info,
@@ -89,6 +91,7 @@ def build_telegram_app():
     app.add_handler(CommandHandler("hamonitors", cmd_ha_monitors))
     app.add_handler(CommandHandler("rain",       cmd_rain))
     app.add_handler(CommandHandler("storm",      cmd_storm))
+    app.add_handler(CommandHandler("stations",   cmd_stations))
     app.add_handler(CommandHandler("manage",     cmd_manage))
     app.add_handler(CommandHandler("car",        cmd_car))
     app.add_handler(CommandHandler("gcalauth",   cmd_gcalauth))
@@ -101,6 +104,7 @@ def build_telegram_app():
     app.add_handler(CallbackQueryHandler(handle_live_monitor_callback, pattern=r"^live:"))
     app.add_handler(CallbackQueryHandler(handle_mgmt_callback,         pattern=r"^mgmt:"))
     app.add_handler(CallbackQueryHandler(handle_snapshot_callback,     pattern=r"^snap:"))
+    app.add_handler(CallbackQueryHandler(handle_stations_callback,     pattern=r"^stations:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     return app

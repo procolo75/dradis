@@ -11,6 +11,7 @@ from pathlib import Path
 from apscheduler.triggers.cron import CronTrigger
 
 from live_monitors.position import position_manager
+from live_monitors import gauges as gauge_source
 from web.store import (
     PROVIDERS,
     load_positions,
@@ -71,6 +72,15 @@ async def update_settings(payload: SettingsPayload):
         position_manager.configure(data, load_positions())
     except Exception as e:
         print(f"[DRADIS] position manager reconfigure failed: {e}")
+    # Same reason, and it was missed in v4.10.0: the MeteoHub switch and its
+    # knobs live in these settings, and `configure` was reached only from
+    # `reload_live_monitors()`. So switching the source on from its own panel
+    # and saving did nothing at all until some live monitor was saved or the
+    # add-on restarted — a control that appears to work and does not.
+    try:
+        gauge_source.configure(data)
+    except Exception as e:
+        print(f"[DRADIS] gauge source reconfigure failed: {e}")
     return data
 
 

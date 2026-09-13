@@ -22,9 +22,17 @@ from bot.scheduler import (
     run_scheduled_monitor,
     _live_status_dispatcher,
 )
+from bot.stations import format_stations
+from geocode import geocode
+from live_monitors import gauges as gauge_source
+from live_monitors.gauges_core import READOUT_PRODUCTS
 from live_monitors.ha import ha_monitor_manager
+from live_monitors.position import position_manager
 from live_monitors.rain_front import rain_front_monitor_manager
-from live_monitors.snapshot import (describe_origin_config, format_caption,
+# `_tz` rather than a local ZoneInfo: its docstring records that every message
+# in the codebase has to resolve the timezone through this one function, because
+# the container's clock is UTC and a second implementation drifts.
+from live_monitors.snapshot import (_tz, describe_origin_config, format_caption,
                                     format_origin)
 from live_monitors.storm_front import storm_front_monitor_manager
 from web.store import (
@@ -48,6 +56,7 @@ COMMANDS = [
     BotCommand("hamonitors", "List HA monitors and their status"),
     BotCommand("rain",       "Radar snapshot: what a rain monitor sees right now"),
     BotCommand("storm",      "Radar snapshot: what a storm monitor sees right now"),
+    BotCommand("stations",   "Ground station readings near you, or near a place"),
     BotCommand("manage",     "Enable / disable tasks and monitors"),
     BotCommand("car",        "Car Mode: plain spoken messages, no icons or charts"),
     BotCommand("gcalauth",   "Connect Google Calendar (OAuth2)"),
@@ -610,6 +619,145 @@ async def _take_snapshot(kind: str, cfg: dict):
 
 def _tz_name() -> str:
     return _state.read_settings().get("timezone", "UTC") or "UTC"
+
+
+# ── /stations — what the ground stations are measuring ────────────────────────
+#
+# The only thing in DRADIS that reports MEASURED weather on demand. No LLM, so
+# no tokens: same class of command as /rain and /storm, and like them it reads
+# and decides nothing.
+#
+# The radius is a MeteoHub setting rather than an argument to the command,
+# because the right value is a property of where you are — Bologna has a full
+# weather station at 1 km while Bari needs 55 for a barometer — and a number you
+# have to remember is a number nobody tunes.
+
+async def _geocode_for_stations(place: str) -> tuple[float, float, str]:
+    """Resolve a place, preferring Italy — because that is where the data is.
+
+    `geocode` picks the most POPULOUS match across the whole world, which is
+    right for a forecast and wrong here: "Bari" resolves to Barinas, Venezuela,
+    whose 350 000 inhabitants outnumber Bari's, and MeteoHub has no station
+    within four thousand kilometres of it. The shared helper is left alone —
+    every monitor and the weather tool depend on its behaviour — and the country
+    is hinted here, which it already supports through "Place, IT".
+
+    A query that names its own country is passed through untouched, and one that
+    genuinely is not in Italy falls back to the plain lookup so the readout can
+    say there are no stations there rather than pretend it misunderstood.
+    """
+    if "," in place:
+        return await geocode(place)
+    try:
+        return await geocode(f"{place}, IT")
+    except ValueError:
+        return await geocode(place)
+
+
+def _stations_keyboard(positions: list[dict]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(p.get("name") or p["id"],
+                              callback_data=f"stations:{p['id']}")]
+        for p in positions])
+
+
+async def _deliver_stations(message, lat: float, lon: float, place: str,
+                            lang: str = "it") -> None:
+    """One readout, from whichever route found the coordinates.
+
+    Takes `message` rather than `update` so the command and the inline button
+    share it, exactly as `_deliver_snapshot` does.
+    """
+    now = time.time()
+    radius = gauge_source.radius_km()
+    try:
+        view = await gauge_source.observe(
+            lat, lon, radius, min_mmh=0.2, products=READOUT_PRODUCTS,
+            window_min=gauge_source.READOUT_WINDOW_MIN, now=now)
+    except Exception as e:
+        await message.reply_text(f"❌ MeteoHub read failed: {html.escape(str(e))}")
+        return
+
+    text = format_stations(view, place, lang=lang, tz=_tz(_tz_name()),
+                           radius_km=radius, now=now)
+    # Car Mode keeps this one whole: the readout IS the content, and it was
+    # asked for deliberately. `for_car` still turns units and compass points
+    # into words and drops the icons.
+    text, parse_mode = _state.for_car(text, lang)
+    await message.reply_text(text, parse_mode=parse_mode,
+                             disable_web_page_preview=True)
+
+
+async def cmd_stations(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != _state.ALLOWED_CHAT_ID:
+        return
+    if not gauge_source.is_enabled():
+        await update.message.reply_text(
+            "MeteoHub is switched off. Turn it on under Settings → MeteoHub "
+            "in the Web UI.")
+        return
+
+    place = " ".join(context.args or []).strip()
+    if place:
+        try:
+            lat, lon, resolved = await _geocode_for_stations(place)
+        except ValueError:
+            await update.message.reply_text(
+                f"Location not found: “{html.escape(place)}”.")
+            return
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Geocoding failed: {html.escape(str(e))}")
+            return
+        await _deliver_stations(update.message, lat, lon, resolved)
+        return
+
+    # No argument: the live position. Same 0 / 1 / N ladder as /rain.
+    positions = load_positions()
+    if not positions:
+        await update.message.reply_text(
+            "No position configured, and no place given. Try “/stations Napoli”, "
+            "or add a position under Settings → Position in the Web UI.")
+        return
+    if len(positions) == 1:
+        await _stations_at_position(update.message, positions[0])
+        return
+    await update.message.reply_text("Which position?",
+                                    reply_markup=_stations_keyboard(positions))
+
+
+async def _stations_at_position(message, position: dict) -> None:
+    """Resolve one configured position, or say why it cannot be resolved.
+
+    A position with no fix is reported as such rather than silently replaced by
+    somewhere else — the readout names a place, and naming the wrong one is the
+    failure this refuses.
+    """
+    name = position.get("name") or position["id"]
+    resolved = position_manager.resolve(position["id"], time.time())
+    if resolved is None:
+        await message.reply_text(
+            f"No usable fix from “{html.escape(name)}” yet. "
+            f"Give a place instead: “/stations Napoli”.")
+        return
+    state, _grade = resolved
+    await _deliver_stations(message, state.lat, state.lon, name)
+
+
+async def handle_stations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != _state.ALLOWED_CHAT_ID:
+        await query.answer()
+        return
+    parts = query.data.split(":", 1)
+    await query.answer()
+    if len(parts) < 2:
+        return
+    position = next((p for p in load_positions() if p.get("id") == parts[1]), None)
+    if position is None:
+        await query.message.reply_text("❌ Position not found.")
+        return
+    await _stations_at_position(query.message, position)
 
 
 # ── /car ──────────────────────────────────────────────────────────────────────

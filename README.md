@@ -172,6 +172,7 @@ The single agent calls these tools when relevant; each capability is enabled and
 | `/hamonitors` | List all HA monitors with 🟢/🔴 running status — tap one for details |
 | `/rain` | Radar snapshot: what a 🌧️ Rain front monitor sees right now. Works even on a disabled monitor — changes nothing |
 | `/storm` | The same for a 🌩️ Storm front monitor |
+| `/stations` | What the ground stations around you are **measuring** — temperature, humidity, pressure, wind, gust, river level, rain gauges. `/stations <place>` for elsewhere. No LLM, no tokens |
 | `/manage` | Toggle enable/disable for any task, monitor, live monitor, or HA monitor from Telegram |
 | `/car` | Toggle 🚗 Car Mode — plain spoken messages, no icons, links or charts. `/car on` / `/car off` set it explicitly |
 | `/gcalauth` | Connect Google Calendar (OAuth2) |

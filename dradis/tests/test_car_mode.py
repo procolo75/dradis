@@ -144,6 +144,12 @@ class UnitsTest(unittest.TestCase):
     def test_millimetres_per_hour_is_not_mangled_into_millimetres(self):
         self.assertEqual(to_spoken("picco 24 mm/h"), "picco 24 millimetri all'ora.")
 
+    def test_pressure_is_a_word_not_three_letters(self):
+        """Read aloud, "hPa" is "acca pi a". `/stations` is the first thing in
+        DRADIS that prints a pressure, so this had nowhere to bite before."""
+        self.assertEqual(to_spoken("1009 hPa"), "1009 ettopascal.")
+        self.assertEqual(to_spoken("1009 hPa", "en"), "1009 hectopascals.")
+
 
 class DatesTest(unittest.TestCase):
     """A date is digits with a slash in it, and so is a ratio.

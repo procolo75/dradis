@@ -40,6 +40,8 @@ dradis/
 │   ├── radar.py             # Protezione Civile radar feed: shared singleton, refcounted, no API key
 │   ├── radar_core.py        # Pure raster maths: projection, sampling, field motion, CPA (no I/O)
 │   ├── snapshot.py          # /rain and /storm: perceive without deciding, and word the result
+│   ├── gauges.py            # MeteoHub ground stations: one fetch, neighbourhood cache, no authority
+│   ├── gauges_core.py       # Pure: query shape, BUFR timeranges, accumulation → rate (no I/O)
 │   ├── blitzortung.py       # Blitzortung MQTT feed: connection, strike buffer, health
 │   ├── geo.py               # Pure geo maths: Haversine, bearings, geohash topics
 │   ├── position.py          # Named positions: one MQTT listener serving them all (singleton)

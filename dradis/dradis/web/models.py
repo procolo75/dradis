@@ -165,6 +165,7 @@ class SettingsPayload(BaseModel):
     meteohub_enabled:       bool = False
     meteohub_official_only: bool = True
     meteohub_cache_ttl:     int  = 300
+    meteohub_radius_km:     float = 30
     voice_enabled:            bool = False
     voice_provider:           str  = "groq"
     voice_model:              str  = "whisper-large-v3-turbo"

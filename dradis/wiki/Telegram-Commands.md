@@ -11,6 +11,7 @@ All commands are available only to the user ID configured in `telegram_allowed_c
 | `/hamonitors` | List all HA monitors with 🟢/🔴 running status. Tap one to see its name, mode, cooldown, and entity list |
 | `/rain` | Snapshot of a 🌧️ Rain front monitor — the radar picture it would send right now, and where it believes it is. See [below](#rain-and-storm) |
 | `/storm` | The same for a 🌩️ Storm front monitor |
+| `/stations` | What the **ground stations** around you are measuring right now — temperature, humidity, pressure, wind, peak gust, river level, and every rain gauge in range. `/stations <place>` for somewhere else. No LLM, no tokens. See [below](#stations) |
 | `/manage` | Toggle enable/disable for any task, monitor, live monitor, or HA monitor. Shows all components grouped by type with ✅/⏸ badges; tap a row to toggle it |
 | `/car` | Toggle 🚗 Car Mode — messages rewritten as plain spoken prose for CarPlay. `/car on` / `/car off` set it explicitly. See [below](#car) |
 | `/gcalauth` | Start the Google Calendar OAuth2 flow. Sends an authorization link; browser redirects back to DRADIS automatically after you grant access |
@@ -81,6 +82,66 @@ This is the difference between a status display and a diagnostic. Internally the
 `/rain` still works: the radar image is downloaded on demand, so you can check a monitor while you are still setting it up. The caption says the picture was fetched on the spot and that nothing will arrive on its own until you enable it.
 
 `/storm` cannot do this, and says so. Lightning is only buffered while the subscription is up, so a stopped storm monitor has nothing to show — you still get its position and configuration.
+
+---
+
+## /stations
+
+`/rain` and `/storm` tell you what the **radar** sees. This tells you what the **instruments on the ground** have actually caught — about 5000 Italian stations via [MeteoHub](https://meteohub.agenziaitaliameteo.it/), free and updated every ten minutes.
+
+Needs **Settings → MeteoHub** switched on. No LLM is involved, so it costs no tokens.
+
+```
+📍 Stazioni al suolo — Bacoli
+🌡️ 28.4 °C · Nisida METEO, 7 km a E · 23 min fa
+💧 umidità 35% · Nisida METEO, 7 km a E · 23 min fa
+🔻 1009 hPa · Nisida METEO, 7 km a E · 23 min fa
+🌬️ vento 9 km/h da SE · Nisida METEO, 7 km a E · 23 min fa
+💨 raffica max 22 km/h · Nisida METEO, 7 km a E · nell'ora fino alle 08:00
+🌊 livello fiume +0.51 m · Chiusura Regi Lagni, 27 km a N · 23 min fa
+☀️ nessuna pioggia su 12 pluviometri
+🔎 13 stazioni entro 30 km · dpcn-campania
+```
+
+### Why every line names a different station
+
+Because most stations are **rain gauges and nothing else**. Within 25 km of Bacoli, all 11 official stations report rain and exactly 2 report wind; in Rome the nearest barometer is further out than the nearest twenty gauges.
+
+So the readout does not list "the nearest stations". Each line takes the nearest station that **measures that particular thing**, and carries its own station, its own distance and its own age. A quantity nothing nearby measures simply has no line — you are never shown a blank.
+
+That is also why the distance is printed every time. Pressure from 40 km away is still a fact about your sky; wind from 40 km away is not your wind. The readout gives you the number and the distance and lets you judge.
+
+### Asking about somewhere else
+
+| You type | What happens |
+|---|---|
+| `/stations` | Uses your live position. One position configured: straight to the readout. Several: inline buttons. None: it says so |
+| `/stations Napoli` | Any place name, spaces included — `/stations San Giorgio a Cremano` works |
+| `/stations Bari` | Resolved **in Italy first**, because that is where the stations are. Without that, "Bari" resolves to Barinas in Venezuela, which has more inhabitants |
+| `/stations Nizza` | Not in Italy? It still resolves, and then honestly reports no stations |
+
+### The rain line
+
+Rain is summarised over **all** the gauges rather than taking the nearest one:
+
+```
+☔ pioggia: 2 pluviometri bagnati su 44 — max 6.1 mm/h a Paderno, 4 km a N
+☀️ nessuna pioggia su 44 pluviometri
+```
+
+It never says "it is not raining". One dry gauge 500 m away says nothing about a shower three kilometres off — the same reason the gauges have no vote in a [rain front alert](Live-Monitors#what-the-rain-gauges-measured).
+
+### What it does not tell you
+
+**Snow depth**, although the stations report it. Measured on a September day: 83 of 191 national series claimed more than 5 cm, including 113 cm in central Turin, with several sensors swinging between −2 and +47 cm within three hours. They are unreferenced, and there is no way to tell a real 40 cm in January from a drifting sensor in September. A line that is wrong most of the year is not a reading.
+
+### How far it looks
+
+Set under **Settings → MeteoHub** — 30 km by default. Bologna has a full weather station at 1 km; around Bari the nearest barometer is 55 km away. Widening it fills gaps rather than hiding them, because every value names the distance it came from.
+
+### In Car Mode
+
+Unlike `/rain`, **nothing is dropped**: you asked for the readout, and the readout is the data. It is read out as one long sentence, with units and compass points as words — *"28.4 gradi, Nisida METEO, 7 chilometri a est, 23 minuti fa"*.
 
 ---
 

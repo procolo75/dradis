@@ -1131,11 +1131,38 @@ The most tempting exception is refused on purpose: a station inside the 2 km ove
 
 ##### How it is read
 
-Lazily — only when an alert is about to go out or `/rain` is asked, at most `ring_count` + 1 times per event — and cached per **neighbourhood** rather than per coordinate, because a monitor following a phone moves its origin a few hundred metres between polls and would otherwise miss an exact-key cache every time. Unlike the radar there is no background task and no reference counting, so there is no lifecycle to get wrong.
+Lazily — only when an alert is about to go out, or when `/rain` or `/stations` is asked; for a monitor, at most `ring_count` + 1 times per event — and cached per **neighbourhood** rather than per coordinate, because a monitor following a phone moves its origin a few hundred metres between polls and would otherwise miss an exact-key cache every time. Unlike the radar there is no background task and no reference counting, so there is no lifecycle to get wrong.
 
 `live_monitors/gauges_core.py` holds the query shape and the arithmetic and imports no HTTP client; `gauges.py` holds the fetch. Four properties of the source are recorded there because each was found by hitting it: the licence group is mandatory and only `CCBY_COMPLIANT` serves observations; several products join with ` or ` and a comma silently keeps one; `stationDetails` / `allStationProducts` demand a `networks` parameter that takes a single network; and accumulated precipitation carries its period in the timerange — `1,0,60` (one-minute buckets) and `1,0,3600` (hourly total) arrive **in the same response** from different networks, so buckets are summed over fifteen minutes before becoming a rate. A single 0.2 mm tip read as a one-minute rate is 12 mm/h out of a damp pavement.
 
-The query window is **90 minutes**: thirty returned zero stations for Rome while 85 were publishing normally — the data was simply older than the question.
+The query window is **90 minutes** for a monitor: thirty returned zero stations for Rome while 85 were publishing normally — the data was simply older than the question. A readout uses **180**, because it is asked once by somebody waiting and the extra breadth is real: Trieste answers with 6 stations at 90 minutes and 17 at 180.
+
+The cache key includes the products and the window, not only the place. The monitor asks for three quantities and a readout for nine; sharing one entry would serve whichever asked second a silently incomplete answer — a station appearing to have no wind because the cached reply never asked for any.
+
+<a id="the-stations-readout"></a>
+##### The `/stations` readout
+
+```
+📍 Stazioni al suolo — Bacoli
+🌡️ 28.4 °C · Nisida METEO, 7 km a E · 23 min fa
+💧 umidità 35% · Nisida METEO, 7 km a E · 23 min fa
+🔻 1009 hPa · Nisida METEO, 7 km a E · 23 min fa
+🌬️ vento 9 km/h da SE · Nisida METEO, 7 km a E · 23 min fa
+💨 raffica max 22 km/h · Nisida METEO, 7 km a E · nell'ora fino alle 08:00
+🌊 livello fiume +0.51 m · Chiusura Regi Lagni, 27 km a N · 23 min fa
+☀️ nessuna pioggia su 12 pluviometri
+🔎 13 stazioni entro 30 km · dpcn-campania
+```
+
+**Composed by quantity, not by station.** Most stations are rain gauges and nothing else — 11 of 11 within 25 km of Bacoli report rain, 2 report wind. Listing the nearest N stations gives five identical `0.0 mm` lines for Rome and shows no wind, humidity or pressure at all, because those stations are further out and never make the top eight. Each line therefore takes the nearest station that measures **its own** quantity, and carries its own station, distance and age. A quantity nothing measures produces no line, never a blank one.
+
+**Each quantity carries its own timestamp.** The gust is an hourly maximum published hourly while the rain arrives every ten minutes, so `GaugeReading` holds a `Measurement` per descriptor rather than one `observed_at`; `mmh`, `gust_kmh`, `temp_c` and `observed_at` remain as derived properties so `rain_front` never noticed the change.
+
+**Rain is summarised over the whole set** — *"2 pluviometri bagnati su 44"* — and never stated as "it is not raining", for the reason the reading has no vote in an alert either. A station under 0.1 mm/h is not counted wet: the rate prints to one decimal, and "3 wet, peak 0.0 mm/h" contradicts itself.
+
+**Snow depth is read and not printed.** Measured nationally on 13 September: 191 series, 83 of them above 5 cm, including 1.13 in central Turin and 4.30 at Barco in the Emilia-Romagna lowland, with sensors swinging between -0.02 and +0.47 in three hours. The negative depths show they are unreferenced, and nothing says whether a network publishes metres or centimetres. There is no way to separate a real 40 cm in January from a drifting sensor in September.
+
+**Car Mode prints it whole**, unlike `/rain`: it was asked for deliberately and the readout is the content. The constraint that follows is on the format — no coordinates, no links, no numeric ids, since `car_mode` strips all three and would leave stumps, which is why the origin block from `snapshot.py` is not reused.
 
 ##### The picture
 
@@ -1471,6 +1498,7 @@ Type `/` in Telegram to see the full command list with descriptions.
 | `/monitors` | List enabled scheduled monitors (tap to run immediately) and live monitors (tap to see their state — see [The five states of a live monitor](#the-five-states-of-a-live-monitor)). A rain or storm front card also reports the **origin it measures from** — the position it follows, the coordinates, a map link, and how old that fix is with the clock time it was taken. A monitor following a position is never headed by its `location` field: that is only its fallback. |
 | `/rain` | Snapshot of a 🌧️ Rain front monitor: the radar picture it would send right now, plus where it thinks it is. One monitor, straight to the picture; several, inline buttons; `/rain <name>` to pick one directly. Works even on a disabled monitor — the radar image is fetched on demand. **Changes nothing**: it perceives without deciding, so it can never suppress or duplicate a real alert. |
 | `/storm` | The same for a 🌩️ Storm front monitor. Lightning can only be buffered while the subscription is up, so a stopped monitor reports its position and configuration and says why it cannot show more. |
+| `/stations` | What the ground stations around you are **measuring** right now: temperature, humidity, pressure, wind, peak gust, river level, and the state of every rain gauge in range. `/stations <place>` asks about somewhere else, resolved in Italy first because that is where the data is. No LLM, so no tokens. Needs [Settings → MeteoHub](#settings--meteohub). See [The `/stations` readout](#the-stations-readout). |
 | `/car` | Toggle 🚗 **Car Mode** — messages rewritten as plain spoken prose, with no icons, links or charts, so CarPlay can read them aloud. `/car on` and `/car off` set it explicitly, so a dictated command cannot flip it back by accident. State is shown by `/info` and persists across restarts. See [Settings → Car Mode](#settings--car-mode). |
 | `/gcalauth` | Start Google Calendar OAuth2 authorization. Send without arguments to use the automatic redirect flow; send `/gcalauth <url>` to manually paste the redirect URL (fallback for HA on a separate device). |
 | `/gmailauth` | Start Gmail OAuth2 authorization. Same flow as `/gcalauth` but authorizes Gmail read and send scopes. Send `/gmailauth <url>` as fallback if the automatic redirect fails. |

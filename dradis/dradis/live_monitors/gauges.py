@@ -53,15 +53,22 @@ import time
 import httpx
 
 from .gauges_core import (
-    GaugeReading, GaugeView, MAX_READING_AGE_SEC, MIN_RATE_WINDOW_SEC,
-    OFFICIAL_NETWORKS, OFFICIAL_PREFIXES, WINDOW_MIN, API_URL, LICENSE_GROUP,
-    build_params, parse,
+    GaugeReading, GaugeView, Measurement, MAX_READING_AGE_SEC,
+    MIN_RATE_WINDOW_SEC, MONITOR_PRODUCTS, OFFICIAL_NETWORKS, OFFICIAL_PREFIXES,
+    READOUT_PRODUCTS, WINDOW_MIN, API_URL, LICENSE_GROUP, build_params, parse,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 HTTP_TIMEOUT_SEC = 8.0
 CACHE_TTL_SEC = 300.0
+DEFAULT_RADIUS_KM = 30.0
+
+# A readout is asked for by a person who is waiting, once. It can afford a wider
+# window than the monitor's, and it buys real coverage: Trieste returns 6
+# stations at 90 minutes and 17 at 180, because publication lag differs so much
+# between networks.
+READOUT_WINDOW_MIN = 180
 
 # Cache key rounding, ~11 km: far coarser than a poll's worth of movement and
 # far finer than the disc being read.
@@ -77,11 +84,12 @@ _locks: dict[tuple, asyncio.Lock] = {}
 _enabled = False
 _official_only = True
 _cache_ttl = CACHE_TTL_SEC
+_radius_km = DEFAULT_RADIUS_KM
 
 
 def configure(settings: dict) -> None:
-    global _enabled, _official_only, _cache_ttl
-    before = (_enabled, _official_only, _cache_ttl)
+    global _enabled, _official_only, _cache_ttl, _radius_km
+    before = (_enabled, _official_only, _cache_ttl, _radius_km)
     _enabled = bool(settings.get("meteohub_enabled", False))
     _official_only = bool(settings.get("meteohub_official_only", True))
     try:
@@ -89,20 +97,41 @@ def configure(settings: dict) -> None:
                                      or CACHE_TTL_SEC))
     except (TypeError, ValueError):
         _cache_ttl = CACHE_TTL_SEC
-    if (_enabled, _official_only, _cache_ttl) != before:
+    try:
+        _radius_km = min(150.0, max(5.0, float(settings.get("meteohub_radius_km")
+                                               or DEFAULT_RADIUS_KM)))
+    except (TypeError, ValueError):
+        _radius_km = DEFAULT_RADIUS_KM
+    if (_enabled, _official_only, _cache_ttl, _radius_km) != before:
         clear_cache()
         print(f"[Gauges] MeteoHub {'on' if _enabled else 'off'} "
-              f"(official_only={_official_only}, ttl={_cache_ttl:.0f}s)")
+              f"(official_only={_official_only}, ttl={_cache_ttl:.0f}s, "
+              f"radius={_radius_km:.0f}km)")
 
 
 def is_enabled() -> bool:
     return _enabled
 
 
-def _cache_key(lat: float, lon: float, radius_km: float,
-               min_mmh: float, official_only: bool) -> tuple:
+def radius_km() -> float:
+    """How far a READOUT looks. A monitor uses its own disc instead — it has a
+    radius already, chosen for the alerting it does."""
+    return _radius_km
+
+
+def _cache_key(lat: float, lon: float, radius_km: float, min_mmh: float,
+               official_only: bool, products, window_min: int) -> tuple:
+    """One key per neighbourhood AND per question asked.
+
+    `products` and `window_min` are part of the key because they change what
+    comes back: the monitor asks for three quantities over ninety minutes and a
+    readout for nine over a hundred and eighty. Sharing one entry between them
+    would serve whichever asked second a silently incomplete answer — a station
+    would appear to have no wind because the cached reply never asked for any.
+    """
     return (round(lat / _CACHE_GRID_DEG), round(lon / _CACHE_GRID_DEG),
-            round(radius_km), round(min_mmh, 2), official_only)
+            round(radius_km), round(min_mmh, 2), official_only,
+            tuple(products), window_min)
 
 
 def clear_cache() -> None:
@@ -113,6 +142,7 @@ async def observe(lat: float, lon: float, radius_km: float, *,
                   min_mmh: float = 0.2, official_only: bool | None = None,
                   cache_ttl: float | None = None,
                   timeout: float = HTTP_TIMEOUT_SEC,
+                  products=MONITOR_PRODUCTS, window_min: int = WINDOW_MIN,
                   now: float | None = None) -> GaugeView | None:
     """Stations within `radius_km`, or None if they could not be read.
 
@@ -128,7 +158,9 @@ async def observe(lat: float, lon: float, radius_km: float, *,
     official_only = _official_only if official_only is None else official_only
     cache_ttl = _cache_ttl if cache_ttl is None else cache_ttl
     now = time.time() if now is None else now
-    key = _cache_key(lat, lon, radius_km, min_mmh, official_only)
+    products = tuple(products)
+    key = _cache_key(lat, lon, radius_km, min_mmh, official_only,
+                     products, window_min)
 
     hit = _cache.get(key)
     if hit is not None and now - hit[0] <= cache_ttl:
@@ -143,7 +175,8 @@ async def observe(lat: float, lon: float, radius_km: float, *,
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(
-                    API_URL, params=build_params(lat, lon, radius_km, now))
+                    API_URL, params=build_params(lat, lon, radius_km, now,
+                                                 window_min, products))
             response.raise_for_status()
             payload = response.json()
         except Exception as e:
@@ -176,7 +209,8 @@ async def observe(lat: float, lon: float, radius_km: float, *,
 __all__ = [
     "GaugeReading", "GaugeView", "observe", "parse", "clear_cache",
     "API_URL", "LICENSE_GROUP", "OFFICIAL_NETWORKS", "OFFICIAL_PREFIXES",
-    "configure", "is_enabled",
-    "WINDOW_MIN", "CACHE_TTL_SEC", "HTTP_TIMEOUT_SEC",
+    "configure", "is_enabled", "radius_km", "Measurement",
+    "MONITOR_PRODUCTS", "READOUT_PRODUCTS", "READOUT_WINDOW_MIN",
+    "WINDOW_MIN", "CACHE_TTL_SEC", "HTTP_TIMEOUT_SEC", "DEFAULT_RADIUS_KM",
     "MIN_RATE_WINDOW_SEC", "MAX_READING_AGE_SEC",
 ]

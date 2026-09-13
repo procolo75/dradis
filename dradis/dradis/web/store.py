@@ -87,6 +87,7 @@ SETTINGS_KEYS = [
     "gtasks_enabled", "gtasks_provider", "gtasks_model", "gtasks_instructions",
     "gtasks_fallback_provider", "gtasks_fallback_model",
     "meteohub_enabled", "meteohub_official_only", "meteohub_cache_ttl",
+    "meteohub_radius_km",
     "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password", "mqtt_statestream_prefix",
 ]
 
@@ -131,6 +132,11 @@ SETTINGS_DEFAULTS: dict = {
     "meteohub_enabled":       False,
     "meteohub_official_only": True,
     "meteohub_cache_ttl":     300,
+    # How far a READOUT looks (/stations). Not the monitors: those have their own
+    # disc, sized for the alerting they do. 30 km covers a full weather station
+    # in most of Italy; Bari needs 55 for a barometer and Bologna has one at 1 km,
+    # which is why this is a setting rather than a constant.
+    "meteohub_radius_km":     30,
     "voice_enabled":            False,
     "voice_provider":           "groq",
     "voice_model":              "whisper-large-v3-turbo",

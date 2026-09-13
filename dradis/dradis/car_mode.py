@@ -137,6 +137,9 @@ _UNITS = {
         (re.compile(r"\bmm/h\b", re.IGNORECASE), "millimetri all'ora"),
         (re.compile(r"\bm/s\b",  re.IGNORECASE), "metri al secondo"),
         (re.compile(r"\bkm²",    re.IGNORECASE), "chilometri quadrati"),
+        # Spoken letter by letter — "acca pi a" — without this. `/stations` is
+        # the first thing in DRADIS that prints a pressure.
+        (re.compile(r"\bhPa\b"),                 "ettopascal"),
         (re.compile(r"\bkm\b",   re.IGNORECASE), "chilometri"),
         (re.compile(r"\bmm\b",   re.IGNORECASE), "millimetri"),
         (re.compile(r"\bmin\b",  re.IGNORECASE), "minuti"),
@@ -154,6 +157,7 @@ _UNITS = {
         (re.compile(r"\bmm/h\b", re.IGNORECASE), "millimetres per hour"),
         (re.compile(r"\bm/s\b",  re.IGNORECASE), "metres per second"),
         (re.compile(r"\bkm²",    re.IGNORECASE), "square kilometres"),
+        (re.compile(r"\bhPa\b"),                 "hectopascals"),
         (re.compile(r"\bkm\b",   re.IGNORECASE), "kilometres"),
         (re.compile(r"\bmm\b",   re.IGNORECASE), "millimetres"),
         (re.compile(r"\bmin\b",  re.IGNORECASE), "minutes"),

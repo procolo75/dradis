@@ -149,12 +149,13 @@ Finally, raise the Companion app's location update frequency (*Settings → Comp
 
 Those stations are **rain gauges** — buckets that catch water. Everything else weather-shaped in DRADIS is a model or an inference: Open-Meteo is a forecast, the Protezione Civile radar works rainfall out from how the sky reflects a beam. This is the only source that measures it.
 
-It feeds exactly one thing: a 🌧️ **Rain front** monitor adds a line saying what the nearest gauge actually caught. **It changes no decision** — not when an alert fires, not which ring it reports, not when the all-clear arrives. See [Live-Monitors → What the rain gauges measured](Live-Monitors#what-the-rain-gauges-measured) for why it is kept powerless on purpose.
+It feeds two things: a 🌧️ **Rain front** monitor adds a line saying what the nearest gauge actually caught, and the [`/stations`](Telegram-Commands#stations) command reports the whole neighbourhood on demand. **It changes no decision** — not when an alert fires, not which ring it reports, not when the all-clear arrives. See [Live-Monitors → What the rain gauges measured](Live-Monitors#what-the-rain-gauges-measured) for why it is kept powerless on purpose.
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | Enabled | Off | Switching it on adds a line to rain front alerts. Nothing else changes anywhere. |
 | Official networks only | On | On: regional civil protection (`dpcn-*`), ARPA FVG, SIR Toscana, Trentino, Emilia-Romagna. Off: also MeteoNetwork — about 1000 more stations, better inland coverage, but they are private installations and a badly sited gauge is wrong in a way that looks right. |
+| Station search radius | 30 km | How far [`/stations`](Telegram-Commands#stations) looks. Bologna has a full weather station at 1 km; around Bari the nearest barometer is 55 km away. Every value printed names the distance it came from, so widening this fills gaps rather than hiding them. It does **not** affect the monitors, which use their own alert radius. |
 | Re-read no more often than | 5 minutes | Stations publish every ten, so asking faster gets an answer that cannot have changed. This is politeness towards a free public service. |
 
 **Test connection** does not just say "ok". It answers with the **nearest rain gauge** to a pair of coordinates — its name, its network, its distance, and what it last caught. Leave the coordinates blank to test on Rome.

@@ -913,6 +913,23 @@
         </div>
 
         <div class="form-group">
+          <label for="meteohub-radius-km">Station search radius — <code>/stations</code></label>
+          <select id="meteohub-radius-km" style="width:300px">
+            <option value="15">15 km — only what is right here</option>
+            <option value="30">30 km (recommended)</option>
+            <option value="50">50 km</option>
+            <option value="80">80 km — sparse coverage</option>
+          </select>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">
+            How far the <code>/stations</code> command looks. Every value it prints carries
+            the distance of the station that measured it, so a wider radius fills gaps rather
+            than hiding them: around Bari a barometer is 55 km away, in Bologna there is a full
+            weather station at 1 km. This does <b>not</b> affect the monitors — those use their
+            own alert radius.
+          </small>
+        </div>
+
+        <div class="form-group">
           <label for="meteohub-cache-ttl">Re-read no more often than</label>
           <select id="meteohub-cache-ttl" style="width:300px">
             <option value="120">2 minutes</option>
@@ -2587,6 +2604,8 @@ async function loadMeteoHubSettings() {
     s.meteohub_official_only !== false;
   document.getElementById("meteohub-cache-ttl").value =
     String(s.meteohub_cache_ttl || 300);
+  document.getElementById("meteohub-radius-km").value =
+    String(s.meteohub_radius_km || 30);
   const dot = document.getElementById("meteohub-dot");
   if (dot) dot.classList.toggle("on", !!s.meteohub_enabled);
 }
@@ -2632,6 +2651,7 @@ document.getElementById("btn-save-meteohub").addEventListener("click", async () 
     meteohub_enabled:       document.getElementById("meteohub-enabled").checked,
     meteohub_official_only: document.getElementById("meteohub-official-only").checked,
     meteohub_cache_ttl:     Number(document.getElementById("meteohub-cache-ttl").value) || 300,
+    meteohub_radius_km:     Number(document.getElementById("meteohub-radius-km").value) || 30,
   };
   try {
     await api("PUT", "/api/settings", payload);

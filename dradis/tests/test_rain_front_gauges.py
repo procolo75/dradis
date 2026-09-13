@@ -68,7 +68,7 @@ except ModuleNotFoundError as e:          # httpx absent outside the add-on imag
     raise unittest.SkipTest(str(e))
 
 from dradis.live_monitors.gauges_core import (                        # noqa: E402
-    GaugeReading, GaugeView,
+    GaugeReading, GaugeView, Measurement, VAR_GUST, VAR_PRECIP, VAR_TEMP,
 )
 from dradis.live_monitors.storm_front_core import (                   # noqa: E402
     ClearAlert, RingAlert,
@@ -89,10 +89,21 @@ def monitor(**overrides) -> RF.RainFrontLiveMonitor:
 
 
 def reading(name="Nisida METEO", net="dpcn-campania", mmh=4.2,
-            km=7.0, bearing=225.0) -> GaugeReading:
+            km=7.0, bearing=225.0, gust_ms=None, temp_k=None) -> GaugeReading:
+    """A station reading built by hand.
+
+    `mmh`, `gust_kmh` and `temp_c` are derived properties now — each quantity
+    carries its own timestamp, because the gust is an hourly maximum while the
+    rain arrives every ten minutes. The assertions below are unchanged; only
+    this fixture knows the difference.
+    """
+    m = {VAR_PRECIP: Measurement(mmh, T0 - 600, 15)} if mmh is not None else {}
+    if gust_ms is not None:
+        m[VAR_GUST] = Measurement(gust_ms, T0 - 2400, 60)
+    if temp_k is not None:
+        m[VAR_TEMP] = Measurement(temp_k, T0 - 600, 0)
     return GaugeReading(name=name, network=net, lat=ORIGIN[0], lon=ORIGIN[1],
-                        distance_km=km, bearing_deg=bearing, mmh=mmh,
-                        window_min=15, observed_at=T0 - 600)
+                        distance_km=km, bearing_deg=bearing, measurements=m)
 
 
 def empty_view(radius_km: float = 45.0) -> GaugeView:
