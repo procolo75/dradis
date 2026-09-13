@@ -2,10 +2,11 @@
 web/routes/tools.py
 ────────────────────
 Routes: OAuth callbacks (Google Calendar, Gmail, Tasks), connectivity tests
-(web search, weather), and Google service status endpoints.
+(web search, weather, MeteoHub), and Google service status endpoints.
 """
 
 import json
+import time
 from pathlib import Path
 
 import httpx
@@ -116,6 +117,61 @@ async def test_weather():
         return {"ok": False, "message": "Unexpected response format"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── MeteoHub ──────────────────────────────────────────────────────────────────
+
+@router.get("/api/meteohub-test")
+async def test_meteohub(latitude: float = 41.9, longitude: float = 12.48,
+                        radius_km: float = 25.0, official_only: bool = True):
+    """Which station would answer for this point, and what it last caught.
+
+    Not a ping. A reachable service with no gauge within the radius is the
+    failure mode that actually bites — the alert line would read "no station"
+    forever and look like a bug — so the test answers with the station it
+    found, its network and its distance, or says plainly that there is none.
+
+    It bypasses the `meteohub_enabled` switch on purpose: the point of the
+    button is to find out whether it is worth switching on.
+    """
+    from live_monitors.gauges_core import build_params, parse
+
+    now = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://meteohub.agenziaitaliameteo.it/api/observations",
+                params=build_params(latitude, longitude, radius_km, now))
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # A refused query comes back as a bare JSON string, not an object.
+    if not isinstance(payload, dict):
+        return {"ok": False, "message": f"MeteoHub refused the query: {payload}"}
+
+    view = parse(payload, latitude, longitude, radius_km,
+                 min_mmh=0.2, official_only=official_only, now=now)
+    if view.nearest is None:
+        scope = "official networks" if official_only else "all networks"
+        return {"ok": False,
+                "message": (f"Reached MeteoHub, but no rain gauge within "
+                            f"{radius_km:.0f} km ({scope}). Try a larger radius "
+                            f"or allow amateur networks.")}
+
+    near = view.nearest
+    age = max(0, round(near.age_sec / 60))
+    return {"ok": True,
+            "station": near.name, "network": near.network,
+            "distance_km": round(near.distance_km, 1),
+            "mmh": near.mmh, "stations": len(view.readings),
+            "wet": len(view.wet),
+            "message": (f"Connection successful — nearest gauge "
+                        f"{near.name} ({near.network}) at "
+                        f"{near.distance_km:.1f} km, {near.mmh:.1f} mm/h "
+                        f"{age} min ago · {len(view.readings)} station(s) "
+                        f"in range")}
 
 
 # ── Google Calendar OAuth ─────────────────────────────────────────────────────

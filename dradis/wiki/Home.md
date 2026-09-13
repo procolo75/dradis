@@ -14,7 +14,7 @@ DRADIS is a Home Assistant add-on that exposes a conversational AI agent control
 | [Monitors](Monitors) | Scheduled monitors: Thunderstorm, Rain, Weather Charts, Seismic, Civil Protection alerts (Campania), Google Drive Backup |
 | [Live-Monitors](Live-Monitors) | Persistent push monitors: Storm front, Rain front, Seismic live, Football Betting |
 | [HA-Monitors](HA-Monitors) | Home Assistant entity monitors via MQTT |
-| [Web-UI](Web-UI) | Web UI reference — all panels and fields, including 🚗 Car Mode |
+| [Web-UI](Web-UI) | Web UI reference — all panels and fields, including 🚗 Car Mode and MeteoHub |
 | [Telegram-Commands](Telegram-Commands) | All Telegram bot commands, including `/rain`, `/storm` and `/car` |
 | [Examples](Examples) | Usage examples for tools, tasks and monitors |
 | [Persistent-Data](Persistent-Data) | What DRADIS stores under `/data` and what is backed up |

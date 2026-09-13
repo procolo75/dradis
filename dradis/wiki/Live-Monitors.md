@@ -267,6 +267,7 @@ And when it is over:
 | **Rain worth telling you about** | The minimum intensity that counts. See the table below. |
 | **Also mention hail** | Adds a line when the approaching rain carries a real risk of hail. |
 | **Radar picture** | Attaches the radar image to each message. |
+| **Add what the rain gauges measured** | Adds one line naming the nearest ground station that is actually catching rain. Needs MeteoHub switched on under Settings. **Diagnostic only** — see below. |
 
 #### Choosing the minimum intensity
 
@@ -389,6 +390,42 @@ The ⏱️ line measures the distance between you and the rain, which is what yo
 ```
 
 The verdict on the 🧭 line stays with the bearing-drift method in that case. A ring descent is measured against *you*; the drift is measured against the previous picture, and only one of those two answers the question you asked.
+
+### What the rain gauges measured
+
+Switch on **MeteoHub** under Settings and tick **Add what the rain gauges measured**, and every alert carries one more line:
+
+```
+🎚️ Misurato: Nisida METEO 4.2 mm/h a 7 km a SO · dpcn-campania (09:30, 16 min fa)
+```
+
+[MeteoHub](https://meteohub.agenziaitaliameteo.it/) is Agenzia ItaliaMeteo's platform, and it republishes about 5000 Italian ground stations — regional civil protection, ARPA, and others. Free, no account. Those are **rain gauges**: buckets that catch water. The radar is not; it works out rainfall from how the sky reflects a beam, which is a very good estimate and still an estimate.
+
+So the alert now shows you both, side by side.
+
+#### It never cancels an alert
+
+The gauge reading is **shown and never obeyed**. It cannot suppress a warning, change which ring you are told about, change the heading, or delay the all-clear. Turn the whole thing off and every message is the same but for that one line.
+
+That is on purpose, for three reasons:
+
+- **The gauge is later than the radar.** Stations publish every ten minutes and the lag differs by region — about twelve minutes in Tuscany, an hour in Lazio, sometimes two in Puglia. It always arrives after the decision has to be made. That is why the line prints how old the reading is, not only the clock.
+- **A broken gauge looks exactly like a dry one.** A station that stops transmitting does not report an error. It reports nothing — which is also what a station in the dry reports. Letting that nothing cancel a warning would put your alerts at the mercy of a sensor nobody is watching.
+- **It is somewhere else.** The nearest station can be seven kilometres away while the shower is at three.
+
+So if the radar says rain is overhead and the gauge next door says zero, **you still get the alert**, and you see both numbers. That disagreement is real information — it usually means very light rain evaporating before it lands, which is exactly what the `🌂` line warns about — and it is yours to judge.
+
+#### When there is nothing to report
+
+The line appears on every alert, even when no station is wet:
+
+```
+🎚️ Nessuna stazione bagnata entro 45 km (la più vicina: Nisida METEO, a 7 km a SO)
+```
+
+That is deliberate. If it only showed up when a station agreed with the radar, then its **absence** would start to mean something — and it must not, for all three reasons above. Read it as *"here is where the instruments are and here is what they caught"*, never as *"so it is not raining"*.
+
+Two more shapes cover the cases where there is no reading at all — *nessuna lettura recente dalle stazioni* (they answered, nothing recent was in range) and *rete di stazioni non raggiungibile* (the service did not answer). Different problems, so different sentences.
 
 ### The picture attached to each alert
 

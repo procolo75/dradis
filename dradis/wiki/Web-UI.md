@@ -143,6 +143,28 @@ Finally, raise the Companion app's location update frequency (*Settings → Comp
 
 ---
 
+## Settings → MeteoHub
+
+[MeteoHub](https://meteohub.agenziaitaliameteo.it/) is Agenzia ItaliaMeteo's platform. It republishes about **5000 Italian ground stations** on a ten-minute cadence, free and without an account.
+
+Those stations are **rain gauges** — buckets that catch water. Everything else weather-shaped in DRADIS is a model or an inference: Open-Meteo is a forecast, the Protezione Civile radar works rainfall out from how the sky reflects a beam. This is the only source that measures it.
+
+It feeds exactly one thing: a 🌧️ **Rain front** monitor adds a line saying what the nearest gauge actually caught. **It changes no decision** — not when an alert fires, not which ring it reports, not when the all-clear arrives. See [Live-Monitors → What the rain gauges measured](Live-Monitors#what-the-rain-gauges-measured) for why it is kept powerless on purpose.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| Enabled | Off | Switching it on adds a line to rain front alerts. Nothing else changes anywhere. |
+| Official networks only | On | On: regional civil protection (`dpcn-*`), ARPA FVG, SIR Toscana, Trentino, Emilia-Romagna. Off: also MeteoNetwork — about 1000 more stations, better inland coverage, but they are private installations and a badly sited gauge is wrong in a way that looks right. |
+| Re-read no more often than | 5 minutes | Stations publish every ten, so asking faster gets an answer that cannot have changed. This is politeness towards a free public service. |
+
+**Test connection** does not just say "ok". It answers with the **nearest rain gauge** to a pair of coordinates — its name, its network, its distance, and what it last caught. Leave the coordinates blank to test on Rome.
+
+That matters because the failure that actually bites is not an unreachable service: it is a perfectly healthy one with no gauge within range of where you live. The alert line would then read *"no station"* forever and look like a bug. If the test reports no gauge, widen the radius or allow amateur networks.
+
+Data is licensed **CC BY 4.0** by Agenzia ItaliaMeteo and the network owners. The owning network is printed in every line DRADIS shows, which is what carries the attribution.
+
+---
+
 ## Tools
 
 Each capability contributes tools the single agent can call (see [Tools](Tools) for the full tool list). They are enabled and authenticated here; the agent always uses the **main model**. Common fields per capability:

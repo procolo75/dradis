@@ -313,6 +313,10 @@
           <span class="nav-icon">📍</span>
           <span class="nav-label">Position</span>
         </li>
+        <li class="nav-item" data-panel="meteohub" id="nav-meteohub">
+          <span class="nav-dot" id="meteohub-dot"></span>
+          <span class="nav-label">MeteoHub</span>
+        </li>
         <li class="nav-item" data-panel="carmode" id="nav-carmode">
           <span class="nav-dot" id="carmode-dot"></span>
           <span class="nav-label">Car Mode</span>
@@ -863,6 +867,87 @@
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-weather">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: MeteoHub -->
+    <div class="panel" id="panel-meteohub">
+      <div class="form-card">
+        <h2>MeteoHub — ground stations</h2>
+        <p style="font-size:0.84rem;color:var(--text-muted);margin:-4px 0 16px;line-height:1.6">
+          <a href="https://meteohub.agenziaitaliameteo.it/" target="_blank" rel="noopener">MeteoHub</a>
+          (Agenzia ItaliaMeteo) republishes the Italian ground-station networks — about 5000 stations
+          on a ten-minute cadence, free and without an account. It is the only source in DRADIS that
+          <b>measures</b> rain instead of inferring it from radar reflectivity.
+          <br><br>
+          It is used by rain front monitors to add one diagnostic line naming the station that is
+          actually catching the rain. <b>It changes no decision anywhere</b> — not when an alert
+          fires, not which ring it reports, not when the all-clear arrives.
+        </p>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="meteohub-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Official networks only</span>
+            <label class="toggle">
+              <input type="checkbox" id="meteohub-official-only">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">
+            On: regional civil protection (dpcn-*), ARPA FVG, SIR Toscana, Trentino and the
+            Emilia-Romagna networks. Off: also MeteoNetwork, the largest single network in the
+            country at about 1000 stations — better coverage inland, but siting and shielding are
+            not guaranteed and a badly exposed gauge is wrong in a way that looks right.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label for="meteohub-cache-ttl">Re-read no more often than</label>
+          <select id="meteohub-cache-ttl" style="width:300px">
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes (recommended)</option>
+            <option value="600">10 minutes</option>
+            <option value="900">15 minutes</option>
+          </select>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">
+            Stations publish every ten minutes, so asking faster returns an answer that cannot have
+            changed. This is politeness towards a free public service, not a performance setting.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label>Connection</label>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <input id="meteohub-test-lat" placeholder="latitude"  style="width:120px">
+            <input id="meteohub-test-lon" placeholder="longitude" style="width:120px">
+            <button class="btn-icon" id="btn-meteohub-test">Test connection</button>
+          </div>
+          <small id="meteohub-test-result" style="color:var(--text-muted);margin-top:6px;display:block">
+            Answers with the nearest rain gauge to those coordinates, its network and its distance.
+            A reachable service with no gauge in range is the failure that actually bites — the alert
+            line would read “no station” forever and look like a bug — so this names what it found
+            rather than only saying “ok”. Leave the coordinates empty to test on Rome.
+          </small>
+        </div>
+
+        <p style="font-size:0.76rem;color:var(--text-muted);margin-top:18px;line-height:1.5">
+          Data licensed CC BY 4.0 by Agenzia ItaliaMeteo and the network owners. The owning network
+          is named in every line DRADIS prints, which is what carries the attribution.
+        </p>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-meteohub">Save</button>
         </div>
       </div>
     </div>
@@ -2481,6 +2566,66 @@ document.getElementById("btn-save-weather").addEventListener("click", async () =
   }
 });
 
+// ── MeteoHub panel ────────────────────────────────────────────────────────────
+
+async function loadMeteoHubSettings() {
+  const s = await api("GET", "/api/settings");
+  document.getElementById("meteohub-enabled").checked       = !!s.meteohub_enabled;
+  document.getElementById("meteohub-official-only").checked =
+    s.meteohub_official_only !== false;
+  document.getElementById("meteohub-cache-ttl").value =
+    String(s.meteohub_cache_ttl || 300);
+  const dot = document.getElementById("meteohub-dot");
+  if (dot) dot.classList.toggle("on", !!s.meteohub_enabled);
+}
+
+document.getElementById("btn-meteohub-test").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-meteohub-test");
+  const out = document.getElementById("meteohub-test-result");
+  const lat = document.getElementById("meteohub-test-lat").value.trim();
+  const lon = document.getElementById("meteohub-test-lon").value.trim();
+  const official = document.getElementById("meteohub-official-only").checked;
+
+  const qs = new URLSearchParams({ official_only: official });
+  if (lat) qs.set("latitude", lat);
+  if (lon) qs.set("longitude", lon);
+
+  btn.disabled = true;
+  out.textContent = "Asking MeteoHub…";
+  try {
+    const r = await api("GET", `/api/meteohub-test?${qs}`);
+    out.textContent = (r.ok ? "✅ " : "⚠️ ") + r.message;
+    out.style.color = r.ok ? "var(--ok, #4caf50)" : "var(--text-muted)";
+  } catch (e) {
+    out.textContent = "❌ " + (e.message || e);
+    out.style.color = "var(--danger, #e57373)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-save-meteohub").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-meteohub");
+  btn.disabled = true;
+  const current = await api("GET", "/api/settings");
+  const payload = {
+    ...current,
+    meteohub_enabled:       document.getElementById("meteohub-enabled").checked,
+    meteohub_official_only: document.getElementById("meteohub-official-only").checked,
+    meteohub_cache_ttl:     Number(document.getElementById("meteohub-cache-ttl").value) || 300,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const dot = document.getElementById("meteohub-dot");
+    if (dot) dot.classList.toggle("on", payload.meteohub_enabled);
+    showToast("MeteoHub settings saved");
+  } catch {
+    showToast("Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ── Voice panel ───────────────────────────────────────────────────────────────
 
 async function loadVoiceSettings() {
@@ -3116,6 +3261,12 @@ async function init() {
     await loadWeatherSettings();
   } catch (e) {
     console.error("loadWeatherSettings:", e);
+  }
+
+  try {
+    await loadMeteoHubSettings();
+  } catch (e) {
+    console.error("loadMeteoHubSettings:", e);
   }
 
   try {
@@ -4359,6 +4510,24 @@ function renderLiveMonitorForm(monitor) {
         </div>
 
         <div class="form-group" style="margin-top:12px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="lm-ground-truth" ${monitor.ground_truth === false ? "" : "checked"}>
+            Add what the rain gauges measured
+          </label>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">Adds one line naming the nearest MeteoHub ground station that is actually catching rain, how much, and how far away. <b>Diagnostic only — it does not change when the alert fires</b>, which ring it reports, or when the all-clear arrives. Needs MeteoHub switched on under Settings.</small>
+          <details style="margin-top:8px">
+            <summary style="cursor:pointer;color:var(--text-muted);font-size:0.8rem">Why a dry gauge does not cancel the alert</summary>
+            <div style="font-size:0.8rem;color:var(--text-muted);margin-top:6px;line-height:1.5">
+              Three reasons, each enough on its own.
+              <b>It is late.</b> Stations publish every ten minutes and the lag runs from about twelve minutes to over an hour depending on which regional network owns them — always after the decision is due.
+              <b>Its zero is ambiguous.</b> A gauge that has stopped transmitting returns exactly what a gauge standing in the dry returns: nothing.
+              <b>It is somewhere else.</b> The nearest station can be seven kilometres away while the cell is at three.
+              So the reading is shown beside the radar's estimate and never allowed to overrule it. When the two disagree, you see both and decide.
+            </div>
+          </details>
+        </div>
+
+        <div class="form-group" style="margin-top:12px">
           <button class="btn-icon" id="btn-test-radar">📡 Test radar coverage</button>
           <small id="lm-radar-test" style="color:var(--text-muted);margin-top:6px;display:block">The radar network does not cover every corner of Italy. This checks the service is reachable and that the disc you asked to watch is actually visible from it.</small>
         </div>
@@ -4846,6 +5015,7 @@ function renderLiveMonitorForm(monitor) {
       chart:           document.getElementById("lm-chart")?.checked ?? true,
       min_mmh:         parseFloat(document.getElementById("lm-min-mmh")?.value) || 1.0,
       hail:            document.getElementById("lm-hail")?.checked ?? false,
+      ground_truth:    document.getElementById("lm-ground-truth")?.checked ?? true,
       position_id:     document.getElementById("lm-position-id")?.value || "",
       telegram_bot_id: document.getElementById("lm-bot-id").value,
     };

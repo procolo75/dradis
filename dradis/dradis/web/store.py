@@ -86,6 +86,7 @@ SETTINGS_KEYS = [
     "gmail_fallback_provider", "gmail_fallback_model",
     "gtasks_enabled", "gtasks_provider", "gtasks_model", "gtasks_instructions",
     "gtasks_fallback_provider", "gtasks_fallback_model",
+    "meteohub_enabled", "meteohub_official_only", "meteohub_cache_ttl",
     "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password", "mqtt_statestream_prefix",
 ]
 
@@ -122,6 +123,14 @@ SETTINGS_DEFAULTS: dict = {
     "weather_provider":     "openrouter",
     "weather_model":        "nvidia/nemotron-3-nano-30b-a3b:free",
     "weather_instructions": "",
+    # MeteoHub (Agenzia ItaliaMeteo) ground stations. Properties of the SOURCE,
+    # not of any one monitor: whether it is consulted at all, which networks are
+    # trusted, and how long an answer stays fresh. Off by default — it is a
+    # diagnostic line on rain-front alerts, never a decision, so nothing breaks
+    # by leaving it off and nothing is decided differently by turning it on.
+    "meteohub_enabled":       False,
+    "meteohub_official_only": True,
+    "meteohub_cache_ttl":     300,
     "voice_enabled":            False,
     "voice_provider":           "groq",
     "voice_model":              "whisper-large-v3-turbo",

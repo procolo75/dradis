@@ -58,6 +58,7 @@ import time
 from datetime import datetime, time as time_t
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from . import gauges as gauge_source
 from .geo import direction_label, distance_km, offset_km
 from .position import ORIGIN_FALLBACK, position_manager
 from .position_core import MAX_PLAUSIBLE_KMH
@@ -235,6 +236,9 @@ class RainFrontLiveMonitor:
         self.position_id = (cfg.get("position_id") or "").strip()
         self.min_mmh    = _clamp_min_mmh(cfg.get("min_mmh"))
         self.hail       = bool(cfg.get("hail", False))
+        # Diagnostic only. It adds a line to the message and is consulted by
+        # nothing — see `_gauge_line`.
+        self.ground_truth = bool(cfg.get("ground_truth", True))
         self._chart     = bool(cfg.get("chart", True))
         self._quiet_start = (cfg.get("quiet_start") or "").strip()
         self._quiet_end   = (cfg.get("quiet_end") or "").strip()
@@ -482,10 +486,18 @@ class RainFrontLiveMonitor:
             peak = peak_in_disc(grid, effective, self.radius_km)
             overhead = peak_in_disc(grid, effective, OVERHEAD_RADIUS_KM)
             hail = self._hail_at(effective, frame)
+            # Read AFTER the verdict, deliberately. Nothing above this line has
+            # seen a gauge, and moving the read earlier is the one edit that
+            # could quietly give it a vote.
+            gauges = await self._observe_gauges(origin, now)
+            if gauges is not None:
+                _LOGGER.info("[RainFront] %s | gauges=%d wet=%d nearest=%s",
+                             self.name, len(gauges.readings), len(gauges.wet),
+                             gauges.nearest.name if gauges.nearest else "—")
             await self._dispatch(alert, frame, points, now,
                                  origin=origin, effective=effective,
                                  peak_mmh=peak, hail_percent=hail,
-                                 overhead_mmh=overhead)
+                                 overhead_mmh=overhead, gauges=gauges)
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
 
@@ -559,9 +571,11 @@ class RainFrontLiveMonitor:
             if encounter is not None and not encounter.approaching:
                 encounter = None
 
+        gauges = await self._observe_gauges(origin, now)
         picture = await self._render_chart_bytes(grid, effective, now, alert, field,
                                                  encounter)
         return Snapshot(
+            **self._gauge_fields(gauges),
             front_km=frame.dominant.front_km if frame.dominant else None,
             front_bearing_deg=frame.dominant.bearing_deg if frame.dominant else None,
             activity=frame.strikes_in_radius,
@@ -572,6 +586,32 @@ class RainFrontLiveMonitor:
             encounter_minutes=encounter.minutes if encounter else None,
             encounter_miss_km=encounter.miss_km if encounter else None,
             picture=picture, **common)
+
+    def _gauge_fields(self, gauges) -> dict:
+        """The gauge reading flattened for `Snapshot`, which holds only scalars.
+
+        `gauge_asked` carries the distinction the two nullable fields cannot:
+        the feature being off is silence, a failed read is a stated failure.
+        """
+        asked = self.ground_truth and gauge_source.is_enabled()
+        if not asked or gauges is None:
+            return {"gauge_asked": asked}
+        lead = gauges.wet[0] if gauges.wet else gauges.nearest
+        if lead is None:
+            # Stations answered, none of them a rain gauge. `gauge_radius_km`
+            # without a name is what tells the caption this is not a failed
+            # read — the network was reached and had no pluviometer to offer.
+            return {"gauge_asked": asked, "gauge_radius_km": gauges.radius_km}
+        return {
+            "gauge_asked": True,
+            "gauge_name": lead.name,
+            "gauge_network": lead.network,
+            "gauge_mmh": lead.mmh,
+            "gauge_distance_km": lead.distance_km,
+            "gauge_bearing_deg": lead.bearing_deg,
+            "gauge_wet_count": len(gauges.wet),
+            "gauge_radius_km": gauges.radius_km,
+        }
 
     async def _render_chart_bytes(self, grid, origin, now, alert, field, encounter):
         """Chart rendering for a snapshot, with the alert path's own guarantee:
@@ -591,6 +631,28 @@ class RainFrontLiveMonitor:
                 timeout=CHART_TIMEOUT_SEC)
         except Exception as e:
             _LOGGER.warning("[RainFront] '%s' snapshot chart failed: %s", self.name, e)
+            return None
+
+    async def _observe_gauges(self, origin: tuple[float, float], now: float):
+        """What the rain gauges around here have caught, or None.
+
+        DIAGNOSTIC ONLY. Nothing downstream of this is allowed to branch on the
+        answer except the one line that prints it: not the ring, not the
+        heading, not the all-clear. The reasons are in `gauges.py`, and the
+        shortest of them is that a station which has stopped transmitting and a
+        station standing in the dry both return the same nothing.
+
+        Like the chart, it is wrapped so that a failure costs a line and never
+        the alert.
+        """
+        if not self.ground_truth or not gauge_source.is_enabled():
+            return None
+        try:
+            return await gauge_source.observe(origin[0], origin[1],
+                                              self.observe_radius_km,
+                                              min_mmh=self.min_mmh, now=now)
+        except Exception as e:
+            _LOGGER.warning("[RainFront] '%s' gauge read failed: %s", self.name, e)
             return None
 
     def _own_velocity(self) -> tuple[float, float]:
@@ -675,14 +737,16 @@ class RainFrontLiveMonitor:
                         effective: tuple[float, float],
                         peak_mmh: float | None,
                         hail_percent: float | None,
-                        overhead_mmh: float | None = None) -> None:
+                        overhead_mmh: float | None = None,
+                        gauges=None) -> None:
         if self._is_silenceable(alert) and self._in_quiet_hours():
             _LOGGER.info("[RainFront] '%s' alert suppressed by quiet hours", self.name)
             self._tracker.commit(alert, now)
             self._save_state()
             return
 
-        text = self._format(alert, peak_mmh, hail_percent, now, overhead_mmh)
+        text = self._format(alert, peak_mmh, hail_percent, now, overhead_mmh,
+                            gauges)
         photo = await self._render_chart(alert, frame, points, now, effective)
 
         try:
@@ -763,10 +827,11 @@ class RainFrontLiveMonitor:
 
     def _format(self, alert, peak_mmh: float | None,
                 hail_percent: float | None, now: float,
-                overhead_mmh: float | None = None) -> str:
+                overhead_mmh: float | None = None, gauges=None) -> str:
         if isinstance(alert, ClearAlert):
-            return self._fmt_clear(alert, now)
-        return self._fmt_ring(alert, peak_mmh, hail_percent, now, overhead_mmh)
+            return self._fmt_clear(alert, now, gauges)
+        return self._fmt_ring(alert, peak_mmh, hail_percent, now, overhead_mmh,
+                              gauges)
 
     def _is_overhead(self, overhead_mmh: float | None) -> bool:
         """Whether the radar shows rain WHERE THE OBSERVER IS.
@@ -886,6 +951,74 @@ class RainFrontLiveMonitor:
         return (f"🌬️ La pioggia si muove verso {heading} a {speed:.0f} km/h" if it
                 else f"🌬️ Rain moving {heading} at {speed:.0f} km/h")
 
+    def _gauge_line(self, gauges) -> str:
+        """What the rain gauges on the ground caught, in four shapes.
+
+        The line is printed on EVERY alert, including when nothing is wet and
+        when the network could not be reached. That is not verbosity. If it
+        appeared only when a station confirmed the radar, then its absence
+        would become an assertion of its own — exactly the authority this
+        reading is not allowed to have. A reader who sees the third shape has
+        been told where the instruments are and what they caught; they have not
+        been told it is dry.
+
+        The network id rides along with the name. It is what discharges the
+        CC BY attribution, in the one place the data is actually shown.
+        """
+        it = self.language == "it"
+        if not self.ground_truth or not gauge_source.is_enabled():
+            return ""
+        if gauges is None:
+            return ("🎚️ Rete di stazioni non raggiungibile" if it
+                    else "🎚️ Station network unreachable")
+        if not gauges.readings:
+            # Asked and answered: the networks here are lagging further than
+            # the window, or there is nothing in range. Not the same as down.
+            return (f"🎚️ Nessuna lettura recente dalle stazioni entro "
+                    f"{gauges.radius_km:.0f} km" if it else
+                    f"🎚️ No recent reading from stations within "
+                    f"{gauges.radius_km:.0f} km")
+
+        def where(reading) -> str:
+            side = direction_label(reading.bearing_deg, self.language)
+            return (f"a {reading.distance_km:.0f} km a {side}" if it
+                    else f"{reading.distance_km:.0f} km to the {side}")
+
+        if not gauges.wet:
+            nearest = gauges.nearest
+            if nearest is None:
+                return ("🎚️ Nessun pluviometro nell'area sorvegliata" if it
+                        else "🎚️ No rain gauge in the watched area")
+            return (f"🎚️ Nessuna stazione bagnata entro "
+                    f"{gauges.radius_km:.0f} km (la più vicina: "
+                    f"{html.escape(nearest.name)}, {where(nearest)})" if it else
+                    f"🎚️ No station reporting rain within "
+                    f"{gauges.radius_km:.0f} km (nearest: "
+                    f"{html.escape(nearest.name)}, {where(nearest)})")
+
+        top = gauges.wet[0]
+        # The age, always, for the reason `_radar_line` states it: a reading
+        # that is fifty minutes old is a fact about fifty minutes ago, and the
+        # publication lag runs from twelve minutes to over an hour depending on
+        # which network answered. Printing only the clock leaves the reader to
+        # work that out.
+        clock = datetime.fromtimestamp(top.observed_at, self._tz()).strftime("%H:%M")
+        age = max(0, round(top.age_sec / 60.0))
+        when = (f"{clock}, {age} min fa" if it else f"{clock}, {age} min ago")
+        head = (f"🎚️ Misurato: {html.escape(top.name)} "
+                f"<b>{top.mmh:.1f} mm/h</b> {where(top)}" if it else
+                f"🎚️ Measured: {html.escape(top.name)} "
+                f"<b>{top.mmh:.1f} mm/h</b> {where(top)}")
+        if len(gauges.wet) > 1:
+            more = len(gauges.wet)
+            head = (f"🎚️ Misurato: {more} stazioni bagnate, max "
+                    f"{html.escape(top.name)} <b>{top.mmh:.1f} mm/h</b> "
+                    f"{where(top)}" if it else
+                    f"🎚️ Measured: {more} stations reporting rain, peak "
+                    f"{html.escape(top.name)} <b>{top.mmh:.1f} mm/h</b> "
+                    f"{where(top)}")
+        return f"{head} · {html.escape(top.network)} ({when})"
+
     def _radar_line(self, now: float) -> str:
         """The age of the measurement, always. The product is published about ten
         minutes late, and a user who looks out of the window has to be able to
@@ -900,7 +1033,7 @@ class RainFrontLiveMonitor:
 
     def _fmt_ring(self, alert: RingAlert, peak_mmh: float | None,
                   hail_percent: float | None, now: float,
-                  overhead_mmh: float | None = None) -> str:
+                  overhead_mmh: float | None = None, gauges=None) -> str:
         it = self.language == "it"
         heading = direction_label(alert.bearing_deg, self.language)
         overhead = self._is_overhead(overhead_mmh)
@@ -926,6 +1059,7 @@ class RainFrontLiveMonitor:
                  "prima di toccare terra" if it else
                  "🌂 Drizzle-level echo only: at this intensity it often "
                  "evaporates before reaching the ground"))
+        lines.append(self._gauge_line(gauges))
         if hail_percent is not None and hail_percent >= HAIL_ALERT_PERCENT:
             lines.append((f"🧊 Probabilità di grandine {hail_percent:.0f}%" if it
                           else f"🧊 Hail probability {hail_percent:.0f}%"))
@@ -964,7 +1098,7 @@ class RainFrontLiveMonitor:
         lines.append(f"🕐 {self._now_str()}")
         return "\n".join(line for line in lines if line)
 
-    def _fmt_clear(self, alert: ClearAlert, now: float) -> str:
+    def _fmt_clear(self, alert: ClearAlert, now: float, gauges=None) -> str:
         it = self.language == "it"
         lines = [(f"✅ <b>Pioggia cessata — {self._loc()}</b>" if it
                   else f"✅ <b>Rain cleared — {self._loc()}</b>"),
@@ -975,6 +1109,8 @@ class RainFrontLiveMonitor:
              f"da {quiet_min:.0f} min") if it else
             (f"🔇 No rain within {alert.radius_km:.0f} km "
              f"for {quiet_min:.0f} min"))
+        if gauges is not None and gauges.wet:
+            lines.append(self._gauge_line(gauges))
         if alert.closest_km is not None:
             when = datetime.fromtimestamp(alert.closest_at, self._tz()).strftime("%H:%M")
             lines.append(
@@ -1030,7 +1166,7 @@ def _clamp_min_mmh(value) -> float:
 _FINGERPRINT_FIELDS = (
     "name", "location", "latitude", "longitude", "radius_km", "ring_count",
     "language", "quiet_start", "quiet_end", "chart", "telegram_bot_id",
-    "position_id", "min_mmh", "hail",
+    "position_id", "min_mmh", "hail", "ground_truth",
 )
 
 

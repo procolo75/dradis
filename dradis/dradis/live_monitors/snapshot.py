@@ -265,6 +265,24 @@ class Snapshot:
     encounter_miss_km: float | None = None
     one_shot: bool = False           # radar fetched on demand, monitor not running
 
+    # Rain gauges (MeteoHub), rain only and DIAGNOSTIC ONLY: a second
+    # instrument's opinion printed beside the radar's, never consulted by
+    # anything. Scalars rather than the GaugeView itself, so this stays a
+    # dataclass of plain values like the rest of it.
+    #
+    # `gauge_asked` is what keeps three states apart in two nullable fields:
+    # not asked at all (feature off) prints nothing, asked and unanswered
+    # prints so, asked and answered reports. Without it an unreachable network
+    # and a switched-off one are the same None.
+    gauge_asked: bool = False
+    gauge_name: str = ""
+    gauge_network: str = ""
+    gauge_mmh: float | None = None
+    gauge_distance_km: float | None = None
+    gauge_bearing_deg: float | None = None
+    gauge_wet_count: int = 0
+    gauge_radius_km: float | None = None
+
     # Storm only.
     feed_connected: bool = True
 
@@ -277,6 +295,44 @@ class Snapshot:
 # reason: this module imports nothing that opens a socket or needs an API token,
 # so the wording is unit-testable without stubbing python-telegram-bot, the LLM
 # SDKs and /data/options.json into existence.
+
+def _gauge_line(snap, it: bool) -> str:
+    """The ground stations' own reading, or why there isn't one.
+
+    The same four shapes `rain_front._gauge_line` prints, for the same reason:
+    it is shown whenever it was asked for, including when nothing is wet, so
+    that its absence never comes to mean anything. It is dropped in Car Mode
+    along with the rest of the instrument talk.
+    """
+    if not snap.gauge_asked:
+        return ""
+    if snap.gauge_mmh is None:
+        if snap.gauge_radius_km is not None:
+            return (f"🎚️ Nessuna lettura recente dalle stazioni entro "
+                    f"{snap.gauge_radius_km:.0f} km" if it else
+                    f"🎚️ No recent reading from stations within "
+                    f"{snap.gauge_radius_km:.0f} km")
+        return ("🎚️ Rete di stazioni non raggiungibile" if it
+                else "🎚️ Station network unreachable")
+
+    side = direction_label(snap.gauge_bearing_deg, "it" if it else "en")
+    where = (f"a {snap.gauge_distance_km:.0f} km a {side}" if it
+             else f"{snap.gauge_distance_km:.0f} km to the {side}")
+    if not snap.gauge_wet_count:
+        radius = snap.gauge_radius_km or 0.0
+        return (f"🎚️ Nessuna stazione bagnata entro {radius:.0f} km "
+                f"(la più vicina: {snap.gauge_name}, {where})" if it else
+                f"🎚️ No station reporting rain within {radius:.0f} km "
+                f"(nearest: {snap.gauge_name}, {where})")
+
+    lead = (f"{snap.gauge_wet_count} stazioni bagnate, max " if it
+            else f"{snap.gauge_wet_count} stations reporting rain, peak ") \
+        if snap.gauge_wet_count > 1 else ""
+    return (f"🎚️ Misurato: {lead}{snap.gauge_name} {snap.gauge_mmh:.1f} mm/h "
+            f"{where} · {snap.gauge_network}" if it else
+            f"🎚️ Measured: {lead}{snap.gauge_name} {snap.gauge_mmh:.1f} mm/h "
+            f"{where} · {snap.gauge_network}")
+
 
 def format_caption(snap, voice: bool = False) -> str:
     """The snapshot as a Telegram caption. `voice=True` is the Car Mode wording.
@@ -501,6 +557,9 @@ def _format_rain(snap, it: bool, voice: bool = False) -> list[str]:
     if snap.overhead_mmh is not None and snap.overhead_mmh > 0:
         lines.append((f"☂️ Su di te: {snap.overhead_mmh:.1f} mm/h" if it
                       else f"☂️ Overhead: {snap.overhead_mmh:.1f} mm/h"))
+    gauge = _gauge_line(snap, it)
+    if gauge and not voice:
+        lines.append(gauge)
     if snap.field_speed_kmh is None:
         lines.append("🌬️ Movimento della pioggia non misurabile" if it
                      else "🌬️ Rain movement not measurable")

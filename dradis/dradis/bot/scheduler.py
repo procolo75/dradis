@@ -30,6 +30,7 @@ from backup.gdrive           import run_backup_monitor
 from live_monitors.storm_front import storm_front_monitor_manager
 from live_monitors.rain_front import rain_front_monitor_manager
 from live_monitors.position   import position_manager
+from live_monitors           import gauges as gauge_source
 from live_monitors.ha        import ha_monitor_manager
 from live_monitors.seismic   import seismic_monitor_manager
 from live_monitors.football  import football_monitor_manager
@@ -413,8 +414,11 @@ def reload_live_monitors():
             print(f"[DRADIS] WARNING: {label} reload failed: {e}")
 
     # The position manager goes first, so a monitor that follows a position finds
-    # the feed already aimed at the right entities.
+    # the feed already aimed at the right entities. The gauge source is settings
+    # only — no feed, no task — so it just has to be current before the monitors
+    # that read it are built.
     _step("position manager", position_manager.configure, settings, load_positions())
+    _step("gauge source", gauge_source.configure, settings)
 
     configs = load_live_monitors()
     _step("storm front monitors", storm_front_monitor_manager.reload,

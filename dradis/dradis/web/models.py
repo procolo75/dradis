@@ -92,6 +92,12 @@ class LiveMonitorPayload(BaseModel):
     # Rain front only — also fetch the probability-of-hail product and mention it
     # when the front carries a real chance of hail.
     hail:            bool      = False
+    # Rain front only — print what the nearby MeteoHub rain gauges actually
+    # caught, beside the radar's estimate. DIAGNOSTIC: it adds one line and
+    # changes no decision, not the ring, not the heading, not the all-clear.
+    # Needs meteohub_enabled in the global settings; without it the line is
+    # simply absent.
+    ground_truth:    bool      = True
     # Storm front and rain front — empty centres the radar on latitude/longitude
     # (the historical behaviour, and the default). Otherwise it is the id of a
     # named position and the monitor follows that phone, falling back through an
@@ -155,6 +161,10 @@ class SettingsPayload(BaseModel):
     weather_provider:     str  = "openrouter"
     weather_model:        str  = "nvidia/nemotron-3-nano-30b-a3b:free"
     weather_instructions: str  = ""
+    # MeteoHub ground stations — see store.SETTINGS_DEFAULTS.
+    meteohub_enabled:       bool = False
+    meteohub_official_only: bool = True
+    meteohub_cache_ttl:     int  = 300
     voice_enabled:            bool = False
     voice_provider:           str  = "groq"
     voice_model:              str  = "whisper-large-v3-turbo"

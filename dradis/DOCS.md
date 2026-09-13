@@ -521,6 +521,24 @@ Finally, raise the Companion app's location update frequency (*Settings → Comp
 
 **Deleting a position** does not rewrite the monitors following it. They fall back to their own configured coordinates — saying so on every alert — and their form shows the dangling reference so the cause is visible rather than inferred.
 
+### Settings → MeteoHub
+
+[MeteoHub](https://meteohub.agenziaitaliameteo.it/) (Agenzia ItaliaMeteo, with CINECA) republishes the Italian ground-station networks. **`GET /api/observations` is public** — no account, no token, no quota — and serves about 5000 stations on a ten-minute cadence.
+
+Those stations are **rain gauges**. Everything else weather-shaped in DRADIS is a model or an inference: Open-Meteo is a forecast, the DPC composite deduces rainfall from reflectivity. This is the only source that measures it.
+
+It is used by one thing: a 🌧️ Rain front monitor adds a line saying what the nearest gauge actually caught. **It decides nothing** — see [Why the gauge has no vote](#why-the-gauge-has-no-vote).
+
+| Setting | Meaning |
+|---|---|
+| Enabled | Off by default. Switching it on adds a line to rain front alerts and changes no decision anywhere. |
+| Official networks only | On: regional civil protection (`dpcn-*`), ARPA FVG, SIR Toscana, Trentino and the Emilia-Romagna networks. Off: also `mnw` (MeteoNetwork) — the largest single network in the country at ~1000 stations, better coverage inland, siting not guaranteed. |
+| Re-read no more often than | 5 minutes by default. Stations publish every ten, so asking faster returns an answer that cannot have changed. Politeness towards a free public service, not performance. |
+
+**Test connection** answers with the nearest rain gauge to a pair of coordinates, its network and its distance — not merely "ok". A reachable service with no gauge within the radius is the failure that actually bites, because the alert line would then read *"no station"* forever and look like a bug.
+
+Data is licensed **CC BY 4.0** by Agenzia ItaliaMeteo and the network owners. The owning network is named in every line DRADIS prints, which is what carries the attribution.
+
 ### Scheduled Monitors
 
 Scheduled monitors fetch data from external APIs and compute results entirely in Python, then deliver them to your Telegram chat on a cron schedule. By default no LLM is invoked — output is deterministic and costs no tokens. Monitors are stored in `/data/monitors.json`.
@@ -760,7 +778,7 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 | Type | Required fields |
 |------|----------------|
 | 🌩️ Storm front / CBDR | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per storm, Radar, Language, Quiet hours *(optional)* |
-| 🌧️ Rain front | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per event, Minimum intensity, Hail *(optional)*, Radar, Language, Quiet hours *(optional)* |
+| 🌧️ Rain front | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per event, Minimum intensity, Hail *(optional)*, Ground truth *(optional)*, Radar, Language, Quiet hours *(optional)* |
 | 🌍 Seismic live | Areas, Quiet hours |
 | ⚽ Football Betting | Minute windows, Quiet hours (API pause) |
 
@@ -1078,8 +1096,46 @@ The first of those three is now much rarer than it was. A stale fix is no longer
 | **Rain worth telling you about** | Minimum intensity in mm/h: `0.2` even drizzle, **`1` proper rain (recommended)**, `4` a real shower, `10` heavy rain only. The radar sees down to a damp mist; set this too low and a grey afternoon keeps the event open for hours. |
 | **Also mention hail** | Fetches the probability-of-hail product too and adds a line when the approaching front carries a real risk. One extra download every 5 minutes. |
 | Radar picture | Attaches the actual radar crop to each ring message. |
+| Ground truth | Adds what the nearest MeteoHub rain gauge measured. Diagnostic only — it changes no decision. Needs **Settings → MeteoHub** switched on. |
 
 **📡 Test radar coverage:** fetches the newest product on demand and reports whether the service is reachable, how late the product was published, what share of the watched disc the network can actually see, and the current intensity at your point. The coverage figure is the load-bearing one — a monitor watching a blind spot would report permanent calm. Points such as Pantelleria are genuinely outside the network and are reported as such.
+
+##### Ground truth — what the gauges measured
+
+With **MeteoHub** enabled and the monitor's **Ground truth** box ticked, every alert carries one more line:
+
+```
+🎚️ Misurato: Nisida METEO 4.2 mm/h a 7 km a SO · dpcn-campania (09:30, 16 min fa)
+🎚️ Misurato: 3 stazioni bagnate, max Pozzuoli 6.1 mm/h a 4 km a N · dpcn-campania (09:30, 16 min fa)
+🎚️ Nessuna stazione bagnata entro 45 km (la più vicina: Nisida METEO, a 7 km a SO)
+🎚️ Nessuna lettura recente dalle stazioni entro 45 km
+🎚️ Rete di stazioni non raggiungibile
+```
+
+Five shapes, five different facts. The last two are not the same: a network lagging further than the query window answers normally with nothing inside it, which is a property of the data; an unreachable service is an outage. Blaming one for the other sends you looking in the wrong place.
+
+**The line is printed on every alert, including when nothing is wet.** If it appeared only on confirmation, its absence would become an assertion of its own. Reading *"nessuna stazione bagnata entro 45 km"* tells you where the instruments are and what they caught; it does not tell you it is dry.
+
+<a id="why-the-gauge-has-no-vote"></a>
+##### Why the gauge has no vote
+
+The reading is shown and **never consulted**. It does not suppress an alert, change its ring, change its heading, or delay the all-clear. Remove the whole gauge path and every message is identical but for that one line — which is asserted by a test that diffs whole messages, not by this paragraph.
+
+Three reasons, each sufficient alone:
+
+1. **It is later than the radar.** Stations publish every ten minutes with their own lag, and rainfall has to be integrated over a window before it is a rate at all. Measured across six cities on 2026-09-13: `sir-toscana` 12 min, `dpcn-campania` 27, `dpcn-piemonte` 30–42, `dpcn-lombardia` 32–42, `dpcn-lazio` 52–57, `dpcn-puglia` 52–132, `mnw` 42–282. It always arrives after the decision is due — which is why the age is printed, always.
+2. **A broken gauge and a dry gauge give the same zero.** A station that stops transmitting does not return an error; it returns fewer rows. Giving that zero a vote makes the monitor's silence depend on a sensor nobody is watching.
+3. **It is somewhere else.** The nearest station can be seven kilometres away while the cell is at three.
+
+The most tempting exception is refused on purpose: a station inside the 2 km overhead disc reporting nothing does **not** downgrade `🔵 Pioggia su di te`. The radar's ground claim stays the radar's to make, and you see both readings and judge.
+
+##### How it is read
+
+Lazily — only when an alert is about to go out or `/rain` is asked, at most `ring_count` + 1 times per event — and cached per **neighbourhood** rather than per coordinate, because a monitor following a phone moves its origin a few hundred metres between polls and would otherwise miss an exact-key cache every time. Unlike the radar there is no background task and no reference counting, so there is no lifecycle to get wrong.
+
+`live_monitors/gauges_core.py` holds the query shape and the arithmetic and imports no HTTP client; `gauges.py` holds the fetch. Four properties of the source are recorded there because each was found by hitting it: the licence group is mandatory and only `CCBY_COMPLIANT` serves observations; several products join with ` or ` and a comma silently keeps one; `stationDetails` / `allStationProducts` demand a `networks` parameter that takes a single network; and accumulated precipitation carries its period in the timerange — `1,0,60` (one-minute buckets) and `1,0,3600` (hourly total) arrive **in the same response** from different networks, so buckets are summed over fifteen minutes before becoming a rate. A single 0.2 mm tip read as a one-minute rate is 12 mm/h out of a damp pavement.
+
+The query window is **90 minutes**: thirty returned zero stations for Rome while 85 were publishing normally — the data was simply older than the question.
 
 ##### The picture
 
