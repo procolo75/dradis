@@ -244,7 +244,9 @@ async def run_seismic_monitor(monitor: dict, tz_name: str = "UTC") -> str:
         else:
             count = sum(1 for e in filtered if e["_mag"] is not None and lo <= e["_mag"] < hi)
         if count:
-            lines.append(f"  {icon} {label}: <b>{count}</b>")
+            # Escaped: the "< 0" bin label is a bare "<" to Telegram's HTML parser,
+            # which rejects the whole report — but only in weeks that have one.
+            lines.append(f"  {icon} {html.escape(label)}: <b>{count}</b>")
 
     lines.append("")
 

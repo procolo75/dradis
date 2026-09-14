@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## [4.11.1] - 2026-09-14
+
+**The seismic report failed only in the weeks that had something unusual to report.** Reported as *"Monitor Report Settimanale Terremoti Campi Flegrei — send error: Can't parse entities: unsupported start tag "" at byte offset 221"*, and only now and then.
+
+- **Fix — the `< 0` magnitude bin is escaped.** The report is sent as Telegram HTML, and the label of the negative-magnitude bin went out as a bare `<` followed by a space, which Telegram reads as a tag with no name and rejects the whole message for. The line is printed only when the period holds at least one event below magnitude 0, so the same monitor delivered one week and failed the next. The label is escaped at render time, and Car Mode reads it as before, because `to_spoken` resolves entities back into characters.
+
+Tests: 3 new in `test_seismic_report.py`. INGV is stubbed, and every bin in both languages plus the empty period is rendered. After the tags Telegram accepts (`b`, `i`, `a`) are removed, no `<` may remain. The same test fails against 4.11.0.
+
 ## [4.11.0] - 2026-09-13
 
 **v4.10.0 put ~5000 ground stations behind a configured source and then used them for one line on one monitor.** The data is public, answers in 0,3 s and is already cached — and the only way to see it was to wait for rain and for `rain_front` to decide to speak. `/stations` makes it a question you can ask.
