@@ -95,7 +95,7 @@ It is sent as its own message, ahead of the reply, and unlike the `🔢`/`🔧` 
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
 | `monitors/campania_alert.py` | Civil Protection alert monitor (Campania) — LLM-free, reads today's and tomorrow's bulletin from the Centro Funzionale REST API, reports the 8 alert zones on each, silent below the configured level |
-| `monitors/weather_chart.py` | Weather Charts monitor — LLM-free, fetches hourly Open-Meteo forecasts for up to 6 models, generates one PNG chart per variable and returns `list[bytes]` |
+| `monitors/weather_chart.py` | Weather Charts monitor — LLM-free, fetches hourly Open-Meteo forecasts for up to 10 models, generates one PNG chart per variable and returns `list[bytes]` |
 | `live_monitors/storm_front.py` | Storm front live monitor — LLM-free; feed lifecycle, persistence, quiet hours, message formatting; `StormFrontLiveMonitor` + `StormFrontMonitorManager` singleton |
 | `live_monitors/storm_front_core.py` | Pure decision core — ring/sector grid, per-sector front, CBDR verdict, event machine. No I/O, fully unit-tested |
 | `live_monitors/storm_front_chart.py` | Polar radar attached to ring messages (matplotlib, object API, rendered off the event loop) |
@@ -599,38 +599,44 @@ The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–1
 
 #### Weather Charts monitor
 
-Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 6 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM is used.
+Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 10 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM is used.
 
 **Supported models:**
 
-| Model key | API parameter | Coverage | Notes |
-|-----------|--------------|----------|-------|
-| ECMWF IFS 9km | `ecmwf_ifs025` | Global | ~10-day horizon; no UV index |
-| ICON EU 7km | `icon_eu` | Europe | 5-day horizon |
-| Météo-France ARPEGE | `meteofrance_arpege_europe` | Europe | 4-day horizon |
-| GFS Global | `gfs_global` | Global | 16-day horizon; supports all variables |
-| ItaliaMeteo ARPAE | `italia_meteo_arpae_icon_2i` | Italy | 2 km, 48h horizon |
-| NOAA AIGFS | `ncep_aigfs025` | Global | NOAA machine-learning model, 0.25°, 16-day horizon; no wind gusts, humidity, apparent temperature, precipitation probability or UV index |
+The list is the one [meteo-benchmark](https://github.com/procolo75/meteo-benchmark) verifies against Italian METARs. The horizons are Open-Meteo's; the chart itself is capped at 7 days.
+
+| Model | API parameter | Coverage | Horizon | Notes |
+|-------|--------------|----------|---------|-------|
+| ECMWF IFS 0.25° | `ecmwf_ifs025` | Global | 15 days | ~25 km grid; no UV index |
+| ECMWF IFS 9km | `ecmwf_ifs` | Global | 15 days | Full resolution; no 500 hPa geopotential, no 850 hPa temperature, no UV index |
+| ECMWF AIFS | `ecmwf_aifs025_single` | Global | 15 days | ECMWF machine-learning model, 0.25°; no wind gusts, precipitation probability or UV index |
+| DWD ICON | `icon_seamless` | Global | 7 days | Seamless ICON-D2 / ICON-EU / ICON global; no UV index |
+| ItaliaMeteo ICON-2I | `italia_meteo_arpae_icon_2i` | Italy | ~3 days | 2 km; no precipitation probability, no UV index |
+| NOAA GFS | `gfs_seamless` | Global | 16 days | Seamless GFS; supports all variables |
+| NOAA AIGFS | `ncep_aigfs025` | Global | 16 days | NOAA machine-learning model, 0.25°; no wind gusts, humidity, apparent temperature, precipitation probability or UV index |
+| Météo-France | `meteofrance_seamless` | Global | ~4 days | Seamless AROME / ARPEGE; no precipitation probability, no UV index |
+| UK Met Office | `ukmo_seamless` | Global | 7 days | Seamless UKMO; no UV index |
+| GEM Canada | `gem_seamless` | Global | 10 days | Seamless GEM; no UV index |
 
 **Supported variables:**
 
 | Variable | Unit | Chart type | Notes |
 |----------|------|-----------|-------|
 | Temperature 2m | °C | Line | All models |
-| Apparent Temperature | °C | Line | All models except AIGFS |
+| Apparent Temperature | °C | Line | All models except NOAA AIGFS |
 | Precipitation | mm | Numbers | One lane per model; 3-hour totals. Always sent (0 if no rain expected) |
-| Precipitation Probability | % | Numbers | One lane per model. ECMWF IFS + GFS only; always sent |
+| Precipitation Probability | % | Numbers | One lane per model. ECMWF IFS, DWD ICON, NOAA GFS, UK Met Office, GEM Canada; always sent |
 | Wind Speed 10m | km/h | Numbers | One lane per model |
-| Wind Gusts 10m | km/h | Numbers | One lane per model (not AIGFS); 3-hour peaks |
+| Wind Gusts 10m | km/h | Numbers | One lane per model (not ECMWF AIFS, NOAA AIGFS); 3-hour peaks |
 | Wind Direction 10m | ° | Arrows | One lane per model; arrows point downwind |
-| Humidity 2m | % | Line | All models except AIGFS |
+| Humidity 2m | % | Line | All models except NOAA AIGFS |
 | Sea Level Pressure | hPa | Line | All models |
 | Cloud Cover | % | Numbers | One lane per model. Always sent (0 if clear sky) |
 | UV Index | — | Bar | GFS only; suppressed if all-zero |
-| Geopotential 500 hPa | m | Line | All models |
-| Temperature 850 hPa | °C | Line | All models |
+| Geopotential 500 hPa | m | Line | All models except ECMWF IFS 9km |
+| Temperature 850 hPa | °C | Line | All models except ECMWF IFS 9km |
 
-**Chart appearance:** 16×5 inch figure at 150 dpi, dark theme (#111 background), five high-contrast colours (blue / red / green / amber / magenta), 2-px line width. Each chart title includes the variable name, location, forecast days, and generation timestamp. The x-axis is in the **local time of the location**, with a bright vertical line at midnight and a fainter one at midday, over a dashed grid every 6 hours.
+**Chart appearance:** 16×5 inch figure at 150 dpi, dark theme (#111 background), ten high-contrast colours, one per model, 2-px line width. Each chart title includes the variable name, location, forecast days, and generation timestamp. The x-axis is in the **local time of the location**, with a bright vertical line at midnight and a fainter one at midday, over a dashed grid every 6 hours.
 
 **Forecast window:** Open-Meteo always answers from 00:00 of the current day, so everything before the run is discarded and the series starts at the next 3-hour mark (a run at 10:16 starts at 12:00) — which keeps the labels of the lane charts on round hours, aligned with the ticks and the midnight line. "3 days" therefore means 72 hours ahead of the run, not three calendar days.
 
@@ -658,7 +664,7 @@ Two of them aggregate the 3-hour window rather than sampling one hour out of thr
 | Type | 📊 Weather Charts (Open-Meteo) |
 | Location | Naples |
 | Forecast days | 3 |
-| Weather models | ECMWF IFS 9km ✅, ICON EU 7km ✅, GFS Global ✅ |
+| Weather models | ECMWF IFS 0.25° ✅, DWD ICON ✅, NOAA GFS ✅ |
 | Variables | Temperature 2m ✅, Precipitation ✅, Wind Speed 10m ✅, Precip. Probability ✅ |
 | Cron | `0 7 * * *` |
 

@@ -4086,12 +4086,16 @@ function renderMonitorForm(monitor) {
         <label>Weather models</label>
         <div style="display:grid;grid-template-columns:1fr;gap:6px;margin-top:6px">
           ${[
-            ["ecmwf_ifs04",               "ECMWF IFS 9km",        "Global, 9 km, ~10-day horizon"],
-            ["icon_eu",                   "ICON EU 7km",           "DWD regional Europe, 7 km, 5-day"],
-            ["meteofrance_arpege_europe",  "Météo-France ARPEGE",  "European, ~10 km, 4-day"],
-            ["gfs025",                    "GFS Global",            "NOAA global, 13 km, 16-day — all variables"],
-            ["italia_meteo_arpae",        "ItaliaMeteo ARPAE",     "Italy, 2 km, 48h — ARPAE ICON 2i"],
-            ["ncep_aigfs",                "NOAA AIGFS",            "NOAA AI model, global, 0.25°, 16-day — no gusts, humidity, apparent temp, rain prob., UV"],
+            ["ecmwf_ifs025",               "ECMWF IFS 0.25°",        "Global, ~25 km grid, 15-day — no UV"],
+            ["ecmwf_ifs",                  "ECMWF IFS 9km",          "Global, full resolution, 15-day — no 500/850 hPa, no UV"],
+            ["ecmwf_aifs025_single",       "ECMWF AIFS",             "ECMWF AI model, 0.25°, 15-day — no gusts, rain prob., UV"],
+            ["icon_seamless",              "DWD ICON",               "Seamless ICON-D2 / EU / global, 7-day — no UV"],
+            ["italia_meteo_arpae_icon_2i", "ItaliaMeteo ICON-2I",    "Italy, 2 km, ~3-day — no rain prob., UV"],
+            ["gfs_seamless",               "NOAA GFS",               "Seamless global, 16-day — all variables"],
+            ["ncep_aigfs025",              "NOAA AIGFS",             "NOAA AI model, 0.25°, 16-day — no gusts, humidity, apparent temp, rain prob., UV"],
+            ["meteofrance_seamless",       "Météo-France",           "Seamless AROME / ARPEGE, ~4-day — no rain prob., UV"],
+            ["ukmo_seamless",              "UK Met Office",          "Seamless UKMO, 7-day — no UV"],
+            ["gem_seamless",               "GEM Canada",             "Seamless GEM, 10-day — no UV"],
           ].map(([id, lbl, desc]) => `
             <label style="display:flex;align-items:flex-start;gap:6px;font-size:0.85rem;cursor:pointer">
               <input type="checkbox" class="wc-model" value="${id}"

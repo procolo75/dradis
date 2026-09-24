@@ -4,14 +4,21 @@ monitors/weather_chart.py
 Generates one PNG chart per selected variable (multi-model overlay) and returns
 them as a list[bytes]. No LLM used.
 
-Supported models (weather_models config param):
-  ecmwf_ifs04              ECMWF IFS HRES 9 km  (no uv_index)
-  icon_eu                  DWD ICON EU 7 km      (no precip_prob, no uv_index)
-  meteofrance_arpege_europe Météo-France ARPEGE  (no precip_prob, no uv_index)
-  gfs025                   NOAA GFS global       (all variables)
-  italia_meteo_arpae       ItaliaMeteo ARPAE 2i  (no precip_prob, no uv_index)
-  ncep_aigfs               NOAA AIGFS (AI model) (no gusts, humidity, apparent temp,
-                                                  precip_prob, uv_index)
+Supported models (weather_models config param) — the key is the Open-Meteo model id,
+the same list meteo-benchmark verifies against Italian METARs:
+  ecmwf_ifs025               ECMWF IFS 0.25°        (no uv_index)
+  ecmwf_ifs                  ECMWF IFS 9 km         (no 500 hPa / 850 hPa, no uv_index)
+  ecmwf_aifs025_single       ECMWF AIFS (AI)        (no gusts, precip_prob, uv_index)
+  icon_seamless              DWD ICON seamless      (no uv_index)
+  italia_meteo_arpae_icon_2i ItaliaMeteo ICON-2I    (no precip_prob, uv_index)
+  gfs_seamless               NOAA GFS seamless      (all variables)
+  ncep_aigfs025              NOAA AIGFS (AI)        (no gusts, humidity, apparent temp,
+                                                     precip_prob, uv_index)
+  meteofrance_seamless       Météo-France seamless  (no precip_prob, uv_index)
+  ukmo_seamless              UK Met Office seamless (no uv_index)
+  gem_seamless               GEM Canada seamless    (no uv_index)
+Keys saved before v4.13.0 that are no longer here are ignored; with none left the
+monitor falls back to ecmwf_ifs025.
 
 Supported variables (chart_variables config param):
   temperature_2m              Temperature 2 m
@@ -46,45 +53,70 @@ import matplotlib.dates as mdates
 
 # ── Model registry ────────────────────────────────────────────────────────────
 
+# The key is the Open-Meteo model id. "exclude" lists the variables Open-Meteo returns
+# only nulls for (measured over Naples, 24 Sep 2026): they are not requested, and the
+# model is left out of those charts instead of drawing an empty lane or a flat line.
 MODELS = {
-    "ecmwf_ifs04": {
-        "label":   "ECMWF IFS 9km",
+    "ecmwf_ifs025": {
+        "label":   "ECMWF IFS 0.25°",
         "url":     "https://api.open-meteo.com/v1/forecast",
         "param":   "ecmwf_ifs025",
         "exclude": {"uv_index"},
     },
-    "icon_eu": {
-        "label":   "ICON EU 7km",
+    "ecmwf_ifs": {
+        "label":   "ECMWF IFS 9km",
         "url":     "https://api.open-meteo.com/v1/forecast",
-        "param":   "icon_eu",
-        "exclude": {"precipitation_probability", "uv_index"},
+        "param":   "ecmwf_ifs",
+        "exclude": {"geopotential_height_500hPa", "temperature_850hPa", "uv_index"},
     },
-    "meteofrance_arpege_europe": {
-        "label":   "MF ARPEGE Europe",
+    "ecmwf_aifs025_single": {
+        "label":   "ECMWF AIFS",
         "url":     "https://api.open-meteo.com/v1/forecast",
-        "param":   "meteofrance_arpege_europe",
-        "exclude": {"precipitation_probability", "uv_index"},
+        "param":   "ecmwf_aifs025_single",
+        "exclude": {"wind_gusts_10m", "precipitation_probability", "uv_index"},
     },
-    "gfs025": {
-        "label":   "GFS Global",
+    "icon_seamless": {
+        "label":   "DWD ICON",
         "url":     "https://api.open-meteo.com/v1/forecast",
-        "param":   "gfs_global",
-        "exclude": set(),
+        "param":   "icon_seamless",
+        "exclude": {"uv_index"},
     },
-    "italia_meteo_arpae": {
-        "label":   "ItaliaMeteo ARPAE",
+    "italia_meteo_arpae_icon_2i": {
+        "label":   "ItaliaMeteo ICON-2I",
         "url":     "https://api.open-meteo.com/v1/forecast",
         "param":   "italia_meteo_arpae_icon_2i",
         "exclude": {"precipitation_probability", "uv_index"},
     },
-    # Machine-learning model: Open-Meteo returns only null for these, so they are
-    # not requested at all and the model is left out of those charts.
-    "ncep_aigfs": {
+    "gfs_seamless": {
+        "label":   "NOAA GFS",
+        "url":     "https://api.open-meteo.com/v1/forecast",
+        "param":   "gfs_seamless",
+        "exclude": set(),
+    },
+    "ncep_aigfs025": {
         "label":   "NOAA AIGFS",
         "url":     "https://api.open-meteo.com/v1/forecast",
         "param":   "ncep_aigfs025",
         "exclude": {"wind_gusts_10m", "relative_humidity_2m", "apparent_temperature",
                     "precipitation_probability", "uv_index"},
+    },
+    "meteofrance_seamless": {
+        "label":   "Météo-France",
+        "url":     "https://api.open-meteo.com/v1/forecast",
+        "param":   "meteofrance_seamless",
+        "exclude": {"precipitation_probability", "uv_index"},
+    },
+    "ukmo_seamless": {
+        "label":   "UK Met Office",
+        "url":     "https://api.open-meteo.com/v1/forecast",
+        "param":   "ukmo_seamless",
+        "exclude": {"uv_index"},
+    },
+    "gem_seamless": {
+        "label":   "GEM Canada",
+        "url":     "https://api.open-meteo.com/v1/forecast",
+        "param":   "gem_seamless",
+        "exclude": {"uv_index"},
     },
 }
 
@@ -168,7 +200,9 @@ VARIABLES = {
 }
 
 # High-contrast colors, hue-spaced, bright on dark background
-_COLORS = ["#29b6f6", "#ff5252", "#69f0ae", "#ffd740", "#e040fb", "#ff6d00", "#40c4ff"]
+# One colour per selectable model, so no two models share a colour on the same chart.
+_COLORS = ["#29b6f6", "#ff5252", "#69f0ae", "#ffd740", "#e040fb", "#ff6d00", "#ffffff",
+           "#f48fb1", "#c6ff00", "#bcaaa4"]
 
 
 # ── Fetch data for a single model ────────────────────────────────────────────
@@ -480,7 +514,7 @@ async def run_weather_chart_monitor(monitor: dict, tz_name: str = "UTC") -> list
     days            = max(1, min(int(monitor.get("days", 3)), 7))
 
     if not selected_models:
-        selected_models = ["ecmwf_ifs04"]
+        selected_models = ["ecmwf_ifs025"]
     if not selected_vars:
         selected_vars = ["temperature_2m", "precipitation", "wind_speed_10m"]
 

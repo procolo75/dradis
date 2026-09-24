@@ -122,43 +122,49 @@ Cron:        0 * * * *
 
 ## 📊 Weather Charts Monitor
 
-Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 6 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM used.
+Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 10 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM used.
 
 **Supported models:**
 
+The list is the one [meteo-benchmark](https://github.com/procolo75/meteo-benchmark) verifies against Italian METARs. The horizons are Open-Meteo's; the chart itself is capped at 7 days.
+
 | Model | Coverage | Horizon | Notes |
 |-------|----------|---------|-------|
-| ECMWF IFS 9km | Global | ~10 days | No UV index |
-| ICON EU 7km | Europe | 5 days | No precipitation probability, no UV index |
-| Météo-France ARPEGE | Europe | 4 days | No precipitation probability, no UV index |
-| GFS Global | Global | 16 days | Supports all variables |
-| ItaliaMeteo ARPAE | Italy | 48h | ICON 2i, 2 km resolution; no precipitation probability, no UV index |
+| ECMWF IFS 0.25° | Global | 15 days | ~25 km grid; no UV index |
+| ECMWF IFS 9km | Global | 15 days | Full resolution; no 500 hPa geopotential, no 850 hPa temperature, no UV index |
+| ECMWF AIFS | Global | 15 days | ECMWF machine-learning model, 0.25°; no wind gusts, precipitation probability or UV index |
+| DWD ICON | Global | 7 days | Seamless ICON-D2 / ICON-EU / ICON global; no UV index |
+| ItaliaMeteo ICON-2I | Italy | ~3 days | 2 km; no precipitation probability, no UV index |
+| NOAA GFS | Global | 16 days | Seamless GFS; supports all variables |
 | NOAA AIGFS | Global | 16 days | NOAA machine-learning model, 0.25°; no wind gusts, humidity, apparent temperature, precipitation probability or UV index |
+| Météo-France | Global | ~4 days | Seamless AROME / ARPEGE; no precipitation probability, no UV index |
+| UK Met Office | Global | 7 days | Seamless UKMO; no UV index |
+| GEM Canada | Global | 10 days | Seamless GEM; no UV index |
 
 **Supported variables:**
 
 | Variable | Unit | Chart | Notes |
 |----------|------|-------|-------|
 | Temperature 2m | °C | line | All models |
-| Apparent Temperature | °C | line | All models except AIGFS |
-| Temperature 850 hPa | °C | line | All models |
+| Apparent Temperature | °C | line | All models except NOAA AIGFS |
+| Temperature 850 hPa | °C | line | All models except ECMWF IFS 9km |
 | Precipitation | mm | numbers | One lane per model, 3 h totals. Always sent, even at zero |
-| Precipitation Probability | % | numbers | One lane per model. ECMWF IFS + GFS only; always sent |
+| Precipitation Probability | % | numbers | One lane per model. ECMWF IFS, DWD ICON, NOAA GFS, UK Met Office, GEM Canada; always sent |
 | Wind Speed 10m | km/h | numbers | One lane per model |
-| Wind Gusts 10m | km/h | numbers | One lane per model (not AIGFS), 3 h peaks |
+| Wind Gusts 10m | km/h | numbers | One lane per model (not ECMWF AIFS, NOAA AIGFS), 3 h peaks |
 | Wind Direction 10m | ° | arrows | One horizontal lane per model, an arrow every 3 h pointing downwind |
-| Humidity 2m | % | line | All models except AIGFS |
+| Humidity 2m | % | line | All models except NOAA AIGFS |
 | Sea Level Pressure | hPa | line | All models |
 | Cloud Cover | % | numbers | One lane per model. Always sent, even at zero |
 | UV Index | — | bars | GFS only; suppressed if all-zero |
-| Geopotential 500 hPa | m | line | All models |
+| Geopotential 500 hPa | m | line | All models except ECMWF IFS 9km |
 
 **Additional fields:**
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | Forecast days | 3 | Number of days to plot (1–7), counted from the moment the monitor runs. |
-| Weather models | ECMWF IFS 9km | Select one or more models (checkboxes with description). |
+| Weather models | ECMWF IFS 0.25° | Select one or more models (checkboxes with description). |
 | Variables to plot | Temperature, Precipitation, Wind | Each selected variable generates one chart image. |
 
 **Precipitation, precipitation probability and cloud cover** are always sent even when all values are zero — so a clear forecast reads as "no rain expected" instead of a chart silently disappearing. UV index is suppressed when all-zero (night or overcast periods).
@@ -174,7 +180,7 @@ Name:             Morning Weather Charts
 Type:             📊 Weather Charts (Open-Meteo)
 Location:         Naples
 Forecast days:    3
-Weather models:   ECMWF IFS 9km ✅  ICON EU 7km ✅  GFS Global ✅
+Weather models:   ECMWF IFS 0.25° ✅  DWD ICON ✅  NOAA GFS ✅
 Variables:        Temperature 2m ✅  Precipitation ✅  Wind Speed ✅  Wind Gusts ✅
 Cron:             0 7 * * *
 ```

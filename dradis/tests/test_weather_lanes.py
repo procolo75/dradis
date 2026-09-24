@@ -90,15 +90,15 @@ class LaneRenderingTest(unittest.TestCase):
     # ── cadence ──────────────────────────────────────────────────────────────
 
     def test_labels_every_three_hours(self):
-        texts = self._texts(_data(ecmwf_ifs04=list(range(1, 13))))
+        texts = self._texts(_data(ecmwf_ifs025=list(range(1, 13))))
         self.assertEqual(texts, ["1", "4", "7", "10"])
 
     def test_one_lane_per_model(self):
-        data = _data(ecmwf_ifs04=[10] * 6, gfs025=[20] * 6)
+        data = _data(ecmwf_ifs025=[10] * 6, gfs_seamless=[20] * 6)
         self._draw(data)
         self.assertEqual(
             [t.get_text() for t in self.ax.get_yticklabels()],
-            ["ECMWF IFS 9km", "GFS Global"],
+            ["ECMWF IFS 0.25°", "NOAA GFS"],
         )
 
     # ── aggregation ──────────────────────────────────────────────────────────
@@ -108,36 +108,36 @@ class LaneRenderingTest(unittest.TestCase):
         rain = [0.0] * 12
         rain[1] = 0.4
         rain[4] = 2.0
-        texts = self._texts(_data(ecmwf_ifs04=rain), decimals=1, aggregate="sum")
+        texts = self._texts(_data(ecmwf_ifs025=rain), decimals=1, aggregate="sum")
         self.assertEqual(texts, ["0.4", "2.0", "0", "0"])
 
     def test_gusts_take_the_window_peak(self):
-        texts = self._texts(_data(ecmwf_ifs04=[5, 38, 7, 9, 11, 10]), aggregate="max")
+        texts = self._texts(_data(ecmwf_ifs025=[5, 38, 7, 9, 11, 10]), aggregate="max")
         self.assertEqual(texts, ["38", "11"])
 
     def test_state_variables_are_sampled_not_aggregated(self):
         # Cloud cover summed over three hours would read 300.
-        texts = self._texts(_data(ecmwf_ifs04=[100] * 6))
+        texts = self._texts(_data(ecmwf_ifs025=[100] * 6))
         self.assertEqual(texts, ["100", "100"])
 
     def test_partial_window_is_aggregated_from_what_exists(self):
-        texts = self._texts(_data(ecmwf_ifs04=[1.0, 2.0, 3.0, 4.0]),
+        texts = self._texts(_data(ecmwf_ifs025=[1.0, 2.0, 3.0, 4.0]),
                             decimals=1, aggregate="sum")
         self.assertEqual(texts, ["6.0", "4.0"])
 
     def test_none_values_are_skipped(self):
-        texts = self._texts(_data(ecmwf_ifs04=[None, None, None, 5, 6, 7]))
+        texts = self._texts(_data(ecmwf_ifs025=[None, None, None, 5, 6, 7]))
         self.assertEqual(texts, ["5"])
 
     def test_a_window_of_only_none_draws_nothing(self):
-        texts = self._texts(_data(ecmwf_ifs04=[None, None, None, 1.0, 1.0, 1.0]),
+        texts = self._texts(_data(ecmwf_ifs025=[None, None, None, 1.0, 1.0, 1.0]),
                             decimals=1, aggregate="sum")
         self.assertEqual(texts, ["3.0"])
 
     # ── zeros ────────────────────────────────────────────────────────────────
 
     def test_zero_prints_bare_and_dimmed(self):
-        drawn = self._draw(_data(ecmwf_ifs04=[0.0, 0.0, 0.0, 1.5, 0.0, 0.0]),
+        drawn = self._draw(_data(ecmwf_ifs025=[0.0, 0.0, 0.0, 1.5, 0.0, 0.0]),
                            decimals=1, aggregate="sum")
         self.assertEqual([t.get_text() for t in drawn], ["0", "1.5"])
         self.assertEqual(drawn[0].get_color(), "#555555")
@@ -147,23 +147,23 @@ class LaneRenderingTest(unittest.TestCase):
 
     def test_model_without_the_variable_is_dropped(self):
         data = {
-            "ecmwf_ifs04": (_hours(6), {"v": [1] * 6}),
-            "icon_eu":     (_hours(6), {}),            # excludes this variable
-            "gfs025":      (_hours(6), {"v": [3] * 6}),
+            "ecmwf_ifs025":  (_hours(6), {"v": [1] * 6}),
+            "icon_seamless": (_hours(6), {}),            # excludes this variable
+            "gfs_seamless":  (_hours(6), {"v": [3] * 6}),
         }
         self._draw(data)
         self.assertEqual(
             [t.get_text() for t in self.ax.get_yticklabels()],
-            ["ECMWF IFS 9km", "GFS Global"],
+            ["ECMWF IFS 0.25°", "NOAA GFS"],
         )
 
     def test_colour_follows_the_model_not_the_lane(self):
         # GFS is third in the selection and keeps the third colour even though
         # the lane above it was dropped.
         data = {
-            "ecmwf_ifs04": (_hours(3), {"v": [1, 1, 1]}),
-            "icon_eu":     (_hours(3), {}),
-            "gfs025":      (_hours(3), {"v": [3, 3, 3]}),
+            "ecmwf_ifs025":  (_hours(3), {"v": [1, 1, 1]}),
+            "icon_seamless": (_hours(3), {}),
+            "gfs_seamless":  (_hours(3), {"v": [3, 3, 3]}),
         }
         drawn = self._draw(data)
         self.assertEqual([t.get_color() for t in drawn], [_COLORS[0], _COLORS[2]])
@@ -258,10 +258,10 @@ class AxisTest(unittest.TestCase):
         # after the last one. A chart starting at midday lost its final two labels.
         times = [(datetime(2026, 8, 23, 12, 0) + timedelta(hours=i)).replace(tzinfo=_ROME)
                  for i in range(72)]
-        model_data = {"ecmwf_ifs04": (times, {"v": list(range(72))})}
+        model_data = {"ecmwf_ifs025":  (times, {"v": list(range(72))})}
         fig, ax = plt.subplots()
         try:
-            _plot_value_lanes(ax, "v", ["ecmwf_ifs04"], model_data, _NOTE)
+            _plot_value_lanes(ax, "v", ["ecmwf_ifs025"], model_data, _NOTE)
             for t in times:                    # drawn after, as the chart does
                 if t.hour in (0, 12):
                     ax.axvline(t)

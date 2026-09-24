@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## [4.13.0] - 2026-09-24
+
+**Weather Charts now offers exactly the ten models meteo-benchmark verifies.** A chart only helps if you know which line to trust, and [meteo-benchmark](https://github.com/procolo75/meteo-benchmark) scores models against Italian METARs. Until now three of the six models DRADIS plotted were ones the benchmark never measured.
+
+- **Feat — the model list is the benchmark's list:** ECMWF IFS 0.25°, ECMWF IFS 9 km, ECMWF AIFS, DWD ICON seamless, ItaliaMeteo ICON-2I, NOAA GFS seamless, NOAA AIGFS, Météo-France seamless, UK Met Office seamless, GEM Canada seamless. The model key is now the Open-Meteo id itself.
+- **Removed — `icon_eu`, `gfs_global` and `meteofrance_arpege_europe`.** Their families stay, as the seamless models the benchmark scores. A seamless model blends the centre's regional and global runs.
+- **Fix — "ECMWF IFS 9km" was the 0.25° grid.** It requested `ecmwf_ifs025`, a grid of about 25 km. It is now labelled ECMWF IFS 0.25°, and the real 9 km run (`ecmwf_ifs`) is a separate model.
+- **Each model's missing variables were measured, not assumed.** Every model was queried over Naples for all 13 variables; the ones returned only as nulls are in its `exclude` set, and the model is left out of those charts. Notably ECMWF IFS 9 km has no 500 hPa or 850 hPa fields, and ECMWF AIFS has no gusts or precipitation probability. Precipitation probability is now available from six models instead of two.
+- **Ten colours, one per model.** The palette had seven, so with more models selected two would have shared a colour on the same chart. The seventh colour, a light blue indistinguishable from ECMWF's, is now white.
+
+**Saved selections are not migrated.** A monitor that still holds old keys ignores them, and if none are left it falls back to ECMWF IFS 0.25°. Re-tick the models in the panel.
+
+Verified end to end: all ten models selected together over Naples, all 13 charts rendered, each model present on exactly the charts it has data for.
+
 ## [4.12.0] - 2026-09-24
 
 **Weather Charts can now plot NOAA AIGFS, NOAA's machine-learning global model, next to the physical models.**
