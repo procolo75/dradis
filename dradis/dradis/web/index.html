@@ -4091,6 +4091,7 @@ function renderMonitorForm(monitor) {
             ["meteofrance_arpege_europe",  "Météo-France ARPEGE",  "European, ~10 km, 4-day"],
             ["gfs025",                    "GFS Global",            "NOAA global, 13 km, 16-day — all variables"],
             ["italia_meteo_arpae",        "ItaliaMeteo ARPAE",     "Italy, 2 km, 48h — ARPAE ICON 2i"],
+            ["ncep_aigfs",                "NOAA AIGFS",            "NOAA AI model, global, 0.25°, 16-day — no gusts, humidity, apparent temp, rain prob., UV"],
           ].map(([id, lbl, desc]) => `
             <label style="display:flex;align-items:flex-start;gap:6px;font-size:0.85rem;cursor:pointer">
               <input type="checkbox" class="wc-model" value="${id}"

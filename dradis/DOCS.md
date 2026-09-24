@@ -95,7 +95,7 @@ It is sent as its own message, ahead of the reply, and unlike the `🔢`/`🔧` 
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
 | `monitors/campania_alert.py` | Civil Protection alert monitor (Campania) — LLM-free, reads today's and tomorrow's bulletin from the Centro Funzionale REST API, reports the 8 alert zones on each, silent below the configured level |
-| `monitors/weather_chart.py` | Weather Charts monitor — LLM-free, fetches hourly Open-Meteo forecasts for up to 5 models, generates one PNG chart per variable and returns `list[bytes]` |
+| `monitors/weather_chart.py` | Weather Charts monitor — LLM-free, fetches hourly Open-Meteo forecasts for up to 6 models, generates one PNG chart per variable and returns `list[bytes]` |
 | `live_monitors/storm_front.py` | Storm front live monitor — LLM-free; feed lifecycle, persistence, quiet hours, message formatting; `StormFrontLiveMonitor` + `StormFrontMonitorManager` singleton |
 | `live_monitors/storm_front_core.py` | Pure decision core — ring/sector grid, per-sector front, CBDR verdict, event machine. No I/O, fully unit-tested |
 | `live_monitors/storm_front_chart.py` | Polar radar attached to ring messages (matplotlib, object API, rendered off the event loop) |
@@ -599,7 +599,7 @@ The Telegram message shows one line per time band (NIGHT 00–06, MORNING 06–1
 
 #### Weather Charts monitor
 
-Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 5 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM is used.
+Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 6 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM is used.
 
 **Supported models:**
 
@@ -610,19 +610,20 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 | Météo-France ARPEGE | `meteofrance_arpege_europe` | Europe | 4-day horizon |
 | GFS Global | `gfs_global` | Global | 16-day horizon; supports all variables |
 | ItaliaMeteo ARPAE | `italia_meteo_arpae_icon_2i` | Italy | 2 km, 48h horizon |
+| NOAA AIGFS | `ncep_aigfs025` | Global | NOAA machine-learning model, 0.25°, 16-day horizon; no wind gusts, humidity, apparent temperature, precipitation probability or UV index |
 
 **Supported variables:**
 
 | Variable | Unit | Chart type | Notes |
 |----------|------|-----------|-------|
 | Temperature 2m | °C | Line | All models |
-| Apparent Temperature | °C | Line | All models |
+| Apparent Temperature | °C | Line | All models except AIGFS |
 | Precipitation | mm | Numbers | One lane per model; 3-hour totals. Always sent (0 if no rain expected) |
 | Precipitation Probability | % | Numbers | One lane per model. ECMWF IFS + GFS only; always sent |
 | Wind Speed 10m | km/h | Numbers | One lane per model |
-| Wind Gusts 10m | km/h | Numbers | One lane per model; 3-hour peaks |
+| Wind Gusts 10m | km/h | Numbers | One lane per model (not AIGFS); 3-hour peaks |
 | Wind Direction 10m | ° | Arrows | One lane per model; arrows point downwind |
-| Humidity 2m | % | Line | All models |
+| Humidity 2m | % | Line | All models except AIGFS |
 | Sea Level Pressure | hPa | Line | All models |
 | Cloud Cover | % | Numbers | One lane per model. Always sent (0 if clear sky) |
 | UV Index | — | Bar | GFS only; suppressed if all-zero |

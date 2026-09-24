@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## [4.12.0] - 2026-09-24
+
+**Weather Charts can now plot NOAA AIGFS, NOAA's machine-learning global model, next to the physical models.**
+
+- **Feat — new model `NOAA AIGFS`** (Open-Meteo `ncep_aigfs025`): global, 0.25°, 16-day horizon. It is a checkbox in the Weather Charts panel like the other five.
+- **It does not carry every variable, and it is offered anyway**, the same way precipitation probability is offered although only two models have it. Measured on 24 September at Naples: Open-Meteo returns only nulls for wind gusts, humidity, apparent temperature, precipitation probability and UV index. Those five are in the model's `exclude` set, so they are never requested and AIGFS is left out of those charts instead of drawing an empty lane or a flat line. Temperature, precipitation, wind speed and direction, pressure, cloud cover, 500 hPa geopotential and 850 hPa temperature are all populated.
+- **The model id in the Open-Meteo docs page is wrong.** The GFS page lists `ncep_aigfs_025`, and the API rejects it (`Cannot initialize MultiDomains`). The id the API accepts is `ncep_aigfs025`.
+
+Verified end to end: all 13 variables were rendered for GFS + AIGFS over Naples, and AIGFS appears on exactly the charts it has data for.
+
 ## [4.11.1] - 2026-09-14
 
 **The seismic report failed only in the weeks that had something unusual to report.** Reported as *"Monitor Report Settimanale Terremoti Campi Flegrei — send error: Can't parse entities: unsupported start tag "" at byte offset 221"*, and only now and then.

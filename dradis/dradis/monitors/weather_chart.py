@@ -10,6 +10,8 @@ Supported models (weather_models config param):
   meteofrance_arpege_europe Météo-France ARPEGE  (no precip_prob, no uv_index)
   gfs025                   NOAA GFS global       (all variables)
   italia_meteo_arpae       ItaliaMeteo ARPAE 2i  (no precip_prob, no uv_index)
+  ncep_aigfs               NOAA AIGFS (AI model) (no gusts, humidity, apparent temp,
+                                                  precip_prob, uv_index)
 
 Supported variables (chart_variables config param):
   temperature_2m              Temperature 2 m
@@ -74,6 +76,15 @@ MODELS = {
         "url":     "https://api.open-meteo.com/v1/forecast",
         "param":   "italia_meteo_arpae_icon_2i",
         "exclude": {"precipitation_probability", "uv_index"},
+    },
+    # Machine-learning model: Open-Meteo returns only null for these, so they are
+    # not requested at all and the model is left out of those charts.
+    "ncep_aigfs": {
+        "label":   "NOAA AIGFS",
+        "url":     "https://api.open-meteo.com/v1/forecast",
+        "param":   "ncep_aigfs025",
+        "exclude": {"wind_gusts_10m", "relative_humidity_2m", "apparent_temperature",
+                    "precipitation_probability", "uv_index"},
     },
 }
 

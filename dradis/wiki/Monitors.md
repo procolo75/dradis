@@ -122,7 +122,7 @@ Cron:        0 * * * *
 
 ## 📊 Weather Charts Monitor
 
-Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 5 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM used.
+Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API key required) for up to 6 NWP models and sends **one PNG chart per selected variable** as separate Telegram photos. No LLM used.
 
 **Supported models:**
 
@@ -133,20 +133,21 @@ Fetches hourly forecasts from [Open-Meteo](https://open-meteo.com) (free, no API
 | Météo-France ARPEGE | Europe | 4 days | No precipitation probability, no UV index |
 | GFS Global | Global | 16 days | Supports all variables |
 | ItaliaMeteo ARPAE | Italy | 48h | ICON 2i, 2 km resolution; no precipitation probability, no UV index |
+| NOAA AIGFS | Global | 16 days | NOAA machine-learning model, 0.25°; no wind gusts, humidity, apparent temperature, precipitation probability or UV index |
 
 **Supported variables:**
 
 | Variable | Unit | Chart | Notes |
 |----------|------|-------|-------|
 | Temperature 2m | °C | line | All models |
-| Apparent Temperature | °C | line | All models |
+| Apparent Temperature | °C | line | All models except AIGFS |
 | Temperature 850 hPa | °C | line | All models |
 | Precipitation | mm | numbers | One lane per model, 3 h totals. Always sent, even at zero |
 | Precipitation Probability | % | numbers | One lane per model. ECMWF IFS + GFS only; always sent |
 | Wind Speed 10m | km/h | numbers | One lane per model |
-| Wind Gusts 10m | km/h | numbers | One lane per model, 3 h peaks |
+| Wind Gusts 10m | km/h | numbers | One lane per model (not AIGFS), 3 h peaks |
 | Wind Direction 10m | ° | arrows | One horizontal lane per model, an arrow every 3 h pointing downwind |
-| Humidity 2m | % | line | All models |
+| Humidity 2m | % | line | All models except AIGFS |
 | Sea Level Pressure | hPa | line | All models |
 | Cloud Cover | % | numbers | One lane per model. Always sent, even at zero |
 | UV Index | — | bars | GFS only; suppressed if all-zero |
