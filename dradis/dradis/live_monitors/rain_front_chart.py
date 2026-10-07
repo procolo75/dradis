@@ -180,8 +180,10 @@ def render_rain_radar(grid, origin, now, alert, *, radius_km, observe_radius_km,
 
     if alert is not None:
         rad = math.radians(alert.bearing_deg)
+        # A star, not an arrow or triangle: this marks the front's POSITION, and
+        # any shape that reads as a direction gets confused with the motion arrow.
         ax.plot([alert.front_km * math.sin(rad)], [alert.front_km * math.cos(rad)],
-                marker="v", ms=14, color=_FRONT, mec=_BG, mew=1.5, zorder=10)
+                marker="*", ms=20, color=_FRONT, mec=_BG, mew=1.2, zorder=10)
 
     ax.plot([0], [0], marker="o", ms=10, color=_HOME, mec=_BG, mew=1.5, zorder=11)
 

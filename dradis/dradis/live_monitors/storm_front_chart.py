@@ -126,14 +126,16 @@ def render_radar(strikes, origin, now, alert, *, radius_km, observe_radius_km,
                    s=[10 + 34 * p[2] ** 2 for p in points],
                    alpha=0.85, linewidths=0, zorder=4)
 
-    # The front itself. Secondary sectors are deliberately NOT marked: the
-    # strikes already show them, and extra triangles next to the dominant one
-    # read as competing fronts when they are usually the same cell spilling
-    # across a sector boundary.
+    # The front itself, marked with a star rather than a triangle or arrow: a
+    # shape that reads as a direction gets mistaken for the motion vector, and
+    # this marker only ever means position. Secondary sectors are deliberately
+    # NOT marked: the strikes already show them, and extra stars next to the
+    # dominant one read as competing fronts when they are usually the same cell
+    # spilling across a sector boundary.
     if alert is not None:
         ax.scatter([math.radians(alert.bearing_deg)], [alert.front_km],
-                   marker="v", s=220, color=_FRONT, edgecolors=_BG,
-                   linewidths=1.5, zorder=7)
+                   marker="*", s=320, color=_FRONT, edgecolors=_BG,
+                   linewidths=1.2, zorder=7)
 
     ax.scatter([0], [0], marker="o", s=110, color=_HOME,
                edgecolors=_BG, linewidths=1.5, zorder=8)

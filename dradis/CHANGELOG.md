@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## [4.13.1] - 2026-10-07
+
+**The front marker on the rain and lightning radar is now a star, not a triangle.** A triangle reads
+as an arrowhead, and the picture already carries a real direction arrow — the motion vector, in a
+different colour — for when one is measurable. Two shapes doing different jobs but looking alike
+made the position marker get read as a heading.
+
+- **Fix — `marker="v"` → `marker="*"`** in `rain_front_chart.py` and `storm_front_chart.py`, same red,
+  sized up slightly (a star reads smaller than a triangle at equal marker size/area).
+
 ## [4.13.0] - 2026-09-24
 
 **Weather Charts now offers exactly the ten models meteo-benchmark verifies.** A chart only helps if you know which line to trust, and [meteo-benchmark](https://github.com/procolo75/meteo-benchmark) scores models against Italian METARs. Until now three of the six models DRADIS plotted were ones the benchmark never measured.
