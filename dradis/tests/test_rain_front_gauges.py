@@ -161,7 +161,7 @@ class MessageIsUnchanged(unittest.TestCase):
     """
 
     def _lines(self, mon, alert, gauges, **kw):
-        text = mon._format(alert, kw.get("peak_mmh", 6.0), None, T0,
+        text = mon._format(alert, kw.get("peak_mmh", 6.0), T0,
                            kw.get("overhead_mmh"), gauges)
         return [ln for ln in text.split("\n") if not ln.startswith("🎚️")]
 
@@ -199,7 +199,7 @@ class MessageIsUnchanged(unittest.TestCase):
                            is_innermost=True)
         dry_next_door = view(reading(mmh=0.0, km=1.2))
         with _Enabled():
-            text = mon._format(alert, 6.0, None, T0, 5.0, dry_next_door)
+            text = mon._format(alert, 6.0, T0, 5.0, dry_next_door)
         self.assertIn("Pioggia su di te", text)
         self.assertIn("Sei sotto la pioggia", text)
         self.assertEqual(self._lines(mon, alert, dry_next_door,
@@ -305,7 +305,7 @@ class FailureIsolation(unittest.TestCase):
                 GS.observe = original
         self.assertIsNone(got)
         with _Enabled():
-            text = mon._format(ring_alert(), 6.0, None, T0, None, got)
+            text = mon._format(ring_alert(), 6.0, T0, None, got)
         self.assertIn("Pioggia", text)
         self.assertIn("🎚️", text)
 
@@ -334,7 +334,7 @@ class FailureIsolation(unittest.TestCase):
         mon = monitor()
         before = mon._tracker.to_dict()
         with _Enabled():
-            mon._format(ring_alert(), 6.0, None, T0, None, view(reading()))
+            mon._format(ring_alert(), 6.0, T0, None, view(reading()))
             mon._gauge_line(view(reading()))
             mon._gauge_fields(view(reading()))
         self.assertEqual(mon._tracker.to_dict(), before)

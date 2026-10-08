@@ -12,6 +12,7 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/live_monitors.json` | Live monitor configuration (managed from Web UI) |
 | `/data/storm_front_state.json` | Storm front event state — restored on startup (if under 30 min old) so a storm in progress does not re-announce rings |
 | `/data/rain_front_state.json` | Rain front event state — same rule, so rain in progress does not re-announce rings |
+| `/data/hail_front_state.json` | Hail front event state — restored on startup (if under 1 hour old) so a hail event in progress does not re-announce its level |
 | `/data/ha_monitors.json` | HA monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |

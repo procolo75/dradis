@@ -62,10 +62,10 @@ from . import gauges as gauge_source
 from .geo import direction_label, distance_km, offset_km
 from .position import ORIGIN_FALLBACK, position_manager
 from .position_core import MAX_PLAUSIBLE_KMH
-from .radar import PRODUCT_HAIL, PRODUCT_RAIN, radar_feed
+from .radar import PRODUCT_RAIN, radar_feed
 from .radar_core import (
     DRIZZLE_MMH, Encounter, build_rain_frame, coverage_fraction, cpa,
-    field_motion, intensity_label, peak_in_disc, rain_points, sample,
+    field_motion, intensity_label, peak_in_disc, rain_points,
     velocity_components,
 )
 from .snapshot import Snapshot, describe_origin, origin_line, preview_alert
@@ -100,9 +100,6 @@ MIN_MMH_CEILING = 50.0
 # monitor is not watching what it claims to watch. Announcing calm over a blind
 # spot is the failure this refuses.
 MIN_COVERAGE_FRACTION = 0.4
-
-# Hail probability, in percent, worth adding a line for.
-HAIL_ALERT_PERCENT = 30.0
 
 # Radius of the disc read to answer "is it raining WHERE I AM", as opposed to
 # "has the front reached my innermost ring", which is a question about geometry
@@ -235,7 +232,6 @@ class RainFrontLiveMonitor:
         self.longitude  = float(cfg.get("longitude", 0) or 0)
         self.position_id = (cfg.get("position_id") or "").strip()
         self.min_mmh    = _clamp_min_mmh(cfg.get("min_mmh"))
-        self.hail       = bool(cfg.get("hail", False))
         # Diagnostic only. It adds a line to the message and is consulted by
         # nothing — see `_gauge_line`.
         self.ground_truth = bool(cfg.get("ground_truth", True))
@@ -259,7 +255,6 @@ class RainFrontLiveMonitor:
 
         self._tracker = RainFrontTracker(self.radius_km, self.ring_count)
         self._poll_task: asyncio.Task | None = None
-        self._products = (PRODUCT_RAIN, PRODUCT_HAIL) if self.hail else (PRODUCT_RAIN,)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -267,26 +262,26 @@ class RainFrontLiveMonitor:
         if self._poll_task and not self._poll_task.done():
             return
         self._restore_state()
-        radar_feed.acquire(*self._products)
+        radar_feed.acquire(PRODUCT_RAIN)
         self._poll_task = asyncio.create_task(
             self._poll_loop(), name=f"rain_front_poll:{self.monitor_id}"
         )
         print(f"[RainFront] '{self.name}' started (radius={self.radius_km:.0f}km, "
               f"rings={self.ring_count}, edges={[round(e) for e in self.edges]}, "
-              f"min={self.min_mmh:g}mm/h, hail={self.hail}, "
+              f"min={self.min_mmh:g}mm/h, "
               f"origin={self.position_id or 'fixed'})")
 
     def stop(self) -> None:
         if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
-        radar_feed.release(*self._products)
+        radar_feed.release(PRODUCT_RAIN)
         print(f"[RainFront] '{self.name}' stopped")
 
     async def aclose(self) -> None:
         task = self._poll_task
         if task and not task.done():
             task.cancel()
-        radar_feed.release(*self._products)
+        radar_feed.release(PRODUCT_RAIN)
         if task:
             await asyncio.gather(task, return_exceptions=True)
 
@@ -485,7 +480,6 @@ class RainFrontLiveMonitor:
         if alert is not None and notify:
             peak = peak_in_disc(grid, effective, self.radius_km)
             overhead = peak_in_disc(grid, effective, OVERHEAD_RADIUS_KM)
-            hail = self._hail_at(effective, frame)
             # Read AFTER the verdict, deliberately. Nothing above this line has
             # seen a gauge, and moving the read earlier is the one edit that
             # could quietly give it a vote.
@@ -496,7 +490,7 @@ class RainFrontLiveMonitor:
                              gauges.nearest.name if gauges.nearest else "—")
             await self._dispatch(alert, frame, points, now,
                                  origin=origin, effective=effective,
-                                 peak_mmh=peak, hail_percent=hail,
+                                 peak_mmh=peak,
                                  overhead_mmh=overhead, gauges=gauges)
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
@@ -682,18 +676,6 @@ class RainFrontLiveMonitor:
                          -self._field.north_kmh * hours,
                          -self._field.east_kmh * hours)
 
-    def _hail_at(self, origin: tuple[float, float], frame) -> float | None:
-        if not self.hail or frame.dominant is None:
-            return None
-        grid = radar_feed.latest(PRODUCT_HAIL)
-        if grid is None:
-            return None
-        rad = math.radians(frame.dominant.bearing_deg)
-        spot = offset_km(origin[0], origin[1],
-                         frame.dominant.front_km * math.cos(rad),
-                         frame.dominant.front_km * math.sin(rad))
-        return sample(grid, spot[0], spot[1])
-
     def _go_blind(self, now: float, reason: str) -> None:
         """Perceive nothing until the missing input comes back.
 
@@ -736,7 +718,6 @@ class RainFrontLiveMonitor:
                         origin: tuple[float, float],
                         effective: tuple[float, float],
                         peak_mmh: float | None,
-                        hail_percent: float | None,
                         overhead_mmh: float | None = None,
                         gauges=None) -> None:
         if self._is_silenceable(alert) and self._in_quiet_hours():
@@ -745,7 +726,7 @@ class RainFrontLiveMonitor:
             self._save_state()
             return
 
-        text = self._format(alert, peak_mmh, hail_percent, now, overhead_mmh,
+        text = self._format(alert, peak_mmh, now, overhead_mmh,
                             gauges)
         photo = await self._render_chart(alert, frame, points, now, effective)
 
@@ -825,12 +806,11 @@ class RainFrontLiveMonitor:
     _RING_HEADS_EN = ["🌧️ <b>Rain within range", "🌧️ <b>Rain closing in",
                       "🟠 <b>Rain nearby", "🔵 <b>Rain overhead"]
 
-    def _format(self, alert, peak_mmh: float | None,
-                hail_percent: float | None, now: float,
+    def _format(self, alert, peak_mmh: float | None, now: float,
                 overhead_mmh: float | None = None, gauges=None) -> str:
         if isinstance(alert, ClearAlert):
             return self._fmt_clear(alert, now, gauges)
-        return self._fmt_ring(alert, peak_mmh, hail_percent, now, overhead_mmh,
+        return self._fmt_ring(alert, peak_mmh, now, overhead_mmh,
                               gauges)
 
     def _is_overhead(self, overhead_mmh: float | None) -> bool:
@@ -1031,8 +1011,7 @@ class RainFrontLiveMonitor:
         return (f"📡 Radar delle {clock} ({age} min fa)" if it
                 else f"📡 Radar at {clock} ({age} min ago)")
 
-    def _fmt_ring(self, alert: RingAlert, peak_mmh: float | None,
-                  hail_percent: float | None, now: float,
+    def _fmt_ring(self, alert: RingAlert, peak_mmh: float | None, now: float,
                   overhead_mmh: float | None = None, gauges=None) -> str:
         it = self.language == "it"
         heading = direction_label(alert.bearing_deg, self.language)
@@ -1060,9 +1039,6 @@ class RainFrontLiveMonitor:
                  "🌂 Drizzle-level echo only: at this intensity it often "
                  "evaporates before reaching the ground"))
         lines.append(self._gauge_line(gauges))
-        if hail_percent is not None and hail_percent >= HAIL_ALERT_PERCENT:
-            lines.append((f"🧊 Probabilità di grandine {hail_percent:.0f}%" if it
-                          else f"🧊 Hail probability {hail_percent:.0f}%"))
         lines.append(
             (f"🎯 Anello {alert.ring}/{alert.ring_count} · entro "
              f"{alert.ring_edge_km:.0f} km") if it else
@@ -1166,7 +1142,7 @@ def _clamp_min_mmh(value) -> float:
 _FINGERPRINT_FIELDS = (
     "name", "location", "latitude", "longitude", "radius_km", "ring_count",
     "language", "quiet_start", "quiet_end", "chart", "telegram_bot_id",
-    "position_id", "min_mmh", "hail", "ground_truth",
+    "position_id", "min_mmh", "ground_truth",
 )
 
 
@@ -1250,7 +1226,7 @@ rain_front_monitor_manager = RainFrontMonitorManager()
 
 
 __all__ = [
-    "STATE_PATH", "DEFAULT_MIN_MMH", "MIN_COVERAGE_FRACTION", "HAIL_ALERT_PERCENT",
+    "STATE_PATH", "DEFAULT_MIN_MMH", "MIN_COVERAGE_FRACTION",
     "RainFrontTracker", "RainFrontLiveMonitor", "RainFrontMonitorManager",
     "rain_front_monitor_manager", "intensity_label",
 ]

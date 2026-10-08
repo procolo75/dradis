@@ -29,6 +29,7 @@ from monitors.campania_alert import run_campania_alert_monitor
 from backup.gdrive           import run_backup_monitor
 from live_monitors.storm_front import storm_front_monitor_manager
 from live_monitors.rain_front import rain_front_monitor_manager
+from live_monitors.hail_front import hail_front_monitor_manager
 from live_monitors.position   import position_manager
 from live_monitors           import gauges as gauge_source
 from live_monitors.ha        import ha_monitor_manager
@@ -425,6 +426,8 @@ def reload_live_monitors():
           configs, _make_send, tz_name)
     _step("rain front monitors", rain_front_monitor_manager.reload,
           configs, _make_send, tz_name)
+    _step("hail front monitors", hail_front_monitor_manager.reload,
+          configs, _make_send, tz_name)
     _step("seismic monitors", seismic_monitor_manager.reload,
           configs, _make_send, tz_name)
     _step("football monitors", football_monitor_manager.reload,
@@ -439,6 +442,8 @@ def _live_status_dispatcher(monitor_id: str) -> str:
         return football_monitor_manager.status(monitor_id)
     if cfg and cfg.get("type") == "rain_front":
         return rain_front_monitor_manager.status(monitor_id)
+    if cfg and cfg.get("type") == "hail_front":
+        return hail_front_monitor_manager.status(monitor_id)
     return storm_front_monitor_manager.status(monitor_id)
 
 

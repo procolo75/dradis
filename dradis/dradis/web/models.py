@@ -89,9 +89,11 @@ class LiveMonitorPayload(BaseModel):
     # message. A discharge is a discharge, but rain is a continuum, so whether
     # drizzle deserves a notification is a preference rather than a constant.
     min_mmh:         float     = 1.0
-    # Rain front only — also fetch the probability-of-hail product and mention it
-    # when the front carries a real chance of hail.
-    hail:            bool      = False
+    # Hail front only — probability of hail, in percent, at which the monitor
+    # speaks (watch) and at which it escalates (severe). A cell within 10 km of
+    # the observer escalates at the watch value too.
+    watch_percent:   float     = 40.0
+    severe_percent:  float     = 70.0
     # Rain front only — print what the nearby MeteoHub rain gauges actually
     # caught, beside the radar's estimate. DIAGNOSTIC: it adds one line and
     # changes no decision, not the ring, not the heading, not the all-clear.

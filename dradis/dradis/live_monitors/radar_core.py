@@ -299,6 +299,34 @@ def peak_in_disc(grid: RadarGrid, origin: tuple[float, float],
     return float(window[usable].max())
 
 
+def peak_with_location(grid: RadarGrid, origin: tuple[float, float],
+                       radius_km: float) -> tuple[float, float, float] | None:
+    """Strongest reading within the disc and where it is, as (value, lat, lon).
+
+    The hail monitor's one observable. Among equally strong pixels the one
+    nearest the observer wins: a probability map saturates in blocks, and "the
+    peak is 12 km away" is a statement about the closest place it was seen, not
+    about whichever pixel `argmax` happened to meet first.
+
+    None where nothing is measured, never 0 — see `sample`.
+    """
+    c0, c1, r0, r1 = _window_bounds(grid.gt, *origin, radius_km)
+    if c0 >= c1 or r0 >= r1:
+        return None
+    window = grid.data[r0:r1, c0:c1]
+    rows, cols = np.mgrid[r0:r1, c0:c1]
+    lats, lons = pixel_to_latlon(grid.gt, cols + 0.5, rows + 0.5)
+    dist = _haversine_km(origin[0], origin[1], lats, lons)
+    usable = (window > NODATA_THRESHOLD) & (dist <= radius_km)
+    if not usable.any():
+        return None
+    top = float(window[usable].max())
+    at_top = usable & (window == top)
+    nearest = np.where(at_top, dist, np.inf).argmin()
+    idx = np.unravel_index(nearest, window.shape)
+    return top, float(lats[idx]), float(lons[idx])
+
+
 def coverage_fraction(grid: RadarGrid, origin: tuple[float, float],
                       radius_km: float) -> float:
     """Share of the disc the radar network can actually see, 0..1.
@@ -707,7 +735,8 @@ __all__ = [
     "NODATA_THRESHOLD", "R_M",
     "RadarGridError", "GeoTransform", "RadarGrid", "parse_geotransform",
     "latlon_to_pixel", "pixel_to_latlon",
-    "sample", "rain_points", "peak_in_disc", "coverage_fraction",
+    "sample", "rain_points", "peak_in_disc", "peak_with_location",
+    "coverage_fraction",
     "FRONT_RANK", "MIN_PIXELS_SECTOR", "build_rain_frame",
     "MOTION_BOX_KM", "MOTION_MIN_DT_SEC", "MOTION_MAX_DT_SEC", "MOTION_MAX_KMH",
     "MOTION_MIN_PIXELS",

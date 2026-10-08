@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## [4.14.0] - 2026-10-08
+
+**Hail now has its own monitor, and it alerts on hail itself.** The rain front's *Also mention hail* option
+could not be relied on to warn you: it only appended a line to a rain alert that had already fired,
+read the probability at a single point (the dominant front), read it once, and said nothing if the
+hail image had not arrived. Hail needs no front and no direction — the radar's `POH` product already is
+a probability map — so it is now judged directly.
+
+- **Feat — 🧊 Hail front monitor** (`hail_front`). Watches the maximum probability of hail within the
+  radius and where it sits (distance and compass direction of the most likely spot). *Watch* at 40%
+  (configurable: 25 / 40 / 55), *serious* at 70% (60 / 70 / 85) or when a cell within 10 km reaches the
+  watch value. At most one message per level plus one all-clear per event; levels only escalate, so a
+  flickering cell cannot repeat a message. The all-clear needs three consecutive new radar images
+  below the watch value (counted by image, not by poll).
+- **Quiet hours silence the watch and the all-clear, never a serious alert.**
+- **Blindness is not calm:** no recent image, a disc outside the radar network, or no usable position
+  freezes the monitor with no alerts and no all-clear; an unmeasured disc never counts towards clearing.
+- **Removed — *Also mention hail* from the rain front.** The setting, the extra `POH` download and the
+  `🧊` line are gone from the rain monitor. **A rain monitor that had it ticked no longer mentions hail:
+  create a 🧊 Hail monitor.** A saved `hail` value is ignored.
+- New: `radar_core.peak_with_location` (strongest reading in a disc and where it is; ties go to the
+  nearest pixel), `/data/hail_front_state.json`.
+
 ## [4.13.1] - 2026-10-07
 
 **The front marker on the rain and lightning radar is now a star, not a triangle.** A triangle reads

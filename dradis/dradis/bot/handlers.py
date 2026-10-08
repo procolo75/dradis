@@ -29,6 +29,7 @@ from live_monitors.gauges_core import READOUT_PRODUCTS
 from live_monitors.ha import ha_monitor_manager
 from live_monitors.position import position_manager
 from live_monitors.rain_front import rain_front_monitor_manager
+from live_monitors.hail_front import hail_front_monitor_manager
 # `_tz` rather than a local ZoneInfo: its docstring records that every message
 # in the codebase has to resolve the timezone through this one function, because
 # the container's clock is UTC and a second implementation drifts.
@@ -262,8 +263,10 @@ def _live_badge(status: str, mtype: str, monitor_id: str, it: bool) -> str:
                 "🟢 Running — feed connected, no lightning within range for 15 min")
 
     if status == "blind":
-        if mtype == "rain_front":
-            monitor = rain_front_monitor_manager.get(monitor_id)
+        if mtype in ("rain_front", "hail_front"):
+            manager = (rain_front_monitor_manager if mtype == "rain_front"
+                       else hail_front_monitor_manager)
+            monitor = manager.get(monitor_id)
             why = monitor.blind_reason_label("it" if it else "en") if monitor else ""
         else:
             why = ("non sa da dove misurare" if it
@@ -275,7 +278,7 @@ def _live_badge(status: str, mtype: str, monitor_id: str, it: bool) -> str:
         return f"{head}: {why}{tail}" if why else f"{head}{tail}"
 
     if status == "degraded":
-        if mtype == "rain_front":
+        if mtype in ("rain_front", "hail_front"):
             return ("🟠 Degradato — il radar non risponde o l'ultima immagine è "
                     "troppo vecchia" if it else
                     "🟠 Degraded — the radar is not answering, or the last image "
@@ -451,6 +454,21 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
                f"Finestre: {windows}\n"
                f"Status: {badge}\n"
                f"Polling: 300s")
+    elif mtype == "hail_front":
+        it     = monitor.get("language", "it") == "it"
+        origin = describe_origin_config(monitor, time.time())
+        lines  = [f"🧊 <b>{html.escape(monitor['name'])}</b>"]
+        lines += format_origin(origin, it, tz_name=_tz_name())
+        lines += [
+            f"Status: {badge}",
+            f"Raggio: {monitor.get('radius_km', '?')} km — "
+            f"soglie {monitor.get('watch_percent', 40):g}% / "
+            f"{monitor.get('severe_percent', 70):g}%",
+            "Al massimo 2 avvisi (allerta, grave) + 1 cessato per grandinata"
+            if it else
+            "At most 2 alerts (watch, severe) + 1 all-clear per hail event",
+        ]
+        msg = "\n".join(lines)
     else:
         # The `location` field is NOT where a monitor following a position looks
         # — it is only its fallback, and this card printed it unconditionally:

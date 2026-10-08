@@ -4408,7 +4408,7 @@ function renderSidebarLiveMonitors() {
     li.dataset.panel         = "live-monitor";
     li.dataset.liveMonitorId = m.id;
     li.innerHTML = `<span class="nav-dot ${m.enabled ? "on" : ""}"></span>
-                    <span class="nav-icon">${m.type === "seismic" ? "🌍" : m.type === "football_betting" ? "⚽" : "🌩️"}</span>
+                    <span class="nav-icon">${m.type === "seismic" ? "🌍" : m.type === "football_betting" ? "⚽" : m.type === "hail_front" ? "🧊" : "🌩️"}</span>
                     <span class="nav-label">${m.name}</span>`;
     li.addEventListener("click", () => {
       selectedLiveMonitorId = m.id;
@@ -4432,6 +4432,7 @@ function renderLiveMonitorForm(monitor) {
   const _TYPE_DESCS_LIVE = {
     storm_front:      "Watches real-time lightning from Blitzortung and tells you whether a storm is heading at you or going past. It speaks a few times as the storm closes in, then stops — one storm can never produce more than a handful of messages. Each alert comes with a radar picture. No cron, no LLM, no token cost.",
     rain_front:       "Watches the national weather radar (Protezione Civile, free, no API key) and tells you when rain will reach you — and, when the radar can measure which way it is drifting, in how many minutes and by how much it will miss. Italy only. Same one-message-per-step guarantee as the storm front. Each alert carries the actual radar picture. No cron, no LLM, no token cost.",
+    hail_front:       "Watches the national radar's probability-of-hail product (Protezione Civile, free, no API key) and warns you when hail becomes likely near you — with the percentage and where the most likely spot is. It needs no direction of travel and no rain threshold: hail is judged directly on the radar's own probability. One alert when it becomes a risk, one if it gets serious, one all-clear. Italy only. No cron, no LLM, no token cost.",
     seismic:          "RSS poller on INGV GOSSIP (Campi Flegrei, Vesuvio, Ischia, Golfo di Napoli). Polls every 60s, tracks events in memory. Alerts on new events and state promotions (Automatico → Rivisto). No LLM, no cron, no disk DB.",
     football_betting: "Polls football-betting-odds1.p.rapidapi.com every 5 min. Alerts when a losing team's next-goal odds are lower than the winning team's AND below that window's maximum odds, inside two configurable 2nd-half minute windows (1-goal difference). Provider fallback: provider1→4. No LLM, no cron.",
   };
@@ -4472,6 +4473,7 @@ function renderLiveMonitorForm(monitor) {
         <select id="lm-type">
           <option value="storm_front"      ${monitor.type === "storm_front"      ? "selected" : ""}>🌩️ Storm front / CBDR (Blitzortung MQTT)</option>
           <option value="rain_front"       ${monitor.type === "rain_front"       ? "selected" : ""}>🌧️ Rain front (Protezione Civile radar)</option>
+          <option value="hail_front"       ${monitor.type === "hail_front"       ? "selected" : ""}>🧊 Hail (Protezione Civile radar)</option>
           <option value="seismic"          ${monitor.type === "seismic"          ? "selected" : ""}>🌍 Seismic alert (INGV GOSSIP RSS)</option>
           <option value="football_betting" ${monitor.type === "football_betting" ? "selected" : ""}>⚽ Football Betting (RapidAPI)</option>
         </select>
@@ -4549,14 +4551,6 @@ function renderLiveMonitorForm(monitor) {
 
         <div class="form-group" style="margin-top:12px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="lm-hail" ${monitor.hail ? "checked" : ""}>
-            Also mention hail
-          </label>
-          <small style="color:var(--text-muted);margin-top:4px;display:block">Fetches a second radar product — the probability of hail — and adds a line when the approaching front actually carries a risk of it. One extra download every 5 minutes.</small>
-        </div>
-
-        <div class="form-group" style="margin-top:12px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
             <input type="checkbox" id="lm-ground-truth" ${monitor.ground_truth === false ? "" : "checked"}>
             Add what the rain gauges measured
           </label>
@@ -4580,6 +4574,26 @@ function renderLiveMonitorForm(monitor) {
         <div class="form-group" style="margin-top:12px">
           <button class="btn-icon" id="btn-test-radar">📡 Test radar coverage</button>
           <small id="lm-radar-test" style="color:var(--text-muted);margin-top:6px;display:block">The radar network does not cover every corner of Italy. This checks the service is reachable and that the disc you asked to watch is actually visible from it.</small>
+        </div>
+      </div>
+
+      <div class="form-group" id="lm-hail-block">
+        <label for="lm-watch-percent">Tell me when hail is likely at</label>
+        <select id="lm-watch-percent" style="width:300px">
+          <option value="25" ${String(monitor.watch_percent) === "25" ? "selected" : ""}>25% — early, more false alarms</option>
+          <option value="40" ${String(monitor.watch_percent ?? 40) === "40" ? "selected" : ""}>40% — recommended</option>
+          <option value="55" ${String(monitor.watch_percent) === "55" ? "selected" : ""}>55% — only when it looks real</option>
+        </select>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">The radar gives a probability, not a certainty. Below about 40% most cells never produce hail at the ground.</small>
+
+        <div class="form-group" style="margin-top:12px">
+          <label for="lm-severe-percent">Escalate to a serious alert at</label>
+          <select id="lm-severe-percent" style="width:300px">
+            <option value="60" ${String(monitor.severe_percent) === "60" ? "selected" : ""}>60%</option>
+            <option value="70" ${String(monitor.severe_percent ?? 70) === "70" ? "selected" : ""}>70% — recommended</option>
+            <option value="85" ${String(monitor.severe_percent) === "85" ? "selected" : ""}>85%</option>
+          </select>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">A cell within <b>10 km</b> of you is treated as serious at the first threshold too. The serious alert is never silenced by quiet hours. The monitor sends at most <b>one message per level</b> plus one all-clear, however the cell flickers.</small>
         </div>
       </div>
 
@@ -4813,21 +4827,23 @@ function renderLiveMonitorForm(monitor) {
     const isSeismic  = type === "seismic";
     const isFootball = type === "football_betting";
     const isRain     = type === "rain_front";
+    const isHail     = type === "hail_front";
     // Storm front and rain front share the whole ring apparatus — origin, radius,
     // ladder, chart — and differ only in what they watch and what they say.
     const isRing     = !isSeismic && !isFootball;
-    const isStorm    = isRing && !isRain;
+    const isStorm    = isRing && !isRain && !isHail;
     document.getElementById("lm-type-desc").textContent = _TYPE_DESCS_LIVE[type] || "";
     document.getElementById("lm-location-block").style.display   = isRing ? "" : "none";
     document.getElementById("lm-position-block").style.display   = isRing ? "" : "none";
     if (isRing) _lmApplyOrigin();
     document.getElementById("lm-radius-block").style.display     = isRing ? "" : "none";
-    document.getElementById("lm-rings-block").style.display      = isRing ? "" : "none";
+    document.getElementById("lm-rings-block").style.display      = isRing && !isHail ? "" : "none";
+    document.getElementById("lm-hail-block").style.display       = isHail ? "" : "none";
     document.getElementById("lm-stormfront-hint").style.display  = isStorm ? "" : "none";
     document.getElementById("lm-rainfront-hint").style.display   = isRain ? "" : "none";
     document.getElementById("lm-rain-block").style.display       = isRain ? "" : "none";
     if (isRain) _applyGroundTruthWarning();
-    document.getElementById("lm-chart-block").style.display      = isRing ? "" : "none";
+    document.getElementById("lm-chart-block").style.display      = isRing && !isHail ? "" : "none";
     if (isRing) {
       // The payload is shared with the other live types and still defaults
       // radius_km to 100, which is far outside this algorithm's range.
@@ -4838,6 +4854,10 @@ function renderLiveMonitorForm(monitor) {
       // a rain monitor's user about "updates per storm" and "strikes coloured by
       // age" describes a feature they did not choose.
       _lmRingCopy(isRain);
+      if (isHail) {
+        document.getElementById("lm-radius-desc").innerHTML =
+          "How far from you a hail cell is taken into account. <b>30 km</b> is a good default: hail cells are small and move fast, so a wider disc mostly adds alerts for cells that miss you. The message always says how far away the most likely spot is.";
+      }
     }
     document.getElementById("lm-areas-block").style.display       = isSeismic   ? "" : "none";
     document.getElementById("lm-quiet-block").style.display       = "";
@@ -4854,7 +4874,9 @@ function renderLiveMonitorForm(monitor) {
     } else if (isRing) {
       const what = isRain ? "rain" : "storm";
       quietLabel.textContent = "🔕 Quiet hours";
-      quietDesc.textContent  = `Leave empty to disable. Silences the outer rings and the all-clear; ${what} already well inside the radius always gets through.`;
+      quietDesc.textContent  = isHail
+        ? "Leave empty to disable. Silences the first-level alert and the all-clear; a serious hail alert always gets through."
+        : `Leave empty to disable. Silences the outer rings and the all-clear; ${what} already well inside the radius always gets through.`;
     } else {
       quietLabel.textContent = "🔕 Quiet hours";
       quietDesc.textContent  = "Leave empty to disable. Events that happen during the quiet window are delivered together when it ends.";
@@ -5065,7 +5087,8 @@ function renderLiveMonitorForm(monitor) {
       ring_count:      parseInt(document.getElementById("lm-ring-count")?.value, 10) || 4,
       chart:           document.getElementById("lm-chart")?.checked ?? true,
       min_mmh:         parseFloat(document.getElementById("lm-min-mmh")?.value) || 1.0,
-      hail:            document.getElementById("lm-hail")?.checked ?? false,
+      watch_percent:   parseFloat(document.getElementById("lm-watch-percent")?.value) || 40,
+      severe_percent:  parseFloat(document.getElementById("lm-severe-percent")?.value) || 70,
       ground_truth:    document.getElementById("lm-ground-truth")?.checked ?? true,
       position_id:     document.getElementById("lm-position-id")?.value || "",
       telegram_bot_id: document.getElementById("lm-bot-id").value,
@@ -5112,7 +5135,8 @@ function renderLiveMonitorForm(monitor) {
         ring_count:      src.ring_count ?? 4,
         chart:           src.chart ?? true,
         min_mmh:         src.min_mmh ?? 1.0,
-        hail:            src.hail ?? false,
+        watch_percent:   src.watch_percent ?? 40,
+        severe_percent:  src.severe_percent ?? 70,
         position_id:     src.position_id || "",
         quiet_start:     src.quiet_start || "",
         quiet_end:       src.quiet_end   || "",

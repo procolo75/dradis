@@ -10,6 +10,7 @@ Click `+` in the **Live Monitors** sidebar header. Select a **Type** to reveal t
 |------|-------------|
 | 🌩️ Storm front / CBDR | Persistent MQTT listener on Blitzortung; strikes binned into rings × sectors, each sector's leading edge drives a bounded ladder of alerts; says whether the storm will hit you or pass by |
 | 🌧️ Rain front | Polls the Protezione Civile national radar composite (free, no API key, Italy only); same ring ladder, but the rain's own drift is measured so the alert can say in how many minutes it reaches you and by how much it misses |
+| 🧊 Hail front | Reads the radar's probability-of-hail product; warns when hail becomes likely near you, with the percentage and where the most likely spot is — no direction of travel needed |
 | 🌍 Seismic live | Polls INGV GOSSIP every 60 s; alerts on new events and state promotions |
 | ⚽ Football Betting | Polls RapidAPI every 5 min (clock-aligned); alerts on statistically favourable live-match conditions |
 
@@ -265,7 +266,6 @@ And when it is over:
 | **Alert radius** | 10–60 km. At 30 km you get roughly half an hour of warning for a front moving at 60 km/h. |
 | **Updates per rain event** | Hard cap of 2, 3 or 4 messages per event. Not a sensitivity setting — it changes how often you are told, never what the monitor decides. |
 | **Rain worth telling you about** | The minimum intensity that counts. See the table below. |
-| **Also mention hail** | Adds a line when the approaching rain carries a real risk of hail. |
 | **Radar picture** | Attaches the radar image to each message. |
 | **Add what the rain gauges measured** | Adds one line naming the nearest ground station that is actually catching rain. **Diagnostic only** — see below. Needs MeteoHub switched on under Settings; if it is off, the form tells you so in red and links you there. |
 
@@ -297,7 +297,6 @@ The [Dipartimento della Protezione Civile radar platform](https://dpc-radar.read
 | What is downloaded | `SRI`, rainfall intensity at ground level, directly in mm/h |
 | Size | One 1200 × 1400 image covering the whole country, 1 km per pixel |
 | How often | Every 5 minutes |
-| Also, if hail is enabled | `POH`, the probability of hail |
 
 Because one image covers all of Italy, a second monitor watching a different town **costs nothing extra**: the download is shared between every rain front monitor, and stops entirely when the last one is disabled.
 
@@ -471,8 +470,41 @@ One thing could **not** be inherited: how the *nearest edge* of the weather is f
 | Alert radius | 30 km |
 | Updates per rain event | 4 |
 | Rain worth telling you about | 1 mm/h |
-| Also mention hail | ❌ |
 | Radar picture | ✅ |
+
+---
+
+## Hail front
+
+Watches the radar's **probability-of-hail** product and warns you when hail becomes likely near you.
+
+It is a monitor of its own, not a mode of the rain front, and the reason is the question each one asks. The rain front asks *"where is the rain going, and will we meet"*, so it needs a front, a direction and a ring ladder — and on scattered summer convection the drift is exactly what the radar cannot measure. Hail asks *"how likely is it within R km of me, and where is the most likely spot"*, which is one reading of one image. **No direction of travel is needed, and no rain threshold has to be cleared first.**
+
+### What it sends
+
+| Level | When | Message |
+|-------|------|---------|
+| 🧊 **Watch** | The highest probability within the radius reaches the *watch* value (default **40%**) | `Rischio grandine`, with the percentage and where the most likely spot is: distance and compass direction |
+| 🚨 **Serious** | The highest probability reaches the *serious* value (default **70%**), **or** a cell within **10 km** reaches the watch value | `Grandine probabile`, plus a reminder to shelter vehicles and exposed items |
+| ✅ **All-clear** | Three consecutive new radar images stay below the watch value | `Rischio grandine cessato`, with the event's peak |
+
+**Bounded by construction.** One hail event sends at most one message per level — so at most two — plus one all-clear, whatever the cell does. Levels only ever escalate within an event, so a cell flickering around a threshold cannot repeat a message. The all-clear counts *radar images*, not polls: the radar publishes every 5 minutes and polling every minute would otherwise "confirm" the same picture five times.
+
+**Blindness is not calm.** With no recent image, a disc outside the radar network, or no usable position, the monitor goes 🟠 Blind: no alerts, and no all-clear either.
+
+### Settings
+
+| Field | Description |
+|-------|-------------|
+| Where to watch / Location | Identical to the rain front: a named position it follows, or fixed coordinates. |
+| Alert radius | 10–60 km (default 30). Hail cells are small and move fast, so a wider disc mostly adds alerts for cells that miss you. |
+| Tell me when hail is likely at | The watch value: 25%, **40% (recommended)** or 55%. The radar gives a probability, not a certainty. |
+| Escalate to a serious alert at | 60%, **70% (recommended)** or 85%. |
+| Quiet hours | Silences the watch and the all-clear. **A serious alert always gets through.** |
+
+The data is the `POH` product of the Protezione Civile radar composite (free, no API key, Italy only), shared with the rain front's feed. Every message states the age of the picture.
+
+**Moved from the rain front.** Until v4.14.0 the rain front had an *Also mention hail* option. It only added a line to a rain alert, read the probability at a single point and never alerted on its own, so it was removed. A rain monitor that had it ticked no longer mentions hail: create a 🧊 Hail monitor.
 
 ---
 

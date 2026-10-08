@@ -348,10 +348,6 @@ class ConfigTest(unittest.TestCase):
         """LiveMonitorPayload defaults radius_km to 100, far outside the ladder."""
         self.assertLessEqual(monitor(radius_km=100).radius_km, 60.0)
 
-    def test_hail_adds_a_product_to_the_feed_request(self):
-        self.assertEqual(monitor().  _products, ("SRI",))
-        self.assertEqual(monitor(hail=True)._products, ("SRI", "POH"))
-
     def test_intensity_labels_cover_the_scale(self):
         self.assertEqual(RF.intensity_label(0.2, "it"), "pioviggine")
         self.assertEqual(RF.intensity_label(1.0, "it"), "debole")
@@ -439,7 +435,7 @@ class MessageTest(unittest.TestCase):
         mon._grid_t = T0
         mon._field = FieldMotion(40.0, 90.0, 8.0, 300.0)
         mon._fix = Fix(moving=True, speed_kmh=95.0, course_deg=45.0)
-        text = mon._format(ring_alert(), 8.4, None, T0 + 600.0)
+        text = mon._format(ring_alert(), 8.4, T0 + 600.0)
         self.assertIn("Casa", text)
         self.assertIn("12 km", text)
         self.assertIn("8.4 mm/h", text)
@@ -455,7 +451,7 @@ class MessageTest(unittest.TestCase):
         mon = monitor()
         mon._grid_t = T0
         text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=3.0,
-                                      is_innermost=True), 4.0, None, T0,
+                                      is_innermost=True), 4.0, T0,
                            0.0)                        # nothing over the observer
         self.assertNotIn("su di te", text)
         self.assertNotIn("Sei sotto la pioggia", text)
@@ -465,7 +461,7 @@ class MessageTest(unittest.TestCase):
         mon = monitor()
         mon._grid_t = T0
         text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=1.0,
-                                      is_innermost=True), 4.0, None, T0,
+                                      is_innermost=True), 4.0, T0,
                            3.2)                        # measured where you are
         self.assertIn("Pioggia su di te", text)
         self.assertIn("Sei sotto la pioggia", text)
@@ -476,7 +472,7 @@ class MessageTest(unittest.TestCase):
         mon = monitor()
         mon._grid_t = T0
         text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=3.0,
-                                      is_innermost=True), 4.0, None, T0, None)
+                                      is_innermost=True), 4.0, T0, None)
         self.assertNotIn("Sei sotto la pioggia", text)
 
     def test_overhead_below_the_monitors_own_threshold_does_not_count(self):
@@ -485,24 +481,16 @@ class MessageTest(unittest.TestCase):
         mon = monitor(min_mmh=2.0)
         mon._grid_t = T0
         text = mon._format(ring_alert(ring=4, ring_edge_km=6.0, front_km=1.0,
-                                      is_innermost=True), 4.0, None, T0, 1.5)
+                                      is_innermost=True), 4.0, T0, 1.5)
         self.assertNotIn("Sei sotto la pioggia", text)
 
     def test_drizzle_says_it_may_never_reach_the_ground(self):
         mon = monitor()
         mon._grid_t = T0
-        drizzle = mon._format(ring_alert(), 0.4, None, T0)
-        heavier = mon._format(ring_alert(), 4.0, None, T0)
+        drizzle = mon._format(ring_alert(), 0.4, T0)
+        heavier = mon._format(ring_alert(), 4.0, T0)
         self.assertIn("evaporare", drizzle)
         self.assertNotIn("evaporare", heavier)
-
-    def test_hail_appears_only_above_the_threshold(self):
-        mon = monitor()
-        mon._grid_t = T0
-        below = mon._format(ring_alert(), 8.0, RF.HAIL_ALERT_PERCENT - 1, T0)
-        above = mon._format(ring_alert(), 8.0, RF.HAIL_ALERT_PERCENT + 1, T0)
-        self.assertNotIn("grandine", below)
-        self.assertIn("grandine", above)
 
     def test_the_all_clear_reports_the_closest_approach(self):
         mon = monitor()
@@ -510,14 +498,14 @@ class MessageTest(unittest.TestCase):
         text = mon._format(ClearAlert(ring_count=4, radius_km=30.0, closest_km=7.0,
                                       closest_ring=3, closest_at=T0,
                                       quiet_sec=600.0, event_duration_sec=3600.0),
-                           None, None, T0)
+                           None, T0)
         self.assertIn("Pioggia cessata", text)
         self.assertIn("7 km", text)
 
     def test_english_is_a_complete_alternative(self):
         mon = monitor(language="en")
         mon._grid_t = T0
-        text = mon._format(ring_alert(), 8.4, None, T0)
+        text = mon._format(ring_alert(), 8.4, T0)
         self.assertIn("Rain", text)
         self.assertIn("Ring 2/4", text)
         self.assertNotIn("Anello", text)
@@ -550,7 +538,7 @@ class DeliveryTest(unittest.IsolatedAsyncioTestCase):
     async def _dispatch(self, mon, ring: int = 2):
         await mon._dispatch(ring_alert(ring=ring), None, [], T0,
                             origin=ORIGIN, effective=ORIGIN,
-                            peak_mmh=2.0, hail_percent=None)
+                            peak_mmh=2.0)
 
     async def test_a_confirmed_send_commits(self):
         async def confirmed(text, photo=None):
@@ -727,7 +715,7 @@ class OriginChainTest(unittest.TestCase):
     def test_the_line_reaches_a_ring_message(self):
         mon, _, _ = self._with(self.FakeManager((Fix(age_sec=120.0), RF_FRESH)))
         mon._grid_t = T0
-        text = mon._format(ring_alert(), 8.4, None, T0 + 600.0)
+        text = mon._format(ring_alert(), 8.4, T0 + 600.0)
         self.assertIn("📌", text)
 
 

@@ -785,7 +785,8 @@ Click `+` in the **Live Monitors** sidebar header to create a new live monitor. 
 | Type | Required fields |
 |------|----------------|
 | 🌩️ Storm front / CBDR | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per storm, Radar, Language, Quiet hours *(optional)* |
-| 🌧️ Rain front | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per event, Minimum intensity, Hail *(optional)*, Ground truth *(optional)*, Radar, Language, Quiet hours *(optional)* |
+| 🌧️ Rain front | Where to watch, Location *(the fallback when following a position)*, Radius (km), Updates per event, Minimum intensity, Ground truth *(optional)*, Radar, Language, Quiet hours *(optional)* |
+| 🧊 Hail front | Where to watch, Location *(the fallback when following a position)*, Radius (km), Watch and serious probability, Language, Quiet hours *(optional)* |
 | 🌍 Seismic live | Areas, Quiet hours |
 | ⚽ Football Betting | Minute windows, Quiet hours (API pause) |
 
@@ -1044,7 +1045,6 @@ The Dipartimento della Protezione Civile publishes an Open Access composite of t
 | Grid | 1200 × 1400 px at 1 km, Transverse Mercator on a sphere (12.5°E / 42.0°N) |
 | Cadence | 5 minutes |
 | Coverage | Italy only — see *Test radar coverage* below |
-| Optional | `POH` — probability of hail, fetched only when **Also mention hail** is on |
 
 The geotransform is read from each file's own GeoTIFF tags rather than hardcoded. If DPC ever re-grids the product the monitor notices instead of silently placing every measurement a few kilometres from where it belongs.
 
@@ -1101,7 +1101,6 @@ The first of those three is now much rarer than it was. A stale fix is no longer
 | Alert radius | 10–60 km. The disc is observed out to 1.6× that. |
 | Updates per event | Hard cap of 2, 3 or 4 ring messages per event, plus one all-clear. |
 | **Rain worth telling you about** | Minimum intensity in mm/h: `0.2` even drizzle, **`1` proper rain (recommended)**, `4` a real shower, `10` heavy rain only. The radar sees down to a damp mist; set this too low and a grey afternoon keeps the event open for hours. |
-| **Also mention hail** | Fetches the probability-of-hail product too and adds a line when the approaching front carries a real risk. One extra download every 5 minutes. |
 | Radar picture | Attaches the actual radar crop to each ring message. |
 | Ground truth | Adds what the nearest MeteoHub rain gauge measured. Diagnostic only — it changes no decision. Needs **Settings → MeteoHub** switched on; with the source off the form says so in red and links to the panel, because a ticked box that does nothing is worse than no box. |
 
@@ -1210,6 +1209,38 @@ Where the storm front draws a polar scatter of discharges — a photograph of th
 | Updates per event | 4 |
 | Rain worth telling you about | 1 mm/h |
 | Radar picture | ✅ |
+
+#### Hail front
+
+Watches the radar's **probability-of-hail** product and warns you when hail becomes likely near you.
+
+It is a monitor of its own, not a mode of the rain front, and the reason is the question each one asks. The rain front asks *"where is the rain going, and will we meet"*, so it needs a front, a direction and a ring ladder — and on scattered summer convection the drift is exactly what the radar cannot measure. Hail asks *"how likely is it within R km of me, and where is the most likely spot"*, which is one reading of one image. **No direction of travel is needed, and no rain threshold has to be cleared first.**
+
+##### What it sends
+
+| Level | When | Message |
+|-------|------|---------|
+| 🧊 **Watch** | The highest probability within the radius reaches the *watch* value (default **40%**) | `Rischio grandine`, with the percentage and where the most likely spot is: distance and compass direction |
+| 🚨 **Serious** | The highest probability reaches the *serious* value (default **70%**), **or** a cell within **10 km** reaches the watch value | `Grandine probabile`, plus a reminder to shelter vehicles and exposed items |
+| ✅ **All-clear** | Three consecutive new radar images stay below the watch value | `Rischio grandine cessato`, with the event's peak |
+
+**Bounded by construction.** One hail event sends at most one message per level — so at most two — plus one all-clear, whatever the cell does. Levels only ever escalate within an event, so a cell flickering around a threshold cannot repeat a message. The all-clear counts *radar images*, not polls: the radar publishes every 5 minutes and polling every minute would otherwise "confirm" the same picture five times.
+
+**Blindness is not calm.** With no recent image, a disc outside the radar network, or no usable position, the monitor goes 🟠 Blind: no alerts, and no all-clear either.
+
+##### Settings
+
+| Field | Description |
+|-------|-------------|
+| Where to watch / Location | Identical to the rain front: a named position it follows, or fixed coordinates. |
+| Alert radius | 10–60 km (default 30). Hail cells are small and move fast, so a wider disc mostly adds alerts for cells that miss you. |
+| Tell me when hail is likely at | The watch value: 25%, **40% (recommended)** or 55%. The radar gives a probability, not a certainty. |
+| Escalate to a serious alert at | 60%, **70% (recommended)** or 85%. |
+| Quiet hours | Silences the watch and the all-clear. **A serious alert always gets through.** |
+
+The data is the `POH` product of the Protezione Civile radar composite (free, no API key, Italy only), shared with the rain front's feed. Every message states the age of the picture.
+
+**Moved from the rain front.** Until v4.14.0 the rain front had an *Also mention hail* option. It only added a line to a rain alert, read the probability at a single point and never alerted on its own, so it was removed. A rain monitor that had it ticked no longer mentions hail: create a 🧊 Hail monitor.
 
 ---
 
@@ -1552,6 +1583,7 @@ All persistent data is stored in the Supervisor `/data/` folder, which survives 
 | `/data/live_monitors.json` | Live monitor configuration (managed from Web UI) |
 | `/data/storm_front_state.json` | Storm front event state — restored on startup (if under 30 min old) so a storm in progress does not re-announce rings |
 | `/data/rain_front_state.json` | Rain front event state — same rule, so rain in progress does not re-announce rings |
+| `/data/hail_front_state.json` | Hail front event state — restored on startup (if under 1 hour old) so a hail event in progress does not re-announce its level |
 | `/data/ha_monitors.json` | HA monitor configuration (managed from Web UI) |
 | `/data/google_calendar_token.json` | Google Calendar OAuth2 token (auto-refreshed) |
 | `/data/google_gmail_token.json` | Gmail OAuth2 token (auto-refreshed) |
