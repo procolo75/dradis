@@ -86,6 +86,24 @@ Token at `/data/google_tasks_token.json`.
 
 ---
 
+## HA Control (MCP)
+
+DRADIS acts on Home Assistant through HA's built-in **Model Context Protocol server** (HA 2026.10+).
+
+**Home Assistant side:** *Settings → System → AI* → **Model Context Protocol** → on. Then
+*Settings → Voice assistants → Expose*: only exposed entities can be seen or controlled.
+
+**DRADIS side:** *Tools → HA Control (MCP)* → Enabled → Save → *Test connection* → tick the tools → Save.
+No token is needed: the add-on goes through the Supervisor (`homeassistant_api`). A custom URL
+(`http://homeassistant:8123/api/mcp/assist`) + long-lived token is the fallback.
+
+- DRADIS uses `/api/mcp/assist`, not `/api/mcp`: only the home-control tools, not every LLM API HA has,
+  and it is the one keyed endpoint not restricted to administrators.
+- Every ticked tool's schema is sent with every message; the panel shows ≈tokens per tool. Tick only
+  what you use on a small per-minute budget (Groq free tier: 8000).
+- A failed action is reported as a ⚠️ tool failure, not as done. If HA is down DRADIS starts without
+  HA tools; `/info` shows the status.
+
 ## URL Fetch
 
 `read_url` fetches any page's text via Jina Reader (free, no key). Enable it under **Web UI → Tools → URL Fetch**.

@@ -29,6 +29,7 @@ The single agent calls these tools when relevant; each capability is enabled and
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
 - **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
+- **HA Control (MCP)** — act on Home Assistant (lights, switches, climate, scripts…) through HA's built-in MCP server (2026.10+), via the Supervisor with no token; only entities exposed to Assist are reachable, and a per-tool allowlist keeps the prompt small
 - **Voice** — incoming voice messages are transcribed via Groq Whisper, then handled like text (optional; requires Groq API key)
 
 ### Automation
@@ -54,7 +55,7 @@ The single agent calls these tools when relevant; each capability is enabled and
 
 ### Web UI
 
-- Vertical left sidebar with collapsible sections: Settings (DRADIS, MQTT / Home Assistant, Position, MeteoHub, Car Mode, Telegram Bots), Tools (Web Search, Weather, Calendar, Gmail, Tasks, URL Fetch, Voice), Tasks, Scheduled Monitors, Live Monitors, HA Monitors
+- Vertical left sidebar with collapsible sections: Settings (DRADIS, MQTT / Home Assistant, Position, MeteoHub, Car Mode, Telegram Bots), Tools (Web Search, Weather, Calendar, Gmail, Tasks, HA Control, URL Fetch, Voice), Tasks, Scheduled Monitors, Live Monitors, HA Monitors
 - All settings managed at runtime — no restart required
 - Live cron validation with next-fire preview
 - Live geocoding for monitors (city name → lat/lon)
@@ -76,6 +77,10 @@ The single agent calls these tools when relevant; each capability is enabled and
 **Weather**
 > *"What's the weather in Milan tomorrow?"*
 > → DRADIS calls the Weather tool and replies with current conditions and a multi-day forecast.
+
+**Home control** *(requires HA Control)*
+> *"Accendi la luce dello studio"*
+> → DRADIS calls Home Assistant's `HassTurnOn` through MCP and confirms.
 
 **Web search**
 > *"What are the latest Home Assistant announcements?"*

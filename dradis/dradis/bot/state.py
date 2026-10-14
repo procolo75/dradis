@@ -33,6 +33,7 @@ from agents.gmail   import GMAIL_TOKEN_FILE, gmail_tools
 from agents.gtasks  import GTASKS_TOKEN_FILE, gtasks_tools
 from agents.weather    import weather_tools
 from agents.web_search import web_search_tools
+from tools.ha_mcp import ha_mcp_tools
 
 # ── Startup options ───────────────────────────────────────────────────────────
 
@@ -419,6 +420,7 @@ CAPABILITIES = [
     {"id": "gcal",       "label": "Google Calendar", "instr": "gcal_instructions"},
     {"id": "gmail",      "label": "Gmail",           "instr": "gmail_instructions"},
     {"id": "gtasks",     "label": "Google Tasks",    "instr": "gtasks_instructions"},
+    {"id": "ha",         "label": "Home Assistant",  "instr": "ha_instructions"},
 ]
 
 
@@ -435,6 +437,8 @@ def _capability_tool_groups(settings: dict) -> dict:
         groups["gmail"] = gmail_tools(settings)
     if settings.get("gtasks_enabled") and GTASKS_TOKEN_FILE.exists():
         groups["gtasks"] = gtasks_tools(settings)
+    if settings.get("ha_mcp_enabled"):
+        groups["ha"] = ha_mcp_tools(settings)
     for cap_id, specs in groups.items():
         for t in specs:
             t["capability"] = cap_id

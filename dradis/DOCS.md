@@ -31,6 +31,7 @@ Each capability contributes tool specs (`agents/*.py` → `*_tools(settings)`):
 | Google Calendar | `get_calendar_events`, `create_calendar_event`, `delete_calendar_event` |
 | Gmail | `get_emails`, `get_unread_emails`, `search_emails`, `send_email` |
 | Google Tasks | `list_tasks`, `create_task`, `complete_task`, `delete_task`, `update_task` |
+| Home Assistant | whatever HA's MCP server lists (`HassTurnOn`, `HassTurnOff`, `HassLightSet`, `GetLiveContext`, …), filtered by the panel's allowlist — `tools/ha_mcp.py` |
 | Read URL | `read_url` |
 
 A capability's tools are available when it is **Enabled** and authenticated. **Chat** gets all available tools; a **task** and an **HA monitor (LLM mode)** each select exactly which tools to attach (fewer tools = smaller prompt; HA monitors default to *none*). `bot/state.py:build_tools(settings, selected)` assembles the list — `[]` = no tools, `["*"]` = all, a list = only those. A capability's *Additional instructions* are added to the system prompt when any of its tools are attached, under a header that names the capability and its tool names and states that the line applies **only while that tool is in use**. Without that attribution they read as standing rules and shape unrelated answers — a weather instruction would change how a web search is written.
@@ -91,6 +92,7 @@ It is sent as its own message, ahead of the reply, and unlike the `🔢`/`🔧` 
 | `agents/gmail.py` | Gmail tools — `gmail_tools()` + OAuth token management |
 | `agents/gcal.py` | Google Calendar tools — `gcal_tools()` + OAuth token management |
 | `agents/gtasks.py` | Google Tasks tools — `gtasks_tools()` + OAuth token management |
+| `tools/ha_mcp.py` | Home Assistant tools — minimal MCP client (JSON-RPC over httpx) for HA's `/api/mcp/<api_id>`; `refresh()` caches `tools/list`, `ha_mcp_tools()` turns it into tool specs, `call_tool()` raises `ToolError` on failure |
 | `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability + pressure-level data, computes multiplicative TRS (0.0–1.0) in Python |
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
@@ -384,6 +386,39 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 | Additional instructions | — | Optional extra instructions that apply **only when this capability's tools are used**. |
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
+
+### Tools → HA Control (MCP)
+
+Lets DRADIS act on the home — lights, switches, covers, climate, scripts — through Home Assistant's
+built-in **Model Context Protocol server** (HA 2026.10+). DRADIS calls the tools itself; no extra LLM.
+
+**On Home Assistant**
+1. *Settings → System → AI* → **Model Context Protocol** card → turn it on.
+2. *Settings → Voice assistants → Expose* → expose only what DRADIS may see and control. The Assist
+   API never sees an entity that is not exposed.
+
+**In DRADIS**
+1. Enable the panel, leave *Custom URL* blank, *Save*, then *Test connection*: it shows the HA version,
+   the number of tools and whether it went through the **Supervisor** (no token needed — the add-on
+   declares `homeassistant_api`) or a **long-lived token**.
+2. Tick the tools DRADIS may use and *Save* again.
+
+| Field | Description |
+|-------|-------------|
+| LLM API id | DRADIS calls `/api/mcp/<id>`. Default `assist`: only the home-control tools, and the one keyed endpoint HA does not restrict to administrators. Plain `/api/mcp` serves every LLM API HA has (on new installs, admin-only). |
+| Custom URL / token | Fallback only, e.g. `http://homeassistant:8123/api/mcp/assist` + a long-lived access token (profile → Security). |
+| Tools | Allowlist. Each tool's schema is sent with every message (the Assist ones list your areas and device names); ≈tokens are shown per tool. All ticked = every tool, including ones HA adds later. |
+| Instructions | Added to the system prompt only while a Home Assistant tool is attached. |
+
+The tool list is read at startup, on every settings save and on *Test connection*, and cached. If HA is
+unreachable DRADIS keeps working without HA tools; `/info` shows the error. A failed action (HA's
+`isError`, HTTP error) is reported as a tool failure (⚠️ notice), never passed off as done.
+
+| Error | Meaning |
+|-------|---------|
+| 404 | MCP server not turned on in *Settings → System → AI*, or wrong API id |
+| 401 | Token rejected — use a long-lived token with a custom URL |
+| 403 | Endpoint needs an administrator: use `assist`, or an admin's token |
 
 ### Settings → Car Mode
 

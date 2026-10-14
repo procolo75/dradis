@@ -353,6 +353,10 @@
           <span class="nav-dot" id="gtasks-dot"></span>
           <span class="nav-label">Google Tasks</span>
         </li>
+        <li class="nav-item" data-panel="ha-mcp" id="nav-ha-mcp">
+          <span class="nav-dot" id="ha-mcp-dot"></span>
+          <span class="nav-label">HA Control (MCP)</span>
+        </li>
         <li class="nav-item" data-panel="tools" id="nav-tools">
           <span class="nav-dot" id="read-url-dot"></span>
           <span class="nav-label">URL Fetch</span>
@@ -794,6 +798,92 @@
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-tools">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Home Assistant control via MCP -->
+    <div class="panel" id="panel-ha-mcp">
+      <div class="form-card">
+        <h2>HA Control (MCP)</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          Lets DRADIS act on your home — lights, switches, climate, scripts — through
+          Home Assistant's built-in MCP server. DRADIS calls the tools directly; no
+          extra LLM call is made.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          <b>On Home Assistant (2026.10+):</b> turn the server on in
+          <i>Settings → System → AI → Model Context Protocol</i>, then choose what DRADIS
+          may see and control in <i>Settings → Voice assistants → Expose</i>. Only exposed
+          entities are reachable. No token is needed: DRADIS reaches HA through the
+          Supervisor.
+        </p>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="ha-mcp-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="ha-mcp-api-id">LLM API id</label>
+          <input type="text" id="ha-mcp-api-id" placeholder="assist" style="max-width:220px">
+          <small style="color:var(--text-muted);margin-top:4px;display:block">
+            DRADIS uses <code>/api/mcp/&lt;id&gt;</code>. Keep <code>assist</code>: it serves only
+            the Assist tools (fewer tokens per message) and, unlike the other APIs, does not
+            require an administrator account.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label for="ha-mcp-url">Custom URL <span style="font-size:0.8em; color:var(--text-muted)">(optional)</span></label>
+          <input type="text" id="ha-mcp-url" placeholder="http://homeassistant:8123/api/mcp/assist" autocomplete="off">
+          <small style="color:var(--text-muted);margin-top:4px;display:block">
+            Leave blank to go through the Supervisor. Fill it in, with a long-lived access
+            token below, only if the test fails with the Supervisor.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label for="ha-mcp-token">Long-lived access token <span style="font-size:0.8em; color:var(--text-muted)">(only with a custom URL)</span></label>
+          <div style="display:flex;gap:6px;max-width:420px">
+            <input type="password" id="ha-mcp-token" autocomplete="off" style="flex:1">
+            <button class="btn-icon" id="btn-ha-mcp-show-token" type="button" title="Show / hide token">👁</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Connection test</label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn-icon" id="btn-ha-mcp-test">Test connection</button>
+            <span id="ha-mcp-test-result" style="font-size:0.85rem;color:var(--text-muted)"></span>
+          </div>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">
+            Tests the <b>saved</b> settings and lists the tools Home Assistant offers.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label>Tools DRADIS may use <span id="ha-mcp-tokens" style="font-size:0.8em; color:var(--text-muted)"></span></label>
+          <div id="ha-mcp-tools" style="font-size:0.85rem;"></div>
+          <small style="color:var(--text-muted);margin-top:4px;display:block">
+            Every ticked tool's definition is sent with every message (≈ tokens shown).
+            On a small per-minute budget (Groq free: 8000) tick only what you use.
+            All ticked = every tool, including ones HA adds later.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label for="ha-instructions">Instructions</label>
+          <textarea id="ha-instructions" rows="3" placeholder="e.g. Always confirm what you switched, with the room name."></textarea>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-ha-mcp">Save</button>
         </div>
       </div>
     </div>
@@ -2583,6 +2673,126 @@ document.getElementById("btn-save-weather").addEventListener("click", async () =
   }
 });
 
+// ── HA Control (MCP) panel ────────────────────────────────────────────────────
+
+// Tools as last seen: from the Test button, or just the saved allowlist when
+// the panel opens (listing them needs a round trip to HA, so it is on demand).
+let _haMcpTools = [];
+let _haMcpFullList = false;
+
+function renderHaMcpTools(allowed) {
+  const el = document.getElementById("ha-mcp-tools");
+  if (!_haMcpTools.length) {
+    el.innerHTML = '<span style="color:var(--text-muted)">Click "Test connection" to list the tools.</span>';
+    document.getElementById("ha-mcp-tokens").textContent = "";
+    return;
+  }
+  const all = !allowed.length;
+  el.innerHTML = _haMcpTools.map(t => `
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0;font-weight:normal" title="${escHtml(t.description || "")}">
+      <input type="checkbox" class="ha-mcp-tool" value="${escHtml(t.name)}" data-tokens="${t.tokens || 0}"
+             ${all || allowed.includes(t.name) ? "checked" : ""}>
+      <span><code>${escHtml(t.name)}</code>${t.tokens ? ` <span style="color:var(--text-muted)">≈${t.tokens} tok</span>` : ""}</span>
+    </label>`).join("");
+  el.querySelectorAll(".ha-mcp-tool").forEach(c => c.addEventListener("change", updateHaMcpTokens));
+  updateHaMcpTokens();
+}
+
+function updateHaMcpTokens() {
+  const boxes = [...document.querySelectorAll(".ha-mcp-tool")];
+  const sum = boxes.filter(b => b.checked).reduce((n, b) => n + (+b.dataset.tokens || 0), 0);
+  document.getElementById("ha-mcp-tokens").textContent = boxes.length ? `(≈${sum} tokens per message)` : "";
+}
+
+// [] means "every tool", so it is only produced from the full list HA returned:
+// ticking all of a list that holds just the saved allowlist must not widen it.
+// Unticking everything is not a selection either — the switch above is for that.
+function haMcpAllowedFromUi(saved) {
+  const boxes = [...document.querySelectorAll(".ha-mcp-tool")];
+  if (!boxes.length) return saved;
+  const ticked = boxes.filter(b => b.checked).map(b => b.value);
+  if (!ticked.length) return null;
+  return _haMcpFullList && ticked.length === boxes.length ? [] : ticked;
+}
+
+async function loadHaMcpSettings() {
+  const s = await api("GET", "/api/settings");
+  document.getElementById("ha-mcp-enabled").checked = !!s.ha_mcp_enabled;
+  document.getElementById("ha-mcp-api-id").value    = s.ha_mcp_api_id || "assist";
+  document.getElementById("ha-mcp-url").value       = s.ha_mcp_url    || "";
+  document.getElementById("ha-mcp-token").value     = s.ha_mcp_token  || "";
+  document.getElementById("ha-instructions").value  = s.ha_instructions || "";
+  if (!_haMcpTools.length) _haMcpTools = (s.ha_mcp_allowed || []).map(name => ({ name, tokens: 0 }));
+  renderHaMcpTools(s.ha_mcp_allowed || []);
+  const dot = document.getElementById("ha-mcp-dot");
+  if (dot) dot.classList.toggle("on", !!s.ha_mcp_enabled);
+}
+
+document.getElementById("btn-ha-mcp-show-token").addEventListener("click", () => {
+  const inp = document.getElementById("ha-mcp-token");
+  const btn = document.getElementById("btn-ha-mcp-show-token");
+  if (inp.type === "password") { inp.type = "text";     btn.textContent = "🙈"; }
+  else                         { inp.type = "password"; btn.textContent = "👁";  }
+});
+
+document.getElementById("btn-ha-mcp-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-ha-mcp-test");
+  const result = document.getElementById("ha-mcp-test-result");
+  btn.disabled = true;
+  result.textContent = "Testing…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("POST", "/api/ha-mcp/test");
+    const via  = data.auth_mode === "supervisor" ? "Supervisor" : "long-lived token";
+    result.textContent = `✅ ${data.server} · ${data.tools.length} tools · via ${via}`;
+    result.style.color = "var(--success, #43a047)";
+    let saved = [];
+    try { saved = (await api("GET", "/api/settings")).ha_mcp_allowed || []; } catch {}
+    _haMcpTools = data.tools;
+    _haMcpFullList = true;
+    renderHaMcpTools(saved);
+  } catch (e) {
+    let msg = e.message || "Connection failed";
+    try { msg = JSON.parse(msg).detail || msg; } catch {}
+    result.textContent = `❌ ${msg}`;
+    result.style.color = "var(--danger, #e53935)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-save-ha-mcp").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-ha-mcp");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const allowed = haMcpAllowedFromUi(current.ha_mcp_allowed || []);
+  if (allowed === null) {
+    showToast("Tick at least one tool, or switch HA Control off", true);
+    btn.disabled = false;
+    return;
+  }
+  const payload = {
+    ...current,
+    ha_mcp_enabled:  document.getElementById("ha-mcp-enabled").checked,
+    ha_mcp_api_id:   document.getElementById("ha-mcp-api-id").value.trim() || "assist",
+    ha_mcp_url:      document.getElementById("ha-mcp-url").value.trim(),
+    ha_mcp_token:    document.getElementById("ha-mcp-token").value.trim(),
+    ha_mcp_allowed:  allowed,
+    ha_instructions: document.getElementById("ha-instructions").value.trim(),
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const dot = document.getElementById("ha-mcp-dot");
+    if (dot) dot.classList.toggle("on", payload.ha_mcp_enabled);
+    showToast("HA Control settings saved");
+  } catch (e) {
+    showToast(e.message || "Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ── MeteoHub panel ────────────────────────────────────────────────────────────
 
 // Whether the source is switched on, cached so the live monitor form can warn
@@ -3302,6 +3512,12 @@ async function init() {
     await loadWeatherSettings();
   } catch (e) {
     console.error("loadWeatherSettings:", e);
+  }
+
+  try {
+    await loadHaMcpSettings();
+  } catch (e) {
+    console.error("loadHaMcpSettings:", e);
   }
 
   try {

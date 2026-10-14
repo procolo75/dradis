@@ -89,6 +89,8 @@ SETTINGS_KEYS = [
     "meteohub_enabled", "meteohub_official_only", "meteohub_cache_ttl",
     "meteohub_radius_km",
     "mqtt_host", "mqtt_port", "mqtt_username", "mqtt_password", "mqtt_statestream_prefix",
+    "ha_mcp_enabled", "ha_mcp_url", "ha_mcp_token", "ha_mcp_api_id", "ha_mcp_allowed",
+    "ha_instructions",
 ]
 
 SETTINGS_DEFAULTS: dict = {
@@ -120,6 +122,15 @@ SETTINGS_DEFAULTS: dict = {
     "ws_model":             "nvidia/nemotron-3-nano-30b-a3b:free",
     "ws_instructions":      "",
     "read_url_enabled":     False,
+    # Home Assistant actions through HA's MCP server (tools/ha_mcp.py). Blank URL
+    # = the Supervisor proxy with SUPERVISOR_TOKEN; `assist` = the keyed endpoint
+    # that serves only the Assist tools. Empty allowlist = every tool HA lists.
+    "ha_mcp_enabled":       False,
+    "ha_mcp_url":           "",
+    "ha_mcp_token":         "",
+    "ha_mcp_api_id":        "assist",
+    "ha_mcp_allowed":       [],
+    "ha_instructions":      "",
     "weather_enabled":      False,
     "weather_provider":     "openrouter",
     "weather_model":        "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -573,6 +584,9 @@ def available_tool_catalogue(settings: dict) -> list[dict]:
         groups.append(("gmail", "Gmail", gmail_tools(settings)))
     if settings.get("gtasks_enabled") and GTASKS_TOKEN_FILE.exists():
         groups.append(("gtasks", "Google Tasks", gtasks_tools(settings)))
+    if settings.get("ha_mcp_enabled"):
+        from tools.ha_mcp import ha_mcp_tools
+        groups.append(("ha", "Home Assistant", ha_mcp_tools(settings)))
 
     out: list[dict] = []
     for cid, label, specs in groups:

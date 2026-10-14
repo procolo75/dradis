@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## [4.15.0] - 2026-10-14
+
+**DRADIS can now act on your home, through Home Assistant's own MCP server.** Until now DRADIS only
+*read* Home Assistant (MQTT statestream for HA Monitors). HA 2026.10 serves the Model Context Protocol
+from *Settings → System → AI*, and DRADIS now uses it: "turn on the studio light" in Telegram is a
+`HassTurnOn` call, in chat, in a task or in an HA monitor in LLM mode. This is the first half of putting
+DRADIS in the voice pipeline.
+
+- **Feat — 🏠 HA Control (MCP)** tool panel. Enable it, press *Test connection*, tick the tools DRADIS
+  may use, save. On the HA side: turn the MCP server on in *Settings → System → AI*, and choose the
+  entities in *Settings → Voice assistants → Expose* — only exposed entities are reachable.
+- **No token to create.** The add-on now declares `homeassistant_api` and reaches HA through the
+  Supervisor proxy. A custom URL + long-lived access token remains as a fallback; the test says which
+  mode answered.
+- **`/api/mcp/assist`, not `/api/mcp`.** New HA installs expose *every* LLM API on `/api/mcp` and limit
+  it to administrators. The keyed Assist endpoint serves only the home-control tools and is open to any
+  authenticated user — and fewer schemas means fewer tokens on every message. The API id is a setting.
+- **The allowlist is a token budget.** Assist tool schemas enumerate your area and device names, and
+  every attached tool rides along on every turn. The panel shows ≈tokens per tool and the total; all
+  ticked = every tool, including ones HA adds later.
+- **A failed action is a tool failure, not an answer.** HA's `isError` results and an unreachable HA
+  are raised as `ToolError`, so the ⚠️ tool-failure notice reaches you instead of a confident "done".
+- New: `tools/ha_mcp.py` — a ~190-line JSON-RPC client over httpx (HA's endpoint is stateless and
+  answers plain JSON; no `mcp` SDK). The tool list is cached and re-read at startup, on settings save
+  and on *Test connection*; if HA is unreachable DRADIS starts without HA tools. `/info` shows the
+  status. Settings: `ha_mcp_enabled`, `ha_mcp_api_id`, `ha_mcp_url`, `ha_mcp_token`, `ha_mcp_allowed`,
+  `ha_instructions`. Route: `POST /api/ha-mcp/test`.
+
 ## [4.14.0] - 2026-10-08
 
 **Hail now has its own monitor, and it alerts on hail itself.** The rain front's *Also mention hail* option

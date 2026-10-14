@@ -202,6 +202,13 @@ class SettingsPayload(BaseModel):
     mqtt_username:           str  = ""
     mqtt_password:           str  = ""
     mqtt_statestream_prefix: str  = "homeassistant"
+    # Home Assistant MCP — see store.SETTINGS_DEFAULTS.
+    ha_mcp_enabled:          bool = False
+    ha_mcp_url:              str  = ""
+    ha_mcp_token:            str  = ""
+    ha_mcp_api_id:           str  = "assist"
+    ha_mcp_allowed:          list[str] = []
+    ha_instructions:         str  = ""
 
 
 class PositionPayload(BaseModel):

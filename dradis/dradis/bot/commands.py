@@ -55,6 +55,15 @@ async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             model_key = "ws_model" if key == "ws_enabled" else "weather_model"
             lines.append(f"Model: {settings.get(model_key, _SETTINGS_DEFAULTS[model_key])}")
 
+    ha_on = settings.get("ha_mcp_enabled", False)
+    lines += ["", "<b>Home Assistant (MCP)</b>", f"Status: {'enabled' if ha_on else 'disabled'}"]
+    if ha_on:
+        from tools.ha_mcp import STATUS as _ha_status, _TOOLS_CACHE as _ha_tools
+        if _ha_status.get("ok"):
+            lines.append(f"Tools: {len(_ha_tools)} via {_ha_status.get('auth_mode')}")
+        else:
+            lines.append(f"Error: {html.escape(_ha_status.get('error') or 'not connected')}")
+
     voice_on = settings.get("voice_enabled", False)
     lines += ["", "<b>Voice</b>", f"Status: {'enabled' if voice_on else 'disabled'}"]
     if voice_on:
