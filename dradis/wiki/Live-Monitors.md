@@ -20,6 +20,15 @@ There is no cron field and no "run now" action — the monitor is always-on when
 
 ---
 
+## 🔊 Announce by voice (all live monitors)
+
+Every live monitor can also **say its alerts** on a Home Assistant voice assistant:
+
+- **Announce by voice** (off by default) — each alert is spoken on the *Default speaker* set in **Settings → 🎙️ HA Assist**, in plain spoken prose.
+- **🔕 Voice quiet hours** — inside the window the alert is not spoken but still reaches Telegram. Separate from the Telegram *Quiet hours*; may cross midnight.
+
+The voice is fire-and-forget: Telegram delivery, and what the monitor records about it, are unchanged. A speaker that is off never delays an alert. See [[HA Assist|HA-Assist]].
+
 ## 🌩️ Storm Front / CBDR
 
 Subscribes to the geohash MQTT topics covering the configured location. Strikes are buffered for **10 minutes** as `(time, lat, lon)` — without their distance, which is derived at evaluation time.

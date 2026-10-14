@@ -228,6 +228,10 @@ def reset_calibration() -> None:
     _ratio_correction.clear()
 
 
+def _messages_estimate(messages: list[dict], provider: str) -> int:
+    return int(estimate_messages_tokens(messages) * correction_for(provider))
+
+
 def estimate_request_tokens(messages: list[dict],
                             schemas: list[dict] | None = None,
                             provider: str = "") -> int:
@@ -615,6 +619,8 @@ async def run_agent(
     # read costs as much as the first and buys nothing, which is how a two-round
     # task became a refused one.
     already_called: dict[tuple[str, str], str] = {}
+    # What the last request carried, by our estimate and by the provider's bill.
+    prior: tuple[int, int] | None = None
 
     def _result(content: str) -> AgentResult:
         return AgentResult(
@@ -644,7 +650,7 @@ async def run_agent(
         estimated = estimate_messages_tokens(payload) + estimate_schema_tokens(
             None if final_round else schemas)
         try:
-            resp = await _create_with_pacing(client, provider, kwargs, cap)
+            resp = await _create_with_pacing(client, provider, kwargs, cap, prior)
         except Exception as e:
             if not (final_round and _is_tool_use_failed(e)):
                 raise
@@ -656,7 +662,7 @@ async def run_agent(
             kwargs["messages"] = (payload[:-1] if flattened else list(payload)) + [
                 {"role": "user", "content": _NO_TOOLS_INSTRUCTION}]
             kwargs["temperature"] = 0.0
-            resp = await _create_with_pacing(client, provider, kwargs, cap)
+            resp = await _create_with_pacing(client, provider, kwargs, cap, prior)
 
         usage = getattr(resp, "usage", None)
         if usage:
@@ -668,6 +674,8 @@ async def run_agent(
             completion_tokens += round_completion
             record_tpm(provider, round_prompt + round_completion)
             calibrate(provider, estimated, round_prompt)
+            if round_prompt:
+                prior = (_messages_estimate(kwargs["messages"], provider), round_prompt)
             print(f"[DRADIS] round={round_idx} prompt={round_prompt} "
                   f"completion={round_completion} cumulative={prompt_tokens + completion_tokens} "
                   f"tpm_used={_tpm_used(provider, time.monotonic())} "
@@ -761,7 +769,8 @@ def _fit_to_hard_limit(messages: list[dict], schemas: list[dict] | None,
     return estimate_request_tokens(messages, schemas, provider) <= room
 
 
-async def _create_with_pacing(client, provider: str, kwargs: dict, cap: int):
+async def _create_with_pacing(client, provider: str, kwargs: dict, cap: int,
+                              prior: tuple[int, int] | None = None):
     """Send one request, waiting out the rolling TPM budget first and retrying
     once if the provider refuses it anyway.
 
@@ -770,12 +779,25 @@ async def _create_with_pacing(client, provider: str, kwargs: dict, cap: int):
     But waiting only answers "not now". A request bigger than the entire minute
     is refused whatever the clock says, so that one is cut down before it is sent
     and cut down again, against the provider's own figures, if it still refuses.
+
+    `prior` = (estimated message tokens, billed prompt tokens) of the previous
+    round of this turn. The previous request already told us what everything it
+    carried really costs, so only what was added since is estimated — at the same
+    conservative rate. The local estimate over-counts tool schemas two to three
+    times (5128 estimated, 2053 billed with 23 tools), and against an 8000 minute
+    that over-count alone made a two-round turn wait a full minute for nothing.
+    Schemas are never "added since": a round sends the same ones or none.
     """
     schemas = kwargs.get("tools")
     limit   = PROVIDER_TPM.get(provider)
     if limit:
         _fit_to_hard_limit(kwargs["messages"], schemas, provider, cap, limit)
-    need = estimate_request_tokens(kwargs["messages"], schemas, provider) + cap
+    estimate = estimate_request_tokens(kwargs["messages"], schemas, provider)
+    if prior:
+        prev_msgs, prev_billed = prior
+        added = max(0, _messages_estimate(kwargs["messages"], provider) - prev_msgs)
+        estimate = min(estimate, prev_billed + added)
+    need = estimate + cap
     wait = tpm_wait_seconds(provider, need)
     if wait > 0:
         print(f"[DRADIS] pacing {provider}: waiting {wait:.1f}s for TPM budget "

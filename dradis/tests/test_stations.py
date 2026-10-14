@@ -260,5 +260,32 @@ class Escaping(unittest.TestCase):
         self.assertIn("X &lt;script&gt;", out)
 
 
+class SpokenOnce(unittest.TestCase):
+    """Aloud, the station is said once with all it measured: the screen layout
+    read "Nisida METEO" after every value."""
+
+    def test_voice_groups_by_station(self):
+        v = view(
+            station("Pozzuoli", km=2.0, **{VAR_PRECIP: 0.0}),
+            station("Nisida METEO", km=7.0,
+                    **{VAR_TEMP: 300.65, VAR_HUMIDITY: 60, VAR_PRESSURE: 101300,
+                       VAR_WIND: 3.6}),
+        )
+        spoken = format_stations(v, "Bacoli", lang="it", tz=TZ, radius_km=30.0,
+                                 now=NOW, voice=True)
+        screen = render(v)
+        self.assertEqual(spoken.count("Nisida METEO"), 1)
+        self.assertGreater(screen.count("Nisida METEO"), 1)    # the screen is unchanged
+        line = next(l for l in spoken.split("\n") if "Nisida METEO" in l)
+        for value in ("°C", "umidità", "hPa", "km/h"):
+            self.assertIn(value, line)
+
+    def test_voice_drops_the_network_acronyms(self):
+        v = view(station("Nisida METEO", net="dpcn-campania", **{VAR_TEMP: 295.15}))
+        spoken = format_stations(v, "Bacoli", lang="it", tz=TZ, radius_km=30.0,
+                                 now=NOW, voice=True)
+        self.assertNotIn("dpcn", spoken)
+
+
 if __name__ == "__main__":
     unittest.main()

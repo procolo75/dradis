@@ -79,6 +79,11 @@ class LiveMonitorPayload(BaseModel):
     # monitor saved before this release keeps its value until it is saved again.
     max_odds:        float     = 2.0
     telegram_bot_id: str       = "default"
+    # Also say each alert on the HA Assist default speaker (speaker.py).
+    speak_alerts:    bool      = False
+    # Voice-only quiet hours ("HH:MM"); Telegram delivery is not affected.
+    speak_quiet_start: str     = ""
+    speak_quiet_end:   str     = ""
     # Storm front and rain front — how many approach updates a single event may
     # produce. 2, 3 or 4; the ring distances are derived proportionally from
     # radius_km.
@@ -154,6 +159,11 @@ class SettingsPayload(BaseModel):
     startup_message:      str  = "✅ DRADIS online and ready."
     timezone:             str  = "UTC"
     car_mode_enabled:     bool = False
+    assist_enabled:         bool = True
+    assist_mirror_telegram: bool = False
+    assist_speaker_entity:  str  = ""
+    assist_tts_entity:      str  = ""
+    control_tools_enabled:  bool = True
     ws_enabled:           bool = False
     ws_provider:          str  = "openrouter"
     ws_model:             str  = "nvidia/nemotron-3-nano-30b-a3b:free"
@@ -202,13 +212,6 @@ class SettingsPayload(BaseModel):
     mqtt_username:           str  = ""
     mqtt_password:           str  = ""
     mqtt_statestream_prefix: str  = "homeassistant"
-    # Home Assistant MCP — see store.SETTINGS_DEFAULTS.
-    ha_mcp_enabled:          bool = False
-    ha_mcp_url:              str  = ""
-    ha_mcp_token:            str  = ""
-    ha_mcp_api_id:           str  = "assist"
-    ha_mcp_allowed:          list[str] = []
-    ha_instructions:         str  = ""
 
 
 class PositionPayload(BaseModel):

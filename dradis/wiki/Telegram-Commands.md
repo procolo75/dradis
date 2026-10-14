@@ -19,6 +19,8 @@ All commands are available only to the user ID configured in `telegram_allowed_c
 | `/gtasksauth` | Start the Google Tasks OAuth2 flow (same flow as Calendar) |
 | `/backupauth` | Start the Google Drive Backup OAuth2 flow. Grants `drive.file` scope only. After authorization, create a monitor of type ☁️ Google Drive Backup in the Web UI |
 
+> **By voice.** Through HA Assist the same views answer without Telegram: *rain*, *storm*, *radar…*, *sta per piovere* → `/rain`/`/storm`; *misure / stazioni / sensori* → `/stations`. Tasks and scheduled monitors can be run and switched on/off by voice too. See [[HA Assist|HA-Assist]].
+
 ## /rain and /storm
 
 Weather monitors are quiet by design — most of the time correctly so. These two commands let you ask, right now, *what does this monitor actually see, and does it know where I am*, without waiting for weather.

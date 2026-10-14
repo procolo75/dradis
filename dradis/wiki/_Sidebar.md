@@ -9,6 +9,7 @@
 - [[Monitors]]
 - [[Live Monitors|Live-Monitors]]
 - [[HA Monitors|HA-Monitors]]
+- [[HA Assist|HA-Assist]]
 - [[Web UI|Web-UI]]
 - [[Telegram Commands|Telegram-Commands]]
 - [[Examples]]

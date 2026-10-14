@@ -81,10 +81,6 @@ async def update_settings(payload: SettingsPayload):
         gauge_source.configure(data)
     except Exception as e:
         print(f"[DRADIS] gauge source reconfigure failed: {e}")
-    # The HA tool list is cached (build_tools is synchronous): re-read it so a
-    # switch, a new token or a new API id takes effect on the next message.
-    from tools import ha_mcp
-    await ha_mcp.refresh(data)
     return data
 
 

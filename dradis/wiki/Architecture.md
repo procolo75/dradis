@@ -15,6 +15,9 @@ dradis/
 ├── main.py                  # Entry point — wires all components together
 ├── core.py                  # run_agent() tool-calling loop over the openai SDK (no agno)
 ├── car_mode.py              # Pure sanitiser: any message → prose CarPlay can read aloud (no I/O)
+├── voice.py                 # Pure: text for a TTS engine — car_mode + _, -, ranges, decimals (HA Assist)
+├── speaker.py               # Speaks on a HA voice assistant at any time (announce / tts.speak via HA API)
+├── assist.py                # HA Assist wiring: token, copy of the HA integration, Supervisor discovery
 ├── agents/                  # each module exposes *_tools(settings) → tool specs
 │   ├── gcal.py              # Google Calendar tools + OAuth
 │   ├── gmail.py             # Gmail tools + OAuth
@@ -25,6 +28,7 @@ dradis/
 │   ├── state.py             # Global state, startup, settings, history, fallback engine
 │   ├── scheduler.py         # Task/monitor cron jobs, live-monitor lifecycle
 │   ├── commands.py          # /info, /gcalauth, /gmailauth, /gtasksauth, /todo
+│   ├── control.py           # The Telegram menu as tools + direct voice commands (match_radar, match_stations)
 │   └── handlers.py          # Telegram message, voice, and callback handlers
 ├── monitors/
 │   ├── thunderstorm.py      # Thunderstorm risk monitor (Open-Meteo, no LLM)
@@ -58,7 +62,10 @@ dradis/
         ├── tasks.py         # /api/tasks CRUD, /api/tasks/validate-cron
         ├── monitors.py      # /api/monitors, /api/live-monitors, /api/ha-monitors CRUD
         ├── positions.py     # /api/positions CRUD, entity discovery, connection test
-        └── tools.py         # Google OAuth callbacks, /api/websearch-test, /api/weather-test
+        ├── tools.py         # Google OAuth callbacks, /api/websearch-test, /api/weather-test
+        └── assist.py        # /api/assist (called by the HA integration) + HA Assist panel routes
+
+ha_integration/dradis/       # Home Assistant integration: config flow + DRADIS conversation agent
 ```
 
 ## Token Budget
@@ -109,3 +116,17 @@ APScheduler (cron fire)
     → _MONITOR_RUNNERS[type](monitor) [monitors/thunderstorm.py etc.]
     → send_message(report)            [Telegram]
 ```
+
+## Data Flow — HA Assist (voice)
+
+1. The voice assistant's pipeline tries Home Assistant's local intents first (*Prefer handling commands locally*): home commands end there.
+2. Anything else reaches the **DRADIS integration** in HA, which calls `POST /api/assist` on the add-on with the text, language and `device_id`.
+3. `web/routes/assist.py` checks the Bearer token, then:
+   - a **direct command** (`control.match_radar` / `match_stations`) runs `/rain`, `/storm` or `/stations` without the model;
+   - otherwise `state.chat_turn()` runs the same turn as a Telegram message (all tools, shared history), with the origin (`source=assist`, `device_id`) in `state.CHANNEL`.
+4. The answer goes back as `{"speech": ...}`, passed through `voice.for_voice`. Optionally a copy goes to Telegram.
+5. A task or monitor started by voice gets `on_result = speaker.speak(..., device_id)`: when it finishes, the result is said on the asking device.
+6. Live monitors with *Announce by voice* call `speaker.speak` on the default speaker next to their Telegram send (fire and forget, voice quiet hours respected).
+
+See [[HA Assist|HA-Assist]].
+

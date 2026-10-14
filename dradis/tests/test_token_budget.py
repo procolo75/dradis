@@ -463,5 +463,74 @@ class FlattenTest(unittest.TestCase):
                         core.estimate_messages_tokens(conv))
 
 
+class PriorRoundPacingTest(unittest.IsolatedAsyncioTestCase):
+    """The second round of a turn is priced from the first round's bill.
+
+    From the log that prompted it: 23 tools, round 0 billed 1937 prompt tokens
+    against an estimate of 4994; round 1 was estimated at 5128 + 2048 completion,
+    which with 2021 already spent "needed" more than Groq's 8000 — so DRADIS
+    waited 60 s before a request the provider then billed at 2053.
+    """
+
+    def setUp(self):
+        core.reset_tpm()
+        core.reset_calibration()
+        self.slept = []
+        self._sleep = core.asyncio.sleep
+
+        async def fake_sleep(sec):
+            self.slept.append(sec)
+        core.asyncio.sleep = fake_sleep
+
+    def tearDown(self):
+        core.asyncio.sleep = self._sleep
+        core.reset_tpm()
+        core.reset_calibration()
+
+    class _Client:
+        def __init__(self):
+            class _Completions:
+                async def create(self, **kw):
+                    return "resp"
+
+            class _Chat:
+                completions = _Completions()
+            self.chat = _Chat()
+
+    def _kwargs(self):
+        schemas = [{"type": "function", "function": {
+            "name": f"tool_{i}", "description": "x" * 300,
+            "parameters": {"type": "object", "properties": {"a": {"type": "string"}}}}}
+            for i in range(23)]
+        messages = [{"role": "system", "content": "s" * 2000},
+                    {"role": "user", "content": "Spegni la luce del soggiorno"},
+                    {"role": "tool", "tool_call_id": "c", "content": "ok " * 40}]
+        return {"messages": messages, "tools": schemas}
+
+    async def test_without_prior_the_schema_overcount_forces_a_wait(self):
+        kw = self._kwargs()
+        self.assertGreater(core.estimate_request_tokens(kw["messages"], kw["tools"], "groq")
+                           + 2048 + 2021, 8000)
+        core.record_tpm("groq", 2021)
+        await core._create_with_pacing(self._Client(), "groq", kw, 2048)
+        self.assertEqual(len(self.slept), 1)
+
+    async def test_with_prior_only_the_added_messages_are_estimated(self):
+        kw = self._kwargs()
+        prev_msgs = core._messages_estimate(kw["messages"][:2], "groq")
+        core.record_tpm("groq", 2021)
+        await core._create_with_pacing(self._Client(), "groq", kw, 2048,
+                                       prior=(prev_msgs, 1937))
+        self.assertEqual(self.slept, [])
+
+    async def test_prior_never_raises_the_estimate(self):
+        kw = self._kwargs()
+        core.record_tpm("groq", 2021)
+        # A bill larger than our estimate: the estimate stands, and it must wait.
+        await core._create_with_pacing(self._Client(), "groq", kw, 2048,
+                                       prior=(0, 50000))
+        self.assertEqual(len(self.slept), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from telegram.constants import ParseMode
 
 import bot.state as _state
+import speaker
 from web.store import (
     load_tasks,
     load_monitors,
@@ -104,7 +105,12 @@ _MONITOR_RUNNERS = {
 
 # ── Scheduled Tasks ───────────────────────────────────────────────────────────
 
-async def run_scheduled_task(task: dict):
+async def run_scheduled_task(task: dict, on_result=None):
+    """Run one task and send its answer to Telegram.
+
+    `on_result(text)` is awaited with what the task produced — or with a short
+    failure sentence — for a caller that has to hear it as well: a task started
+    by voice speaks its result on the assistant that asked (bot/control.py)."""
     if not _state._telegram_bot:
         return
     task_name    = task.get("name", "Task")
@@ -136,6 +142,7 @@ async def run_scheduled_task(task: dict):
                 f"{html.escape(str(error))}\n<i>No fallback model configured.</i>",
                 bot_id=bot_id,
             )
+        await _report(on_result, f"Task {task_name} failed: the model did not answer.")
         return
 
     if used_fallback:
@@ -161,6 +168,18 @@ async def run_scheduled_task(task: dict):
                 text=body,
                 parse_mode=parse_mode,
             )
+    await _report(on_result, _state.md_to_html(text) if text
+                  else f"Task {task_name}: no answer.")
+
+
+async def _report(on_result, text: str) -> None:
+    """Hand a result to the caller that asked for it; its failure is not ours."""
+    if on_result is None or not text:
+        return
+    try:
+        await on_result(text)
+    except Exception as e:
+        print(f"[DRADIS] on_result failed: {e}")
 
 
 def _cron_task(task: dict):
@@ -191,7 +210,10 @@ def reload_task_jobs():
 
 # ── Scheduled Monitors ────────────────────────────────────────────────────────
 
-async def run_scheduled_monitor(monitor: dict):
+async def run_scheduled_monitor(monitor: dict, on_result=None):
+    """Run one scheduled monitor and deliver its report. `on_result(text)` as in
+    `run_scheduled_task`: the report, the LLM's rewrite of it, or one sentence
+    saying a chart went to Telegram."""
     if not _state._telegram_bot:
         return
     monitor_name = monitor.get("name", "Monitor")
@@ -220,6 +242,7 @@ async def run_scheduled_monitor(monitor: dict):
             f"❌ Monitor <b>{html.escape(monitor_name)}</b> failed: {html.escape(exc_desc)}",
             bot_id=bot_id,
         )
+        await _report(on_result, f"Monitor {monitor_name} failed.")
         return
 
     # Image result — send as photo(s), ignore alert_mode
@@ -230,6 +253,7 @@ async def run_scheduled_monitor(monitor: dict):
         photos = result
 
     if photos:
+        await _report(on_result, f"Report {monitor_name}: chart sent to Telegram.")
         # A chart monitor sends a picture and no words at all, so Car Mode has
         # nothing to rewrite — but a picture is exactly what a driver cannot use.
         # Say the report happened and leave it waiting: dropping it silently
@@ -262,11 +286,15 @@ async def run_scheduled_monitor(monitor: dict):
 
     text = result
     if not text:
+        await _report(on_result, f"Monitor {monitor_name}: nothing to report.")
         return
 
     if alert_mode == "llm":
-        await _run_monitor_llm(monitor_name, text, monitor.get("instructions", ""), settings, bot_id=bot_id)
+        rewritten = await _run_monitor_llm(monitor_name, text, monitor.get("instructions", ""),
+                                           settings, bot_id=bot_id)
+        await _report(on_result, _state.md_to_html(rewritten) if rewritten else text)
     else:
+        await _report(on_result, text)
         try:
             await _send_chunked(text, bot_id=bot_id)
         except Exception as e:
@@ -278,7 +306,9 @@ async def run_scheduled_monitor(monitor: dict):
 
 
 async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: str,
-                           settings: dict, bot_id: str = "default"):
+                           settings: dict, bot_id: str = "default") -> str:
+    """Rewrite a report with the model and send it. Returns the rewrite ("" on
+    failure) so a caller listening for the result can hear it."""
     model = settings.get("model", _state.SETTINGS_DEFAULTS["model"])
 
     user_instr = instructions.strip() or "Send this report to the user via Telegram."
@@ -326,6 +356,8 @@ async def _run_monitor_llm(monitor_name: str, report_text: str, instructions: st
                     f"❌ Monitor <b>{html.escape(monitor_name)}</b> — LLM send error: {html.escape(str(e))}",
                     bot_id=bot_id,
                 )
+        return text
+    return ""
 
 
 def _cron_monitor(monitor: dict):
@@ -363,7 +395,25 @@ def reload_live_monitors():
     def _make_send(cfg: dict):
         bid  = cfg.get("telegram_bot_id", "default")
         lang = cfg.get("language", "it")
+        telegram_send = _make_telegram_send(bid, lang)
+        if not cfg.get("speak_alerts"):
+            return telegram_send
 
+        async def _send(text: str, photo: bytes | None = None) -> bool | None:
+            # Spoken as well, on the HA Assist default speaker. Fire and forget:
+            # the delivery status the monitor gates its state on stays Telegram's,
+            # and a speaker that is off must not delay or fail the alert. The
+            # voice has its own quiet hours: a 3 a.m. alert may well belong on
+            # the phone and not in the living room.
+            if speaker.in_quiet_hours(cfg.get("speak_quiet_start", ""),
+                                      cfg.get("speak_quiet_end", ""), tz_name):
+                print(f"[DRADIS] '{cfg.get('name')}': voice quiet hours, alert not spoken")
+            else:
+                asyncio.create_task(speaker.speak(text, lang, None, _state.read_settings()))
+            return await telegram_send(text, photo)
+        return _send
+
+    def _make_telegram_send(bid: str, lang: str):
         async def _send(text: str, photo: bytes | None = None) -> bool | None:
             # Propagate delivery status so callers (storm front monitor) can gate
             # state flags on a confirmed send. Three states, not two: see

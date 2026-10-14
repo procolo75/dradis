@@ -63,6 +63,23 @@ The sidebar dot shows whether Car Mode is still on.
 
 ---
 
+## Settings → HA Assist
+
+DRADIS as the conversation agent of your Home Assistant voice assistant — setup, what you can say, direct commands, the speaker and live monitors that speak are all on the **[[HA Assist|HA-Assist]]** page.
+
+
+| Field | Description |
+|---|---|
+| Enabled | Off → DRADIS refuses requests (HA says "DRADIS non risponde"). |
+| Copy each exchange to Telegram | "🎙️ question", the formatted answer with the chat footer, pictures (radar) and notices. Off by default. |
+| DRADIS commands | The control tools on/off, with their token cost. Direct commands follow the same switch. |
+| Default speaker | `assist_satellite.*` or `media_player.*` (🔄 reloads the list from HA). |
+| TTS engine | `tts.*`, needed only for a media player. |
+| Say a test sentence | Speaks on the selected speaker, saved or not. |
+| Status | Integration version, discovery, last question and how long it took. |
+| Test | Re-installs the integration if needed, announces DRADIS again and asks one question (not kept in the history). |
+| Show URL and token | For *Add integration → DRADIS*. Shown only through the add-on page (ingress). |
+
 ## Settings → MQTT / Home Assistant
 
 | Field | Default | Description |

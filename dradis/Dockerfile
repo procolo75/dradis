@@ -11,5 +11,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY dradis/ ./dradis/
+COPY ha_integration/ ./ha_integration/
 
 CMD ["python3", "-u", "dradis/main.py"]

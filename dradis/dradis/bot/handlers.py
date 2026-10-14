@@ -72,52 +72,20 @@ COMMANDS = [
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != _state.ALLOWED_CHAT_ID:
         return
-    settings        = _state.read_settings()
-    history_enabled = settings.get("history_enabled", True)
-    history_depth   = settings.get("history_depth", 2)
-
-    question = update.message.text
+    settings = _state.read_settings()
     model    = settings.get("model", _state.SETTINGS_DEFAULTS["model"])
-    history  = _state.history_messages(model) if history_enabled else None
 
-    # Chat gets all available tools; the single agent decides which to call.
-    result, used_fallback, error, fb_reason = await _state.run_dradis(
-        question, settings, selected=None, history=history, context_label="chat",
-    )
-
-    if error is not None:
-        fb_model_id = _state._apply_fallback_settings(settings).get("model", model)
-        if used_fallback:
-            err_msg = (
-                f"❌ Both primary (<code>{html.escape(model)}</code>) and "
-                f"fallback (<code>{html.escape(fb_model_id)}</code>) models failed: "
-                f"{html.escape(str(error))}"
-            )
-        else:
-            err_msg = (
-                f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(error))}\n"
-                "<i>No fallback model configured.</i>"
-            )
-        await _state._send_error_telegram(err_msg)
-        await update.message.reply_text(err_msg, parse_mode=ParseMode.HTML)
+    turn = await _state.chat_turn(update.message.text, settings, source="chat")
+    if turn.error:
+        await _state._send_error_telegram(turn.error)
+        await update.message.reply_text(turn.error, parse_mode=ParseMode.HTML)
         return
+    for notice in turn.notices:
+        await _state._send_error_telegram(notice)
 
-    if used_fallback:
-        await _state._send_error_telegram(_state._fallback_msg(fb_reason))
-
-    tool_errors = _state._tool_errors_msg(settings, result)
-    if tool_errors:
-        await _state._send_error_telegram(tool_errors)
-
-    text   = (result.content or "").strip()
-    footer = _state.reply_footer(settings, result)
-
-    if history_enabled:
-        _state.save_turn("user", question, history_depth)
-        _state.save_turn("assistant", text, history_depth)
-
-    if text:
-        body, parse_mode = _state.for_car(_state.md_to_html(text) + footer)
+    footer = _state.reply_footer(settings, turn.result)
+    if turn.text:
+        body, parse_mode = _state.for_car(_state.md_to_html(turn.text) + footer)
     else:
         body, parse_mode = _state.for_car(
             f"⚠️ Model <code>{html.escape(model)}</code> returned no text.{footer}"
@@ -408,19 +376,24 @@ async def handle_ha_monitor_callback(update: Update, context: ContextTypes.DEFAU
     if not monitor:
         await query.message.reply_text("❌ HA monitor not found.")
         return
-    status    = ha_monitor_manager.status(monitor_id)
+    await query.message.reply_text(describe_ha_monitor(monitor), parse_mode=ParseMode.HTML)
+
+
+def describe_ha_monitor(monitor: dict) -> str:
+    """The HA monitor card, as Telegram HTML. Also what the voice tool
+    `monitor_status` reads (bot/control.py)."""
+    status    = ha_monitor_manager.status(monitor["id"])
     badge     = "🟢 Running" if status == "running" else "🔴 Stopped"
     entities  = monitor.get("entities", [])
     mode      = monitor.get("alert_mode", "llm").upper()
     cooldown  = monitor.get("cooldown_min", 60)
     ent_label = ", ".join(entities) if entities else "—"
-    msg = (
+    return (
         f"🏠 <b>{html.escape(monitor['name'])}</b>\n"
         f"Status: {badge}\n"
         f"Mode: {mode} — Cooldown: {cooldown} min\n"
         f"Entities ({len(entities)}): {html.escape(ent_label)}"
     )
-    await query.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
 async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -434,9 +407,19 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
     if not monitor:
         await query.message.reply_text("❌ Live monitor not found.")
         return
+    msg = describe_live_monitor(monitor)
+    # The origin block carries a map link, and Telegram would otherwise paste an
+    # OpenStreetMap card under a four-line status message.
+    await query.message.reply_text(msg, parse_mode=ParseMode.HTML,
+                                   disable_web_page_preview=True)
+
+
+def describe_live_monitor(monitor: dict) -> str:
+    """The live monitor card, as Telegram HTML. Also what the voice tool
+    `monitor_status` reads (bot/control.py)."""
     mtype  = monitor.get("type", "storm_front")
-    status = _live_status_dispatcher(item_id)
-    badge  = _live_badge(status, mtype, item_id,
+    status = _live_status_dispatcher(monitor["id"])
+    badge  = _live_badge(status, mtype, monitor["id"],
                          monitor.get("language", "it") == "it")
     if mtype == "seismic":
         areas = ", ".join(monitor.get("areas", [])) or "—"
@@ -490,10 +473,7 @@ async def handle_live_monitor_callback(update: Update, context: ContextTypes.DEF
             f"per {'pioggia' if rain else 'temporale'} — Polling: 60s",
         ]
         msg = "\n".join(lines)
-    # The origin block carries a map link, and Telegram would otherwise paste an
-    # OpenStreetMap card under a four-line status message.
-    await query.message.reply_text(msg, parse_mode=ParseMode.HTML,
-                                   disable_web_page_preview=True)
+    return msg
 
 
 # ── /rain and /storm — on-demand snapshots ────────────────────────────────────
@@ -679,6 +659,19 @@ def _stations_keyboard(positions: list[dict]) -> InlineKeyboardMarkup:
         for p in positions])
 
 
+async def stations_text(lat: float, lon: float, place: str, lang: str = "it",
+                        voice: bool = False) -> str:
+    """The /stations readout as Telegram HTML. Raises when MeteoHub cannot be
+    read. Shared with the voice tool `station_readings` (bot/control.py)."""
+    now = time.time()
+    radius = gauge_source.radius_km()
+    view = await gauge_source.observe(
+        lat, lon, radius, min_mmh=0.2, products=READOUT_PRODUCTS,
+        window_min=gauge_source.READOUT_WINDOW_MIN, now=now)
+    return format_stations(view, place, lang=lang, tz=_tz(_tz_name()),
+                           radius_km=radius, now=now, voice=voice)
+
+
 async def _deliver_stations(message, lat: float, lon: float, place: str,
                             lang: str = "it") -> None:
     """One readout, from whichever route found the coordinates.
@@ -686,18 +679,11 @@ async def _deliver_stations(message, lat: float, lon: float, place: str,
     Takes `message` rather than `update` so the command and the inline button
     share it, exactly as `_deliver_snapshot` does.
     """
-    now = time.time()
-    radius = gauge_source.radius_km()
     try:
-        view = await gauge_source.observe(
-            lat, lon, radius, min_mmh=0.2, products=READOUT_PRODUCTS,
-            window_min=gauge_source.READOUT_WINDOW_MIN, now=now)
+        text = await stations_text(lat, lon, place, lang)
     except Exception as e:
         await message.reply_text(f"❌ MeteoHub read failed: {html.escape(str(e))}")
         return
-
-    text = format_stations(view, place, lang=lang, tz=_tz(_tz_name()),
-                           radius_km=radius, now=now)
     # Car Mode keeps this one whole: the readout IS the content, and it was
     # asked for deliberately. `for_car` still turns units and compass points
     # into words and drops the icons.

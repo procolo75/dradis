@@ -1,5 +1,81 @@
 # CHANGELOG
 
+## [4.16.1] - 2026-10-14
+
+**DRADIS on your voice assistant — as in the Telegram chat.** DRADIS is now the conversation agent
+of Home Assistant's voice pipeline (HA Assist), for any Assist voice assistant. Home commands stay
+with Home Assistant: with *Prefer handling commands locally* on, HA switches "the living room light"
+itself — instantly, with its own names and aliases — and everything it does not understand reaches
+DRADIS with the same model, the same tools and the **same conversation history** as the chat. Ask
+aloud, follow up on Telegram, or the other way round. Full guide: wiki page *HA Assist*.
+
+**Setup — update the add-on (a rebuild does not apply the new permissions), restart Home Assistant,
+then *Add integration → DRADIS* with the URL and token from Settings → 🎙️ HA Assist, and pick DRADIS
+as the assistant's conversation agent.**
+
+### HA Assist
+- **Feat — DRADIS as a conversation agent.** A small Home Assistant integration
+  (`ha_integration/dradis`: config flow + conversation entity) ships with the add-on, which copies it
+  into `custom_components` and tells you on Telegram to restart HA. HA calls `POST /api/assist`
+  (Bearer token, `/data/assist_token`). The add-on also announces itself through the Supervisor;
+  when *Discovered: DRADIS* appears, confirming it fills URL and token in.
+- **The same chat, not a copy.** The Telegram turn is now `state.chat_turn()`, used by both doors:
+  history read and written in one place, all tools, fallback and tool-failure handling unchanged.
+- **Direct commands, no model.** `/rain`, `/storm` and `/stations` answer on their words, before any
+  model call — instant, no tokens, and immune to the model picking the forecast instead:
+  *rain* → `/rain`; *storm* → `/storm`; *radar* + pioggia/piove/piovere → `/rain`; *radar* +
+  temporale/i/fulmine/i → `/storm`; *radar* alone → both; *sta per piovere* → `/rain`;
+  *misura/e*, *stazione/i*, *sensore/i* → `/stations` (at the place after *a/ad/di/in/presso/vicino a*,
+  else at your position). A monitor's name in the sentence narrows to it; otherwise every monitor of
+  the kind answers in turn (the spoken stand-in for the Telegram keyboard).
+- **DRADIS commands — the Telegram menu as tools,** by voice and in the chat (`bot/control.py`,
+  switch in the panel, token cost shown): `run_task`, `run_monitor` (scheduled monitors),
+  `radar_now`, `set_enabled` (tasks, scheduled monitors, Car Mode) and `station_readings` (with
+  MeteoHub on). Every name is an **enum of what is configured**: the model cannot invent one or add
+  a word to it. `set_enabled` flips only when the state differs. Live and HA monitors are not driven
+  by voice — only their `/rain` and `/storm` views. A prompt rule sends rain/storms *now* and any
+  mention of the radar to `radar_now`, forecasts to `get_weather`.
+- **Results that arrive later are spoken.** A task or monitor started by voice answers "started";
+  when it finishes, its result is said on the assistant that asked (and sent to Telegram as always).
+  `run_scheduled_task` / `run_scheduled_monitor` take an optional `on_result`; the turn's origin
+  travels in a `ContextVar` (`state.CHANNEL`).
+- **Speaker** (`speaker.py`): `assist_satellite.announce` on a satellite, `tts.speak` with a chosen
+  TTS engine on a media player, through Home Assistant's API. Target: the asking device (from its
+  `device_id`), else the *Default speaker*. Long text is cut at a sentence end ("il resto è su
+  Telegram"). Never raises.
+- **Live monitors that speak:** *Announce by voice* per live monitor (off by default) on the Default
+  speaker, with its own **voice quiet hours**. Fire and forget — Telegram delivery and the monitor's
+  state are untouched.
+- **Text for speech** (`voice.py`): Car Mode's sanitiser plus what a TTS engine would spell out —
+  `_` ("trattino basso"), hyphens ("trattino"), number ranges (10-15 → "10 a 15"), Italian decimals
+  (27.5 → "27,5"), list markers, slashes. `/stations` has a spoken layout: each station named once,
+  no network acronyms. Footers and fallback / tool-failure notices are never read aloud. Car Mode's
+  Telegram output is unchanged.
+- **Optional copy to Telegram** (off by default): "🎙️ question", the answer with the chat's
+  token/tool footer, radar pictures and notices. A model failure is always reported to Telegram;
+  the speaker hears one sentence.
+- **Panel 🎙️ HA Assist:** enable, copy to Telegram, DRADIS commands (+ cost), default speaker and
+  TTS engine (from HA), speaker test, status, test question, URL and token (ingress only).
+- New routes: `/api/assist`, `/api/assist/status`, `/api/assist/test`, `/api/assist/token`,
+  `/api/assist/entities`, `/api/assist/speak-test`, `/api/assist/control-cost`. New settings:
+  `assist_enabled`, `assist_mirror_telegram`, `assist_speaker_entity`, `assist_tts_entity`,
+  `control_tools_enabled`; per live monitor `speak_alerts`, `speak_quiet_start`, `speak_quiet_end`.
+  `config.yaml`: `homeassistant_api`, `hassio_api`, `discovery: [dradis]`, map
+  `homeassistant_config`.
+
+### Removed
+- **HA Control (MCP)** (v4.15.0). Making the model pick Home Assistant intent arguments proved fragile
+  and slow: HA matches names exactly, the model guessed areas or added words ("luce *del*
+  soggiorno"), every wrong guess cost another ~2K-token round and, on Groq's free minute, a 60 s
+  wait. Home commands now go to Home Assistant's own local intent handling. Leftover `ha_mcp_*` keys
+  in the settings file are ignored.
+
+### Fixed
+- **Pacing priced from the provider's bill.** The local estimate over-counts tool schemas two to
+  three times (5128 estimated, 2053 billed with 23 tools), which made a two-round turn wait a full
+  minute for nothing. From the second round of a turn a request is priced as the previous round's
+  billed prompt plus what was added since; it can only lower the estimate, never raise it.
+
 ## [4.15.0] - 2026-10-14
 
 **DRADIS can now act on your home, through Home Assistant's own MCP server.** Until now DRADIS only

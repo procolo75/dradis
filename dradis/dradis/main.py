@@ -80,7 +80,7 @@ from web.store import (
     migrate_legacy_position,
 )
 from live_monitors.ha import ha_monitor_manager
-from tools import ha_mcp
+import assist
 
 
 def build_telegram_app():
@@ -195,7 +195,7 @@ async def main():
         _migrate_positions()
         reload_live_monitors()
         reload_ha_monitors()
-        await ha_mcp.refresh(_state.read_settings())
+        await assist.startup(_state.WEB_PORT, notify=_state.send_telegram)
 
         settings    = _state.read_settings()
         startup_msg = settings.get("startup_message", _state.SETTINGS_DEFAULTS["startup_message"])

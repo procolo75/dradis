@@ -86,23 +86,19 @@ Token at `/data/google_tasks_token.json`.
 
 ---
 
-## HA Control (MCP)
+## DRADIS control
 
-DRADIS acts on Home Assistant through HA's built-in **Model Context Protocol server** (HA 2026.10+).
+The Telegram menu as tools — available in the chat and through [[HA Assist|HA-Assist]] (switch *DRADIS commands* in **Settings → 🎙️ HA Assist**, where their token cost is shown):
 
-**Home Assistant side:** *Settings → System → AI* → **Model Context Protocol** → on. Then
-*Settings → Voice assistants → Expose*: only exposed entities can be seen or controlled.
+| Tool | What it does |
+|---|---|
+| `run_task` | Runs a task now ("esegui il task Meteo mattina") |
+| `run_monitor` | Runs a scheduled monitor now ("lancia il monitor rischio temporali") |
+| `radar_now` | `/rain` / `/storm`: what the rain or storm monitors see right now; without a name every monitor of that kind answers |
+| `set_enabled` | Enables/disables a task or scheduled monitor, or Car Mode |
+| `station_readings` | `/stations` — only with MeteoHub on |
 
-**DRADIS side:** *Tools → HA Control (MCP)* → Enabled → Save → *Test connection* → tick the tools → Save.
-No token is needed: the add-on goes through the Supervisor (`homeassistant_api`). A custom URL
-(`http://homeassistant:8123/api/mcp/assist`) + long-lived token is the fallback.
-
-- DRADIS uses `/api/mcp/assist`, not `/api/mcp`: only the home-control tools, not every LLM API HA has,
-  and it is the one keyed endpoint not restricted to administrators.
-- Every ticked tool's schema is sent with every message; the panel shows ≈tokens per tool. Tick only
-  what you use on a small per-minute budget (Groq free tier: 8000).
-- A failed action is reported as a ⚠️ tool failure, not as done. If HA is down DRADIS starts without
-  HA tools; `/info` shows the status.
+Every name is a closed list (enum) of what is configured when the message arrives: the model cannot invent one. Live and HA monitors are not driven by these tools. Started from a voice assistant, a task or monitor speaks its result there when it finishes.
 
 ## URL Fetch
 

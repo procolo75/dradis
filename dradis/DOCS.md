@@ -31,7 +31,7 @@ Each capability contributes tool specs (`agents/*.py` → `*_tools(settings)`):
 | Google Calendar | `get_calendar_events`, `create_calendar_event`, `delete_calendar_event` |
 | Gmail | `get_emails`, `get_unread_emails`, `search_emails`, `send_email` |
 | Google Tasks | `list_tasks`, `create_task`, `complete_task`, `delete_task`, `update_task` |
-| Home Assistant | whatever HA's MCP server lists (`HassTurnOn`, `HassTurnOff`, `HassLightSet`, `GetLiveContext`, …), filtered by the panel's allowlist — `tools/ha_mcp.py` |
+| DRADIS control | `run_task`, `run_monitor`, `radar_now`, `set_enabled`, `station_readings` — names as enums (see *Settings → HA Assist*) |
 | Read URL | `read_url` |
 
 A capability's tools are available when it is **Enabled** and authenticated. **Chat** gets all available tools; a **task** and an **HA monitor (LLM mode)** each select exactly which tools to attach (fewer tools = smaller prompt; HA monitors default to *none*). `bot/state.py:build_tools(settings, selected)` assembles the list — `[]` = no tools, `["*"]` = all, a list = only those. A capability's *Additional instructions* are added to the system prompt when any of its tools are attached, under a header that names the capability and its tool names and states that the line applies **only while that tool is in use**. Without that attribution they read as standing rules and shape unrelated answers — a weather instruction would change how a web search is written.
@@ -86,13 +86,18 @@ It is sent as its own message, ahead of the reply, and unlike the `🔢`/`🔧` 
 | `backup/gdrive.py` | Google Drive backup module — OAuth2 flow, file upload, `run_backup_monitor()` |
 | `bot/handlers.py` | Telegram message, voice, and callback handlers |
 | `core.py` | Agent runtime — `run_agent()` tool-calling loop over the `openai` SDK, `AgentResult`, provider/context helpers (no agno) |
-| `bot/state.py` | Tool registry & runner — `build_tools()`, `run_dradis()`, capabilities, history, fallback, extra-bot registry |
+| `bot/state.py` | Tool registry & runner — `build_tools()`, `run_dradis()`, `chat_turn()` (one chat turn, shared by Telegram and HA Assist), capabilities, history, fallback, extra-bot registry |
+| `voice.py` | `for_voice()` — text for a TTS engine: Car Mode's sanitiser plus underscores, hyphens, ranges, list markers, slashes |
+| `speaker.py` | Speaks on a HA voice assistant at any time — `assist_satellite.announce` or `tts.speak`, target resolved from the asking device |
+| `bot/control.py` | The Telegram menu as tools (run task/scheduled monitor, /rain-/storm radar, enable/disable, Car Mode, stations), names as enums |
+| `assist.py` | HA Assist wiring — token, copy of the HA integration into `custom_components`, Supervisor discovery |
+| `web/routes/assist.py` | `POST /api/assist` (the HA integration calls it) + status/test/token for the Web UI |
+| `../ha_integration/dradis/` | Home Assistant integration: config flow (Supervisor discovery or manual) and the DRADIS conversation agent |
 | `agents/web_search.py` | Web Search tools — `web_search_tools()` (Tavily) |
 | `agents/weather.py` | Weather tools — `fetch_weather()` + `weather_tools()` (Open-Meteo) |
 | `agents/gmail.py` | Gmail tools — `gmail_tools()` + OAuth token management |
 | `agents/gcal.py` | Google Calendar tools — `gcal_tools()` + OAuth token management |
 | `agents/gtasks.py` | Google Tasks tools — `gtasks_tools()` + OAuth token management |
-| `tools/ha_mcp.py` | Home Assistant tools — minimal MCP client (JSON-RPC over httpx) for HA's `/api/mcp/<api_id>`; `refresh()` caches `tools/list`, `ha_mcp_tools()` turns it into tool specs, `call_tool()` raises `ToolError` on failure |
 | `monitors/thunderstorm.py` | Thunderstorm risk monitor — LLM-free, fetches Open-Meteo instability + pressure-level data, computes multiplicative TRS (0.0–1.0) in Python |
 | `monitors/rain.py` | Rain alert monitor — LLM-free, fetches 15-min precipitation data from Open-Meteo, sends alert only when rain is forecast |
 | `monitors/seismic.py` | Seismic report monitor — LLM-free, fetches INGV GOSSIP JSON API, sends statistical report |
@@ -387,39 +392,6 @@ A synthesis sub-agent formats the raw task data using the configured LLM model b
 
 The shortcut command `/todo` lists all open tasks directly without going through the DRADIS team routing — zero overhead.
 
-### Tools → HA Control (MCP)
-
-Lets DRADIS act on the home — lights, switches, covers, climate, scripts — through Home Assistant's
-built-in **Model Context Protocol server** (HA 2026.10+). DRADIS calls the tools itself; no extra LLM.
-
-**On Home Assistant**
-1. *Settings → System → AI* → **Model Context Protocol** card → turn it on.
-2. *Settings → Voice assistants → Expose* → expose only what DRADIS may see and control. The Assist
-   API never sees an entity that is not exposed.
-
-**In DRADIS**
-1. Enable the panel, leave *Custom URL* blank, *Save*, then *Test connection*: it shows the HA version,
-   the number of tools and whether it went through the **Supervisor** (no token needed — the add-on
-   declares `homeassistant_api`) or a **long-lived token**.
-2. Tick the tools DRADIS may use and *Save* again.
-
-| Field | Description |
-|-------|-------------|
-| LLM API id | DRADIS calls `/api/mcp/<id>`. Default `assist`: only the home-control tools, and the one keyed endpoint HA does not restrict to administrators. Plain `/api/mcp` serves every LLM API HA has (on new installs, admin-only). |
-| Custom URL / token | Fallback only, e.g. `http://homeassistant:8123/api/mcp/assist` + a long-lived access token (profile → Security). |
-| Tools | Allowlist. Each tool's schema is sent with every message (the Assist ones list your areas and device names); ≈tokens are shown per tool. All ticked = every tool, including ones HA adds later. |
-| Instructions | Added to the system prompt only while a Home Assistant tool is attached. |
-
-The tool list is read at startup, on every settings save and on *Test connection*, and cached. If HA is
-unreachable DRADIS keeps working without HA tools; `/info` shows the error. A failed action (HA's
-`isError`, HTTP error) is reported as a tool failure (⚠️ notice), never passed off as done.
-
-| Error | Meaning |
-|-------|---------|
-| 404 | MCP server not turned on in *Settings → System → AI*, or wrong API id |
-| 401 | Token rejected — use a long-lived token with a custom URL |
-| 403 | Endpoint needs an administrator: use `assist`, or an admin's token |
-
 ### Settings → Car Mode
 
 DRADIS messages are built to be **looked at**: an icon on every line, bold text, abbreviated units, `·` and `—` between facts, and for weather a radar chart attached as a photo. Behind the wheel that format breaks down. CarPlay hands the notification to the speech engine, which announces emoji by name ("cloud with lightning and rain"), spells `45°` and `2/4` as symbols, reads URLs character by character, and often says nothing beyond "Image" when a photo is attached.
@@ -453,6 +425,164 @@ The conversion is deterministic: no model call, no added latency on an urgent al
 | Test message | — | Sends a sample storm alert in Car Mode wording to your default Telegram bot, **whatever the toggle is set to** — you use it to decide whether to switch Car Mode on. Listening to it through CarPlay is the only real test. |
 
 > Activation is manual by design. GPS speed cannot tell *stopped in traffic* from *parked and walked away* — physically the same signal — so an automatic trigger would switch off exactly when you are still driving.
+
+### Settings → HA Assist
+
+Talk to DRADIS through **any Home Assistant voice assistant** (an Assist satellite, a modified Echo,
+a Voice PE…) exactly as you do in the Telegram chat: same model, same tools and the **same
+conversation history**. Ask aloud, follow up on Telegram, or the other way round.
+
+Home commands stay with Home Assistant. With **Prefer handling commands locally** on, HA's own
+intents handle "turn off the living room light" — instantly, with its exact names and aliases, no
+model involved — and only what HA does not understand is passed to DRADIS.
+
+```
+voice ──► HA Assist pipeline ──► HA local intents ── understood ──► HA acts (lights, switches…)
+                                        │
+                                        └─ not understood ──► DRADIS integration ──► add-on /api/assist
+                                                                                        │
+                       ┌────────────────────────────────────────────────────────────────┘
+                       ├─ /rain, /storm, /stations words ──► direct command (no model, no tokens)
+                       └─ anything else ──► the Telegram chat turn (model + tools + shared history)
+```
+
+#### Setup (once)
+
+1. **Update** the add-on (not just rebuild: the new version asks for access to Home Assistant's
+   config folder, the Supervisor API and the Home Assistant API, and only an update applies
+   permissions). DRADIS copies its integration to `/config/custom_components/dradis` and sends a
+   Telegram message: *restart Home Assistant*.
+2. Restart Home Assistant.
+3. In the DRADIS Web UI, **Settings → 🎙️ HA Assist → Show URL and token**. The URL is
+   `http://<add-on hostname>:8099` — `http://local-dradis:8099` for a local add-on.
+4. *Settings → Devices & services → Add integration → **DRADIS*** and paste URL and token.
+   If *Discovered: DRADIS* appears instead, just confirm it: URL and token come with the discovery.
+5. *Settings → Voice assistants* → your assistant → **Conversation agent: DRADIS**, and turn on
+   **Prefer handling commands locally**.
+6. Back in the HA Assist panel: pick the **Default speaker** (and a **TTS engine** if it is a media
+   player), **Save**, and press **Say a test sentence**.
+
+#### What you can say
+
+##### Anything — as in the chat
+
+Every question goes to DRADIS with all its tools and the shared history: "che tempo fa domani a
+Napoli?", "leggimi le ultime mail", "aggiungi un promemoria per domani alle 9", and then on Telegram
+"e dopodomani?".
+
+##### Direct commands — no model, instant, no tokens
+
+Matched on the words before any model is involved (case, accents and punctuation do not matter;
+`_` counts as a space):
+
+| The sentence contains… | Runs | Examples |
+|---|---|---|
+| *rain* | `/rain` | "rain", "lancia il comando rain" |
+| *storm* | `/storm` | "storm", "storm temporali 2" |
+| *radar* + pioggia / piove / piovere | `/rain` | "radar pioggia", "il radar dice che piove?" |
+| *radar* + temporale / temporali / fulmine / fulmini | `/storm` | "radar temporali", "ci sono fulmini sul radar?" |
+| *radar* alone | `/rain` and `/storm` | "cosa dice il radar?" |
+| *sta per piovere* | `/rain` | "sta per piovere?" |
+| *misura/e*, *stazione/i*, *sensore/i* | `/stations` | "misure meteo", "dammi i dati della stazione meteo", "sensori a Bacoli", "stazioni di Monte di Procida" |
+
+- **Which monitors.** A monitor's name in the sentence narrows to it ("storm temporali 2" →
+  `Temporali_2`). A name made only of the trigger words ("Temporali", "Pioggia") does not narrow:
+  "radar temporali" asks for the kind. Otherwise **every** monitor of that kind answers in turn —
+  the spoken stand-in for the Telegram keyboard. Each caption opens with its monitor's name.
+- **Where, for stations.** A place after *a / ad / di / in / presso / vicino a* is read there;
+  otherwise at your position (the first configured position with a usable fix).
+- **Not commands.** "Piove domani?", "temporali stasera?" have no trigger word and go to the model,
+  i.e. to the forecast.
+- The exchange is kept in the shared history like any answer. In the Telegram copy the footer says
+  `🔧 radar_now (direct)` or `🔧 station_readings (direct)`.
+
+##### DRADIS commands — through the model, with exact names
+
+With **DRADIS commands** on, the Telegram menu is available as tools, by voice and in the chat. The
+model is given the **exact names** of your tasks and monitors as a closed list (an enum): it cannot
+invent a name or add a word to one.
+
+| Tool | What it does | Example |
+|---|---|---|
+| `run_task` | runs a task now | "esegui il task Meteo mattina" |
+| `run_monitor` | runs a **scheduled** monitor now (thunderstorm risk, rain, weather charts, seismic…) | "lancia il monitor rischio temporali" |
+| `radar_now` | `/rain` / `/storm` when the sentence was not a direct command | "com'è la situazione dei temporali?" |
+| `set_enabled` | enables / disables a task or scheduled monitor, or Car Mode | "disattiva il monitor sismico", "car mode on" |
+| `station_readings` | `/stations` (only with MeteoHub on) | "che dicono le stazioni a Pozzuoli?" |
+
+**Live and HA monitors are not driven by voice** — no status, no on/off. Their on-demand views
+(`/rain`, `/storm`) are.
+
+A task or monitor started by voice answers **"started"** at once and, when it finishes, its result
+(or "chart sent to Telegram") is **spoken on the assistant that asked**. It still goes to Telegram as
+always.
+
+These tools are sent with every message: the panel shows their cost in tokens
+(≈1000–1200 with a typical setup). Switch them off if you only want the direct commands.
+
+#### How the answer sounds
+
+Everything said on a speaker goes through `voice.for_voice`: Car Mode's sanitiser (no emoji, links
+or markup; units, compass points and dates in words) plus what a TTS engine would otherwise spell
+out — `_` and `-` ("trattino"), number ranges (*10-15 km* → "10 a 15 chilometri"), Italian decimals
+(*27.5* → "27,5"), list markers and slashes. The `/stations` readout has a spoken layout: each
+station is named once with everything it measured. Car Mode's Telegram output is not affected.
+
+- Long text is cut at a sentence end with "il resto è su Telegram".
+- Token/tool footers and the fallback / tool-failure notices are **never read aloud**.
+- If no model answers, the speaker hears one short sentence and the error goes to Telegram.
+
+#### Speaking at any time — the speaker
+
+DRADIS can speak when nobody just asked: a task's result minutes later, a live monitor's alert.
+
+- **Where.** On the device that asked, when there is one: HA sends its `device_id`, DRADIS looks up
+  its entities and uses its `assist_satellite.*`, else its `media_player.*`. Otherwise the
+  **Default speaker** from the panel.
+- **How.** Through Home Assistant's API (via the Supervisor):
+  - `assist_satellite.*` → `assist_satellite.announce` — the satellite speaks with its pipeline's
+    voice. Preferred.
+  - `media_player.*` → `tts.speak` with the **TTS engine** chosen in the panel.
+- A speaker that is off or unreachable never breaks anything: the log says `[DRADIS] Speaker: …`.
+
+#### Live monitors that speak
+
+In each live monitor's form:
+
+- **Announce by voice** (off by default) — every alert is also said on the Default speaker.
+- **🔕 Voice quiet hours** — inside the window the alert is not spoken but still reaches Telegram.
+  Separate from the monitor's Telegram *Quiet hours*. Windows may cross midnight (23:00–07:00).
+
+Telegram delivery is unchanged and stays what the monitor tracks: the voice is fire-and-forget.
+
+#### The HA Assist panel
+
+| Field | Description |
+|---|---|
+| Enabled | Off → DRADIS refuses requests (HA says "DRADIS non risponde"). |
+| Copy each exchange to Telegram | "🎙️ question", the formatted answer with the chat footer, pictures (radar) and notices. Off by default. |
+| DRADIS commands | The control tools on/off, with their token cost. Direct commands follow the same switch. |
+| Default speaker | `assist_satellite.*` or `media_player.*` (🔄 reloads the list from HA). |
+| TTS engine | `tts.*`, needed only for a media player. |
+| Say a test sentence | Speaks on the selected speaker, saved or not. |
+| Status | Integration version, discovery, last question and how long it took. |
+| Test | Re-installs the integration if needed, announces DRADIS again and asks one question (not kept in the history). |
+| Show URL and token | For *Add integration → DRADIS*. Shown only through the add-on page (ingress). |
+
+#### Under the hood
+
+| Piece | Where |
+|---|---|
+| HA integration (config flow + conversation agent) | `ha_integration/dradis/` — copied to `custom_components` by the add-on |
+| Install, token, discovery | `dradis/assist.py` — token in `/data/assist_token` |
+| Endpoint called by HA | `POST /api/assist` (`Authorization: Bearer <token>`) in `web/routes/assist.py` |
+| One chat turn, shared with Telegram | `bot/state.py: chat_turn()`; origin of the turn in `state.CHANNEL` |
+| Direct commands and control tools | `bot/control.py` (`match_radar`, `match_stations`, the five tools) |
+| Speaking | `dradis/speaker.py` |
+| Text for speech | `dradis/voice.py` |
+
+The integration waits up to 90 s for an answer — enough for a rate-limited provider's minute to roll
+over.
 
 ### Settings → Telegram Bots
 

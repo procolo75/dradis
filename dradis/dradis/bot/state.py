@@ -10,6 +10,7 @@ during startup and mutated by bot.scheduler at runtime.
 """
 
 import asyncio
+import contextvars
 import html
 import json
 import os
@@ -17,6 +18,7 @@ import re
 import tempfile
 import time
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from groq import Groq as GroqClient
@@ -33,7 +35,6 @@ from agents.gmail   import GMAIL_TOKEN_FILE, gmail_tools
 from agents.gtasks  import GTASKS_TOKEN_FILE, gtasks_tools
 from agents.weather    import weather_tools
 from agents.web_search import web_search_tools
-from tools.ha_mcp import ha_mcp_tools
 
 # ── Startup options ───────────────────────────────────────────────────────────
 
@@ -420,7 +421,7 @@ CAPABILITIES = [
     {"id": "gcal",       "label": "Google Calendar", "instr": "gcal_instructions"},
     {"id": "gmail",      "label": "Gmail",           "instr": "gmail_instructions"},
     {"id": "gtasks",     "label": "Google Tasks",    "instr": "gtasks_instructions"},
-    {"id": "ha",         "label": "Home Assistant",  "instr": "ha_instructions"},
+    {"id": "dradis",     "label": "DRADIS control",  "instr": "control_instructions"},
 ]
 
 
@@ -437,8 +438,10 @@ def _capability_tool_groups(settings: dict) -> dict:
         groups["gmail"] = gmail_tools(settings)
     if settings.get("gtasks_enabled") and GTASKS_TOKEN_FILE.exists():
         groups["gtasks"] = gtasks_tools(settings)
-    if settings.get("ha_mcp_enabled"):
-        groups["ha"] = ha_mcp_tools(settings)
+    if settings.get("control_tools_enabled", True):
+        # Imported here: control imports this module.
+        from bot.control import control_tools
+        groups["dradis"] = control_tools(settings)
     for cap_id, specs in groups.items():
         for t in specs:
             t["capability"] = cap_id
@@ -493,6 +496,13 @@ def task_tool_selection(task: dict):
 _READ_URL_RULE = ("When the user gives an http:// or https:// URL, call read_url "
                   "to fetch the page and answer from it.")
 
+# get_weather lists "rain" among its triggers, so "is it going to rain?" went to
+# the forecast. Rain or storms NOW / in the next hour, or any mention of the
+# radar, is the radar's question; hours and days ahead are the forecast's.
+_RADAR_RULE = ("Rain or storms happening now or arriving within the next hour, or any "
+               "mention of the radar, /rain or /storm: call radar_now, not get_weather. "
+               "get_weather is for forecasts hours or days ahead.")
+
 # Without this header the per-capability instructions are bare sentences sitting
 # directly under `agent_instructions`, which is to say indistinguishable from
 # global rules — so "report temperatures in Celsius" would shape a web search
@@ -524,6 +534,8 @@ def _system_prompt(settings: dict, tools: list[dict]) -> str:
     extra = []
     if any(t["name"] == "read_url" for t in tools):
         extra.append(_READ_URL_RULE)
+    if any(t["name"] == "radar_now" for t in tools):
+        extra.append(_RADAR_RULE)
     if scoped:
         extra.append(_TOOL_INSTRUCTIONS_HEADER + "\n" + "\n".join(scoped))
     return base + ("\n\n" + "\n\n".join(extra) if extra else "")
@@ -680,6 +692,82 @@ def _fallback_msg(reason, task_name: str | None = None) -> str:
     the error that caused it."""
     prefix = f"⚠️ Task <b>{html.escape(task_name)}</b>: " if task_name else "⚠️ "
     return f"{prefix}fallback triggered — {html.escape(str(reason))}"
+
+
+# ── One chat turn (Telegram and HA Assist) ────────────────────────────────────
+
+@dataclass
+class ChatTurn:
+    """What one conversational turn produced, before anyone formats it.
+
+    `text` is the model's answer ("" when it gave none). `error` is set, as
+    Telegram HTML, when no model answered at all. `notices` are the side
+    messages (fallback used, tools that failed): they go to Telegram, never into
+    a spoken answer."""
+    text:    str = ""
+    result:  object = None
+    error:   str = ""
+    notices: list = field(default_factory=list)
+
+
+# Where the current turn came from: {"source": "chat"|"assist", "device_id",
+# "language"}. Set by `chat_turn` for its duration, read by the control tools
+# (bot/control.py) — a task started by voice must also SPEAK its result, on the
+# device that asked.
+CHANNEL: contextvars.ContextVar = contextvars.ContextVar("dradis_channel", default=None)
+
+
+def current_channel() -> dict:
+    return CHANNEL.get() or {"source": "chat"}
+
+
+async def chat_turn(question: str, settings: dict, source: str = "chat",
+                    remember: bool = True, channel: dict | None = None) -> ChatTurn:
+    """Ask DRADIS one question as the chat does: every available tool and the
+    one shared conversation history. Telegram and HA Assist both come through
+    here, so a question asked aloud can be followed up in the chat and the
+    other way round. `remember=False` reads the history but leaves no trace
+    (the Web UI's test question)."""
+    history_enabled = settings.get("history_enabled", True)
+    history_depth   = settings.get("history_depth", 2)
+    model   = settings.get("model", SETTINGS_DEFAULTS["model"])
+    history = history_messages(model) if history_enabled else None
+
+    # Chat gets all available tools; the single agent decides which to call.
+    token = CHANNEL.set(channel or {"source": source})
+    try:
+        result, used_fallback, error, fb_reason = await run_dradis(
+            question, settings, selected=None, history=history, context_label=source,
+        )
+    finally:
+        CHANNEL.reset(token)
+    turn = ChatTurn(result=result)
+    if error is not None:
+        fb_model_id = _apply_fallback_settings(settings).get("model", model)
+        if used_fallback:
+            turn.error = (
+                f"❌ Both primary (<code>{html.escape(model)}</code>) and "
+                f"fallback (<code>{html.escape(fb_model_id)}</code>) models failed: "
+                f"{html.escape(str(error))}"
+            )
+        else:
+            turn.error = (
+                f"❌ Model error (<code>{html.escape(model)}</code>): {html.escape(str(error))}\n"
+                "<i>No fallback model configured.</i>"
+            )
+        return turn
+
+    if used_fallback:
+        turn.notices.append(_fallback_msg(fb_reason))
+    tool_errors = _tool_errors_msg(settings, result)
+    if tool_errors:
+        turn.notices.append(tool_errors)
+
+    turn.text = (result.content or "").strip()
+    if history_enabled and remember:
+        save_turn("user", question, history_depth)
+        save_turn("assistant", turn.text, history_depth)
+    return turn
 
 
 # ── Voice transcription ───────────────────────────────────────────────────────

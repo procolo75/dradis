@@ -321,6 +321,10 @@
           <span class="nav-dot" id="carmode-dot"></span>
           <span class="nav-label">Car Mode</span>
         </li>
+        <li class="nav-item" data-panel="assist" id="nav-assist">
+          <span class="nav-dot" id="assist-dot"></span>
+          <span class="nav-label">HA Assist</span>
+        </li>
         <li class="nav-item" data-panel="bots" id="nav-bots">
           <span class="nav-icon">🤖</span>
           <span class="nav-label">Telegram Bots</span>
@@ -352,10 +356,6 @@
         <li class="nav-item" data-panel="gtasks" id="nav-gtasks">
           <span class="nav-dot" id="gtasks-dot"></span>
           <span class="nav-label">Google Tasks</span>
-        </li>
-        <li class="nav-item" data-panel="ha-mcp" id="nav-ha-mcp">
-          <span class="nav-dot" id="ha-mcp-dot"></span>
-          <span class="nav-label">HA Control (MCP)</span>
         </li>
         <li class="nav-item" data-panel="tools" id="nav-tools">
           <span class="nav-dot" id="read-url-dot"></span>
@@ -690,6 +690,144 @@
     </div>
 
     <!-- Panel: Car Mode -->
+    <div class="panel" id="panel-assist">
+      <div class="form-card">
+        <h2>🎙️ HA Assist</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          Talk to DRADIS through any Home Assistant voice assistant as you would in the
+          Telegram chat: same model, same tools, <b>same conversation history</b> — ask aloud,
+          follow up in the chat, or the other way round. Answers are spoken prose: no icons,
+          links or markup. What the Telegram menu does works by voice too: "run the task
+          Morning weather", "run the thunderstorm risk monitor", "are storms coming?"
+          (<code>/storm</code>), "is it going to rain?" (<code>/rain</code>), "station readings
+          in Naples". Live monitors can speak their alerts: <i>Announce by voice</i> in each
+          live monitor.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          <b>Direct commands — no model, no tokens:</b>
+          <i>rain</i> → <code>/rain</code> · <i>storm</i> → <code>/storm</code> ·
+          <i>radar</i> + pioggia/piove/piovere → <code>/rain</code> ·
+          <i>radar</i> + temporale/i, fulmine/i → <code>/storm</code> ·
+          <i>radar</i> alone → both · <i>sta per piovere</i> → <code>/rain</code> ·
+          <i>misura/e, stazione/i, sensore/i</i> → <code>/stations</code> (place after
+          <i>a / di / in / presso / vicino a</i>, else your position). A monitor's name in the
+          sentence narrows to it; otherwise every monitor of that kind answers.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          Home commands stay with Home Assistant: with <i>Prefer handling commands locally</i>
+          on, HA switches "the living room light" itself — instantly, with its own names and
+          aliases — and only what it does not understand reaches DRADIS.
+        </p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          <b>Setup (once):</b> DRADIS copies its integration into Home Assistant by itself.
+          1) Restart Home Assistant. 2) <i>Settings → Devices &amp; services → Add integration →
+          DRADIS</i>, with the URL and token from <i>Show URL and token</i> below (if
+          <i>Discovered: DRADIS</i> appears instead, just confirm it). 3) <i>Settings → Voice
+          assistants</i> → your assistant → <i>Conversation agent: DRADIS</i> and turn on
+          <i>Prefer handling commands locally</i>.
+        </p>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Enabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="assist-enabled">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">Copy each exchange to Telegram</span>
+            <label class="toggle">
+              <input type="checkbox" id="assist-mirror">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+            Sends "🎙️ question" and the full answer to Telegram — useful for links and details
+            that are dropped from speech. Tool-failure and fallback notices come with it; they
+            are never read aloud.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <span class="toggle-label">DRADIS commands (tasks, scheduled monitors, /rain, /storm, stations)</span>
+            <label class="toggle">
+              <input type="checkbox" id="assist-control">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+            The Telegram menu as tools, by voice and in the chat. The model sees the exact
+            names of your tasks and monitors and cannot invent one. A task or monitor started
+            by voice also <b>speaks its result</b> on the assistant that asked, when it is ready.
+          </p>
+          <div id="assist-control-cost" style="font-size:0.85rem; margin-top:6px;">Cost: …</div>
+        </div>
+
+        <div class="form-group">
+          <label for="assist-speaker">Default speaker</label>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="assist-speaker" style="max-width:340px"><option value="">— none —</option></select>
+            <button class="btn-icon" id="btn-assist-entities" type="button" title="Reload from Home Assistant">🔄</button>
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+            Used when no device just asked. A result started by voice is spoken on the device
+            that asked, if it can be found. Prefer an <code>assist_satellite</code>: it speaks
+            with its pipeline's voice.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label for="assist-tts">TTS engine <span style="font-size:0.8em; color:var(--text-muted)">(only for a media player)</span></label>
+          <select id="assist-tts" style="max-width:340px"><option value="">— none —</option></select>
+        </div>
+
+        <div class="form-group">
+          <label>Speaker test</label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn-icon" id="btn-assist-speak">Say a test sentence</button>
+            <span id="assist-speak-result" style="font-size:0.85rem;color:var(--text-muted)"></span>
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+            Uses the speaker and TTS engine selected above, saved or not.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label>Status</label>
+          <div id="assist-status" style="font-size:0.85rem; color:var(--text-muted);">—</div>
+        </div>
+
+        <div class="form-group">
+          <label>Test</label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn-icon" id="btn-assist-test">Test</button>
+            <span id="assist-test-result" style="font-size:0.85rem;color:var(--text-muted)"></span>
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+            Re-installs the integration if needed, announces DRADIS to Home Assistant again and
+            asks one question (not kept in the history). Shows the answer as it would be spoken.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label>URL and token <span style="font-size:0.8em; color:var(--text-muted)">(for Add integration → DRADIS)</span></label>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn-icon" id="btn-assist-token" type="button">Show URL and token</button>
+            <code id="assist-token" style="font-size:0.8rem; word-break:break-all;"></code>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-save" id="btn-save-assist">Save</button>
+        </div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-carmode">
       <div class="form-card">
         <h2>🚗 Car Mode</h2>
@@ -798,92 +936,6 @@
 
         <div class="btn-row">
           <button class="btn-save" id="btn-save-tools">Save</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Panel: Home Assistant control via MCP -->
-    <div class="panel" id="panel-ha-mcp">
-      <div class="form-card">
-        <h2>HA Control (MCP)</h2>
-        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
-          Lets DRADIS act on your home — lights, switches, climate, scripts — through
-          Home Assistant's built-in MCP server. DRADIS calls the tools directly; no
-          extra LLM call is made.
-        </p>
-        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
-          <b>On Home Assistant (2026.10+):</b> turn the server on in
-          <i>Settings → System → AI → Model Context Protocol</i>, then choose what DRADIS
-          may see and control in <i>Settings → Voice assistants → Expose</i>. Only exposed
-          entities are reachable. No token is needed: DRADIS reaches HA through the
-          Supervisor.
-        </p>
-
-        <div class="form-group">
-          <div class="toggle-row">
-            <span class="toggle-label">Enabled</span>
-            <label class="toggle">
-              <input type="checkbox" id="ha-mcp-enabled">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label for="ha-mcp-api-id">LLM API id</label>
-          <input type="text" id="ha-mcp-api-id" placeholder="assist" style="max-width:220px">
-          <small style="color:var(--text-muted);margin-top:4px;display:block">
-            DRADIS uses <code>/api/mcp/&lt;id&gt;</code>. Keep <code>assist</code>: it serves only
-            the Assist tools (fewer tokens per message) and, unlike the other APIs, does not
-            require an administrator account.
-          </small>
-        </div>
-
-        <div class="form-group">
-          <label for="ha-mcp-url">Custom URL <span style="font-size:0.8em; color:var(--text-muted)">(optional)</span></label>
-          <input type="text" id="ha-mcp-url" placeholder="http://homeassistant:8123/api/mcp/assist" autocomplete="off">
-          <small style="color:var(--text-muted);margin-top:4px;display:block">
-            Leave blank to go through the Supervisor. Fill it in, with a long-lived access
-            token below, only if the test fails with the Supervisor.
-          </small>
-        </div>
-
-        <div class="form-group">
-          <label for="ha-mcp-token">Long-lived access token <span style="font-size:0.8em; color:var(--text-muted)">(only with a custom URL)</span></label>
-          <div style="display:flex;gap:6px;max-width:420px">
-            <input type="password" id="ha-mcp-token" autocomplete="off" style="flex:1">
-            <button class="btn-icon" id="btn-ha-mcp-show-token" type="button" title="Show / hide token">👁</button>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>Connection test</label>
-          <div style="display:flex;gap:10px;align-items:center">
-            <button class="btn-icon" id="btn-ha-mcp-test">Test connection</button>
-            <span id="ha-mcp-test-result" style="font-size:0.85rem;color:var(--text-muted)"></span>
-          </div>
-          <small style="color:var(--text-muted);margin-top:4px;display:block">
-            Tests the <b>saved</b> settings and lists the tools Home Assistant offers.
-          </small>
-        </div>
-
-        <div class="form-group">
-          <label>Tools DRADIS may use <span id="ha-mcp-tokens" style="font-size:0.8em; color:var(--text-muted)"></span></label>
-          <div id="ha-mcp-tools" style="font-size:0.85rem;"></div>
-          <small style="color:var(--text-muted);margin-top:4px;display:block">
-            Every ticked tool's definition is sent with every message (≈ tokens shown).
-            On a small per-minute budget (Groq free: 8000) tick only what you use.
-            All ticked = every tool, including ones HA adds later.
-          </small>
-        </div>
-
-        <div class="form-group">
-          <label for="ha-instructions">Instructions</label>
-          <textarea id="ha-instructions" rows="3" placeholder="e.g. Always confirm what you switched, with the room name."></textarea>
-        </div>
-
-        <div class="btn-row">
-          <button class="btn-save" id="btn-save-ha-mcp">Save</button>
         </div>
       </div>
     </div>
@@ -2490,6 +2542,154 @@ document.getElementById("nav-carmode").addEventListener("click", async () => {
   try { await loadCarModeSettings(); } catch {}
 });
 
+// ── HA Assist panel ───────────────────────────────────────────────────────
+
+function renderAssistStatus(st) {
+  const lines = [];
+  const install = {installed: "installed — restart Home Assistant", updated: "updated — restart Home Assistant",
+                   current: "installed", "no-config": "Home Assistant config folder not mapped"}[st.install] || st.install || "not checked";
+  lines.push(`HA integration ${escHtml(st.integration_version || "")}: ${escHtml(install)}`);
+  lines.push(st.announced ? "Announced to Home Assistant ✅" :
+             `Not announced${st.announce_error ? ": " + escHtml(st.announce_error) : ""}`);
+  if (st.last_request) {
+    const when = new Date(st.last_request.at * 1000).toLocaleString();
+    lines.push(`Last question ${when} · ${st.last_request.seconds}s · ${st.last_request.ok ? "ok" : "error"}: “${escHtml(st.last_request.question)}”`);
+  } else {
+    lines.push("No question received yet");
+  }
+  document.getElementById("assist-status").innerHTML = lines.join("<br>");
+}
+
+function fillAssistSelect(id, items, saved) {
+  const sel = document.getElementById(id);
+  const opts = ['<option value="">— none —</option>'].concat(items.map(e =>
+    `<option value="${escHtml(e.id)}">${escHtml(e.name)} (${escHtml(e.id)})</option>`));
+  if (saved && !items.some(e => e.id === saved)) opts.push(`<option value="${escHtml(saved)}">${escHtml(saved)}</option>`);
+  sel.innerHTML = opts.join("");
+  sel.value = saved || "";
+}
+
+async function loadAssistEntities(s) {
+  try {
+    const ents = await api("GET", "/api/assist/entities");
+    fillAssistSelect("assist-speaker", ents.speakers, s.assist_speaker_entity);
+    fillAssistSelect("assist-tts", ents.tts, s.assist_tts_entity);
+  } catch {
+    fillAssistSelect("assist-speaker", [], s.assist_speaker_entity);
+    fillAssistSelect("assist-tts", [], s.assist_tts_entity);
+  }
+}
+
+async function loadAssistSettings() {
+  const s = await api("GET", "/api/settings");
+  document.getElementById("assist-enabled").checked = s.assist_enabled !== false;
+  document.getElementById("assist-mirror").checked  = !!s.assist_mirror_telegram;
+  document.getElementById("assist-control").checked = s.control_tools_enabled !== false;
+  await loadAssistEntities(s);
+  const costEl = document.getElementById("assist-control-cost");
+  try {
+    const cost = await api("GET", "/api/assist/control-cost");
+    costEl.textContent = `Cost: ≈${cost.tokens} tokens per message (${cost.tools.length} tools: ${cost.tools.join(", ")}).`;
+    costEl.style.color = "var(--text-muted)";
+  } catch (e) {
+    let msg = e.message || "unavailable";
+    try { msg = JSON.parse(msg).detail || msg; } catch {}
+    costEl.textContent = `Cost: not available — ${msg}`;
+    costEl.style.color = "var(--danger, #e53935)";
+  }
+  const dot = document.getElementById("assist-dot");
+  if (dot) dot.classList.toggle("on", s.assist_enabled !== false);
+  try { renderAssistStatus(await api("GET", "/api/assist/status")); } catch {}
+}
+
+document.getElementById("btn-assist-test").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-assist-test");
+  const result = document.getElementById("assist-test-result");
+  btn.disabled = true;
+  result.textContent = "Testing…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("POST", "/api/assist/test");
+    renderAssistStatus({...data, integration_version: (await api("GET", "/api/assist/status")).integration_version});
+    result.textContent = `🔊 ${data.speech}`;
+    result.style.color = "var(--success, #43a047)";
+  } catch (e) {
+    let msg = e.message || "Test failed";
+    try { msg = JSON.parse(msg).detail || msg; } catch {}
+    result.textContent = `❌ ${msg}`;
+    result.style.color = "var(--danger, #e53935)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-assist-entities").addEventListener("click", async () => {
+  try { await loadAssistEntities(await api("GET", "/api/settings")); } catch {}
+});
+
+document.getElementById("btn-assist-speak").addEventListener("click", async () => {
+  const btn    = document.getElementById("btn-assist-speak");
+  const result = document.getElementById("assist-speak-result");
+  btn.disabled = true;
+  result.textContent = "Speaking…";
+  result.style.color = "var(--text-muted)";
+  try {
+    const data = await api("POST", "/api/assist/speak-test", {
+      speaker: document.getElementById("assist-speaker").value,
+      tts:     document.getElementById("assist-tts").value,
+    });
+    result.textContent = `✅ Said on ${data.entity}`;
+    result.style.color = "var(--success, #43a047)";
+  } catch (e) {
+    let msg = e.message || "Failed";
+    try { msg = JSON.parse(msg).detail || msg; } catch {}
+    result.textContent = `❌ ${msg}`;
+    result.style.color = "var(--danger, #e53935)";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btn-assist-token").addEventListener("click", async () => {
+  const el = document.getElementById("assist-token");
+  try {
+    const data = await api("GET", "/api/assist/token");
+    el.textContent = `URL ${data.url} · Token ${data.token}`;
+  } catch (e) {
+    el.textContent = "Not available";
+  }
+});
+
+document.getElementById("btn-save-assist").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-save-assist");
+  btn.disabled = true;
+  let current = {};
+  try { current = await api("GET", "/api/settings"); } catch {}
+  const payload = {
+    ...current,
+    assist_enabled:         document.getElementById("assist-enabled").checked,
+    assist_mirror_telegram: document.getElementById("assist-mirror").checked,
+    control_tools_enabled:  document.getElementById("assist-control").checked,
+    assist_speaker_entity:  document.getElementById("assist-speaker").value,
+    assist_tts_entity:      document.getElementById("assist-tts").value,
+  };
+  try {
+    await api("PUT", "/api/settings", payload);
+    const dot = document.getElementById("assist-dot");
+    if (dot) dot.classList.toggle("on", payload.assist_enabled);
+    showToast("HA Assist settings saved");
+  } catch (e) {
+    showToast(e.message || "Error saving settings", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("nav-assist").addEventListener("click", async () => {
+  navigateTo("assist", document.getElementById("nav-assist"));
+  try { await loadAssistSettings(); } catch {}
+});
+
 // ── Tools panel ───────────────────────────────────────────────────────────────
 
 async function loadToolsSettings() {
@@ -2668,126 +2868,6 @@ document.getElementById("btn-save-weather").addEventListener("click", async () =
     showToast("Weather settings saved");
   } catch {
     showToast("Error saving settings", true);
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-// ── HA Control (MCP) panel ────────────────────────────────────────────────────
-
-// Tools as last seen: from the Test button, or just the saved allowlist when
-// the panel opens (listing them needs a round trip to HA, so it is on demand).
-let _haMcpTools = [];
-let _haMcpFullList = false;
-
-function renderHaMcpTools(allowed) {
-  const el = document.getElementById("ha-mcp-tools");
-  if (!_haMcpTools.length) {
-    el.innerHTML = '<span style="color:var(--text-muted)">Click "Test connection" to list the tools.</span>';
-    document.getElementById("ha-mcp-tokens").textContent = "";
-    return;
-  }
-  const all = !allowed.length;
-  el.innerHTML = _haMcpTools.map(t => `
-    <label style="display:flex;gap:8px;align-items:flex-start;margin:4px 0;font-weight:normal" title="${escHtml(t.description || "")}">
-      <input type="checkbox" class="ha-mcp-tool" value="${escHtml(t.name)}" data-tokens="${t.tokens || 0}"
-             ${all || allowed.includes(t.name) ? "checked" : ""}>
-      <span><code>${escHtml(t.name)}</code>${t.tokens ? ` <span style="color:var(--text-muted)">≈${t.tokens} tok</span>` : ""}</span>
-    </label>`).join("");
-  el.querySelectorAll(".ha-mcp-tool").forEach(c => c.addEventListener("change", updateHaMcpTokens));
-  updateHaMcpTokens();
-}
-
-function updateHaMcpTokens() {
-  const boxes = [...document.querySelectorAll(".ha-mcp-tool")];
-  const sum = boxes.filter(b => b.checked).reduce((n, b) => n + (+b.dataset.tokens || 0), 0);
-  document.getElementById("ha-mcp-tokens").textContent = boxes.length ? `(≈${sum} tokens per message)` : "";
-}
-
-// [] means "every tool", so it is only produced from the full list HA returned:
-// ticking all of a list that holds just the saved allowlist must not widen it.
-// Unticking everything is not a selection either — the switch above is for that.
-function haMcpAllowedFromUi(saved) {
-  const boxes = [...document.querySelectorAll(".ha-mcp-tool")];
-  if (!boxes.length) return saved;
-  const ticked = boxes.filter(b => b.checked).map(b => b.value);
-  if (!ticked.length) return null;
-  return _haMcpFullList && ticked.length === boxes.length ? [] : ticked;
-}
-
-async function loadHaMcpSettings() {
-  const s = await api("GET", "/api/settings");
-  document.getElementById("ha-mcp-enabled").checked = !!s.ha_mcp_enabled;
-  document.getElementById("ha-mcp-api-id").value    = s.ha_mcp_api_id || "assist";
-  document.getElementById("ha-mcp-url").value       = s.ha_mcp_url    || "";
-  document.getElementById("ha-mcp-token").value     = s.ha_mcp_token  || "";
-  document.getElementById("ha-instructions").value  = s.ha_instructions || "";
-  if (!_haMcpTools.length) _haMcpTools = (s.ha_mcp_allowed || []).map(name => ({ name, tokens: 0 }));
-  renderHaMcpTools(s.ha_mcp_allowed || []);
-  const dot = document.getElementById("ha-mcp-dot");
-  if (dot) dot.classList.toggle("on", !!s.ha_mcp_enabled);
-}
-
-document.getElementById("btn-ha-mcp-show-token").addEventListener("click", () => {
-  const inp = document.getElementById("ha-mcp-token");
-  const btn = document.getElementById("btn-ha-mcp-show-token");
-  if (inp.type === "password") { inp.type = "text";     btn.textContent = "🙈"; }
-  else                         { inp.type = "password"; btn.textContent = "👁";  }
-});
-
-document.getElementById("btn-ha-mcp-test").addEventListener("click", async () => {
-  const btn    = document.getElementById("btn-ha-mcp-test");
-  const result = document.getElementById("ha-mcp-test-result");
-  btn.disabled = true;
-  result.textContent = "Testing…";
-  result.style.color = "var(--text-muted)";
-  try {
-    const data = await api("POST", "/api/ha-mcp/test");
-    const via  = data.auth_mode === "supervisor" ? "Supervisor" : "long-lived token";
-    result.textContent = `✅ ${data.server} · ${data.tools.length} tools · via ${via}`;
-    result.style.color = "var(--success, #43a047)";
-    let saved = [];
-    try { saved = (await api("GET", "/api/settings")).ha_mcp_allowed || []; } catch {}
-    _haMcpTools = data.tools;
-    _haMcpFullList = true;
-    renderHaMcpTools(saved);
-  } catch (e) {
-    let msg = e.message || "Connection failed";
-    try { msg = JSON.parse(msg).detail || msg; } catch {}
-    result.textContent = `❌ ${msg}`;
-    result.style.color = "var(--danger, #e53935)";
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-document.getElementById("btn-save-ha-mcp").addEventListener("click", async () => {
-  const btn = document.getElementById("btn-save-ha-mcp");
-  btn.disabled = true;
-  let current = {};
-  try { current = await api("GET", "/api/settings"); } catch {}
-  const allowed = haMcpAllowedFromUi(current.ha_mcp_allowed || []);
-  if (allowed === null) {
-    showToast("Tick at least one tool, or switch HA Control off", true);
-    btn.disabled = false;
-    return;
-  }
-  const payload = {
-    ...current,
-    ha_mcp_enabled:  document.getElementById("ha-mcp-enabled").checked,
-    ha_mcp_api_id:   document.getElementById("ha-mcp-api-id").value.trim() || "assist",
-    ha_mcp_url:      document.getElementById("ha-mcp-url").value.trim(),
-    ha_mcp_token:    document.getElementById("ha-mcp-token").value.trim(),
-    ha_mcp_allowed:  allowed,
-    ha_instructions: document.getElementById("ha-instructions").value.trim(),
-  };
-  try {
-    await api("PUT", "/api/settings", payload);
-    const dot = document.getElementById("ha-mcp-dot");
-    if (dot) dot.classList.toggle("on", payload.ha_mcp_enabled);
-    showToast("HA Control settings saved");
-  } catch (e) {
-    showToast(e.message || "Error saving settings", true);
   } finally {
     btn.disabled = false;
   }
@@ -3509,15 +3589,15 @@ async function init() {
   }
 
   try {
-    await loadWeatherSettings();
+    await loadAssistSettings();
   } catch (e) {
-    console.error("loadWeatherSettings:", e);
+    console.error("loadAssistSettings:", e);
   }
 
   try {
-    await loadHaMcpSettings();
+    await loadWeatherSettings();
   } catch (e) {
-    console.error("loadHaMcpSettings:", e);
+    console.error("loadWeatherSettings:", e);
   }
 
   try {
@@ -4974,6 +5054,27 @@ function renderLiveMonitorForm(monitor) {
         <select id="lm-bot-id">${renderBotSelector(monitor.telegram_bot_id)}</select>
       </div>
 
+      <div class="form-group">
+        <div class="toggle-row">
+          <span class="toggle-label">Announce by voice</span>
+          <label class="toggle">
+            <input type="checkbox" id="lm-speak" ${monitor.speak_alerts ? "checked" : ""}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:6px;">
+          Each alert is also spoken on the default speaker set in <i>Settings → HA Assist</i>,
+          in plain spoken prose. Telegram delivery is unchanged.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+          <span style="font-size:0.85rem">🔕 Voice quiet hours</span>
+          <input type="time" id="lm-speak-quiet-start" value="${monitor.speak_quiet_start || ""}" style="width:115px">
+          <span>–</span>
+          <input type="time" id="lm-speak-quiet-end" value="${monitor.speak_quiet_end || ""}" style="width:115px">
+        </div>
+        <small style="color:var(--text-muted);margin-top:4px;display:block">Inside this window alerts are not spoken; they still reach Telegram. Leave empty to always speak.</small>
+      </div>
+
       <div class="btn-row">
         <button class="btn-save" id="btn-save-live-monitor">Save</button>
         <button class="btn-save" id="btn-duplicate-live-monitor" style="background:var(--text-muted,#888)">⎘ Copy</button>
@@ -5308,6 +5409,9 @@ function renderLiveMonitorForm(monitor) {
       ground_truth:    document.getElementById("lm-ground-truth")?.checked ?? true,
       position_id:     document.getElementById("lm-position-id")?.value || "",
       telegram_bot_id: document.getElementById("lm-bot-id").value,
+      speak_alerts:    document.getElementById("lm-speak")?.checked ?? false,
+      speak_quiet_start: document.getElementById("lm-speak-quiet-start")?.value || "",
+      speak_quiet_end:   document.getElementById("lm-speak-quiet-end")?.value   || "",
     };
     try {
       const updated = await api("PUT", `/api/live-monitors/${selectedLiveMonitorId}`, payload);
@@ -5365,6 +5469,9 @@ function renderLiveMonitorForm(monitor) {
         window_late_end:       src.window_late_end   ?? 81,
         window_late_max_odds:  src.window_late_max_odds ?? 0.0,
         telegram_bot_id: src.telegram_bot_id || "default",
+        speak_alerts:    !!src.speak_alerts,
+        speak_quiet_start: src.speak_quiet_start || "",
+        speak_quiet_end:   src.speak_quiet_end   || "",
       });
       liveMonitors.push(copy);
       selectedLiveMonitorId = copy.id;

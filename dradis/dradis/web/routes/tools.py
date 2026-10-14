@@ -119,34 +119,6 @@ async def test_weather():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Home Assistant MCP ────────────────────────────────────────────────────────
-
-@router.post("/api/ha-mcp/test")
-async def test_ha_mcp():
-    """Reach HA's MCP server with the saved settings and list its tools.
-
-    Bypasses `ha_mcp_enabled`, like the MeteoHub test: the button exists to find
-    out whether it is worth switching on. The token estimate per tool is what
-    the allowlist is for — every attached schema is paid on every turn.
-    """
-    from tools import ha_mcp
-    settings = _store.load_settings()
-    try:
-        found = await ha_mcp.probe(settings)
-    except ha_mcp.McpError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    await ha_mcp.refresh(settings)
-    server = found["server"]
-    return {
-        "ok": True,
-        "url": found["url"],
-        "auth_mode": found["auth_mode"],
-        "server": f"{server.get('name', '?')} {server.get('version', '')}".strip(),
-        "tools": [{"name": t.get("name"), "description": t.get("description", ""),
-                   "tokens": ha_mcp.schema_tokens(t)} for t in found["tools"]],
-    }
-
-
 # ── MeteoHub ──────────────────────────────────────────────────────────────────
 
 @router.get("/api/meteohub-test")

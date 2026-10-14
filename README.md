@@ -18,6 +18,7 @@ DRADIS is **one agent** with a **flat set of tools** — no coordinator, no sub-
 - **Conversation history** with configurable depth
 - **Telegram error notifications** — all API failures are reported via Telegram, and so is any *tool* that failed: a `⚠️` message names the tool and the reason (page unreachable, account disconnected) ahead of the reply, so an answer built on missing data is not mistaken for a good one
 - **Model speed-test** — ranks models by tok/s, keeps top 5
+- 🎙️ **HA Assist** — DRADIS is a conversation agent for Home Assistant's voice pipeline: talk to it through any Assist voice assistant as you would in the Telegram chat (same tools, same history). Home commands stay with HA's local intent handling; DRADIS answers the rest, in spoken prose. `/rain`, `/storm` and `/stations` answer by voice without the model ("cosa dice il radar?", "misure a Napoli"); tasks and scheduled monitors can be run and switched on/off by voice, and speak their result on the assistant when ready; live monitors can announce their alerts by voice, with their own quiet hours. See the wiki page *HA Assist*
 - 🚗 **Car Mode** — every alert, report and answer rewritten as plain spoken prose so CarPlay can read it aloud: icons, markup and links stripped, coordinates and record ids dropped, units and compass points spelled out (`12 km/h` → *12 chilometri orari*, `O` → *ovest*), lines joined into sentences, charts not sent. Deterministic — no model call, no added latency, no tokens. Toggle with `/car`
 
 ### Tools
@@ -29,7 +30,6 @@ The single agent calls these tools when relevant; each capability is enabled and
 - **Google Calendar** — read, create, and delete events via OAuth2 (optional)
 - **Gmail** — read inbox, search, and send emails via OAuth2 (optional)
 - **Google Tasks** — manage to-do lists via natural language (create, list, complete, delete, update) via OAuth2 (optional)
-- **HA Control (MCP)** — act on Home Assistant (lights, switches, climate, scripts…) through HA's built-in MCP server (2026.10+), via the Supervisor with no token; only entities exposed to Assist are reachable, and a per-tool allowlist keeps the prompt small
 - **Voice** — incoming voice messages are transcribed via Groq Whisper, then handled like text (optional; requires Groq API key)
 
 ### Automation
@@ -55,7 +55,7 @@ The single agent calls these tools when relevant; each capability is enabled and
 
 ### Web UI
 
-- Vertical left sidebar with collapsible sections: Settings (DRADIS, MQTT / Home Assistant, Position, MeteoHub, Car Mode, Telegram Bots), Tools (Web Search, Weather, Calendar, Gmail, Tasks, HA Control, URL Fetch, Voice), Tasks, Scheduled Monitors, Live Monitors, HA Monitors
+- Vertical left sidebar with collapsible sections: Settings (DRADIS, MQTT / Home Assistant, Position, MeteoHub, Car Mode, HA Assist, Telegram Bots), Tools (Web Search, Weather, Calendar, Gmail, Tasks, URL Fetch, Voice), Tasks, Scheduled Monitors, Live Monitors, HA Monitors
 - All settings managed at runtime — no restart required
 - Live cron validation with next-fire preview
 - Live geocoding for monitors (city name → lat/lon)
@@ -74,13 +74,15 @@ The single agent calls these tools when relevant; each capability is enabled and
 > 🎙️ *"Add a meeting with Marco on Friday at 3pm"*
 > → DRADIS transcribes the audio, creates the event in Google Calendar, and confirms in Telegram.
 
+**HA Assist** *(voice assistant — Home Assistant handles home commands locally, DRADIS the rest)*
+> 🗣️ *"Cosa dice il radar?"* → `/rain` + `/storm` read aloud, no model, no tokens
+> 🗣️ *"Dammi i dati della stazione meteo"* → `/stations` read aloud, each station named once
+> 🗣️ *"Lancia il monitor rischio temporali"* → "avviato"; minutes later the report is spoken on the same assistant
+> 🗣️ *"Che tempo fa domani a Napoli?"* … then on Telegram *"e dopodomani?"* — one shared conversation
+
 **Weather**
 > *"What's the weather in Milan tomorrow?"*
 > → DRADIS calls the Weather tool and replies with current conditions and a multi-day forecast.
-
-**Home control** *(requires HA Control)*
-> *"Accendi la luce dello studio"*
-> → DRADIS calls Home Assistant's `HassTurnOn` through MCP and confirms.
 
 **Web search**
 > *"What are the latest Home Assistant announcements?"*

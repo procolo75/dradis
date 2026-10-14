@@ -189,6 +189,18 @@ This is the "retained message" behaviour: on MQTT connect the broker replays the
 
 ---
 
+## HA Assist
+
+**DRADIS does not appear in *Add integration*.** Restart Home Assistant after the add-on has copied the integration (Telegram tells you when). Check that the add-on was **updated**, not rebuilt: the config-folder permission arrives with the update. The log says `[DRADIS] Assist: HA integration installed`.
+
+**"DRADIS non risponde" / cannot connect when adding it.** Use the URL and token from **Settings → 🎙️ HA Assist → Show URL and token** (`http://local-dradis:8099` for a local add-on). The panel's *Status* shows the last request DRADIS received.
+
+**The speaker test says nothing.** The test uses the speaker selected in the panel: pick one (🔄 reloads from HA). A `media_player.*` also needs a **TTS engine**. The log line `[DRADIS] Speaker: …` gives HA's answer; a `401/403` on `supervisor/core/api` means the add-on was rebuilt instead of updated.
+
+**A radar or stations question went to the model.** Direct commands need their words (*rain, storm, radar…, sta per piovere, misure/stazioni/sensori*); "com'è la situazione dei temporali?" has none, so the model answers (with `radar_now`). The Telegram copy's footer tells which: `🔧 radar_now (direct)` vs a token count.
+
+**A word is read out as a symbol.** Tell us which: `voice.py` is where speech-only fixes go.
+
 ## Web UI not loading
 
 - Open the add-on in HA and click **Open Web UI** — this uses the correct HA Ingress URL.

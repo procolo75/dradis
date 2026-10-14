@@ -150,7 +150,7 @@ def _rain_line(gauges, now: float, it: bool) -> str:
 
 
 def format_stations(view, place: str, *, lang: str = "it", tz=None,
-                    radius_km: float, now: float) -> str:
+                    radius_km: float, now: float, voice: bool = False) -> str:
     """The readout, or the reason there isn't one.
 
     `view` follows `gauges.observe`'s three-way contract and this is where the
@@ -172,6 +172,11 @@ def format_stations(view, place: str, *, lang: str = "it", tz=None,
             else f"\n🔎 No recent reading within {radius_km:.0f} km")
 
     lines = [head]
+    # Spoken, the station is said once with everything it measured: one line
+    # per quantity, each naming its station, read "Nisida Meteo" after every
+    # value. On screen the per-line attribution stays — there it is scanned,
+    # not heard.
+    groups: dict = {}
     for var in _ROWS:
         best = next((r for r in sorted(view.readings,
                                        key=lambda x: x.distance_km)
@@ -180,9 +185,17 @@ def format_stations(view, place: str, *, lang: str = "it", tz=None,
             continue                       # no station has it: no line, not a blank
         m = best.measurements[var]
         text = _value(var, m, best, it)
-        if text:
-            lines.append(f"{text} · {_where(best, it)} · "
-                         f"{_when(var, m, now, tz, it)}")
+        if not text:
+            continue
+        when = _when(var, m, now, tz, it)
+        if voice:
+            group = groups.setdefault(best.name, {"where": _where(best, it), "when": when,
+                                                  "values": []})
+            group["values"].append(text if when == group["when"] else f"{text} ({when})")
+        else:
+            lines.append(f"{text} · {_where(best, it)} · {when}")
+    for group in groups.values():
+        lines.append(f"{group['where']}: {', '.join(group['values'])}, {group['when']}")
 
     rain = _rain_line(view.readings, now, it)
     if rain:
@@ -191,7 +204,7 @@ def format_stations(view, place: str, *, lang: str = "it", tz=None,
     nets = sorted({r.network for r in view.readings})
     tail = (f"🔎 {len(view.readings)} stazioni entro {radius_km:.0f} km" if it
             else f"🔎 {len(view.readings)} stations within {radius_km:.0f} km")
-    if len(nets) <= 3:
+    if len(nets) <= 3 and not voice:       # network acronyms are noise aloud
         tail += " · " + html.escape(", ".join(nets))
     lines.append(tail)
     return "\n".join(lines)
