@@ -226,6 +226,38 @@ def correction_for(provider: str) -> float:
 
 def reset_calibration() -> None:
     _ratio_correction.clear()
+    _schema_bill.clear()
+
+
+# The smallest prompt the provider has billed for a request carrying exactly
+# this tool set, per (provider, model, schemas). The schemas are most of a
+# chat request — about 4000 of 4400 estimated tokens with every tool on — and
+# the local estimate over-counts them by more than two: 4389 estimated, 1860
+# billed. Any billed prompt is an upper bound on what those schemas really cost
+# (the messages in it cost at least zero), so a later request with the same
+# tools costs at most that bill plus its own messages, estimated as
+# conservatively as ever. Never an under-count, and the first round of a turn
+# stops reserving a minute's worth of budget it will not use.
+_schema_bill: dict[tuple, int] = {}
+
+
+def _schema_key(provider: str, model: str, schemas) -> tuple:
+    return (provider, model, json.dumps(schemas or [], sort_keys=True, ensure_ascii=False))
+
+
+def remember_schema_bill(provider: str, model: str, schemas, billed_prompt: int) -> None:
+    if billed_prompt <= 0:
+        return
+    key = _schema_key(provider, model, schemas)
+    _schema_bill[key] = min(_schema_bill.get(key, billed_prompt), billed_prompt)
+
+
+def schema_bill_bound(provider: str, model: str, schemas, messages: list[dict]) -> int | None:
+    """Upper bound on this request's prompt from an earlier bill, or None."""
+    bill = _schema_bill.get(_schema_key(provider, model, schemas))
+    if bill is None:
+        return None
+    return bill + _messages_estimate(messages, provider)
 
 
 def _messages_estimate(messages: list[dict], provider: str) -> int:
@@ -676,6 +708,7 @@ async def run_agent(
             calibrate(provider, estimated, round_prompt)
             if round_prompt:
                 prior = (_messages_estimate(kwargs["messages"], provider), round_prompt)
+                remember_schema_bill(provider, model, kwargs.get("tools"), round_prompt)
             print(f"[DRADIS] round={round_idx} prompt={round_prompt} "
                   f"completion={round_completion} cumulative={prompt_tokens + completion_tokens} "
                   f"tpm_used={_tpm_used(provider, time.monotonic())} "
@@ -781,7 +814,8 @@ async def _create_with_pacing(client, provider: str, kwargs: dict, cap: int,
     and cut down again, against the provider's own figures, if it still refuses.
 
     `prior` = (estimated message tokens, billed prompt tokens) of the previous
-    round of this turn. The previous request already told us what everything it
+    round of this turn; across turns, `schema_bill_bound` does the same from the
+    last bill for this exact tool set. The previous request already told us what everything it
     carried really costs, so only what was added since is estimated — at the same
     conservative rate. The local estimate over-counts tool schemas two to three
     times (5128 estimated, 2053 billed with 23 tools), and against an 8000 minute
@@ -797,6 +831,11 @@ async def _create_with_pacing(client, provider: str, kwargs: dict, cap: int,
         prev_msgs, prev_billed = prior
         added = max(0, _messages_estimate(kwargs["messages"], provider) - prev_msgs)
         estimate = min(estimate, prev_billed + added)
+    # Also, from any earlier request with the same tools — this is what prices
+    # the FIRST round of a turn, which `prior` cannot.
+    bound = schema_bill_bound(provider, kwargs.get("model", ""), schemas, kwargs["messages"])
+    if bound is not None:
+        estimate = min(estimate, bound)
     need = estimate + cap
     wait = tpm_wait_seconds(provider, need)
     if wait > 0:

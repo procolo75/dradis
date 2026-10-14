@@ -93,6 +93,62 @@ class Speak(unittest.IsolatedAsyncioTestCase):
                                          {"assist_speaker_entity": "assist_satellite.kitchen"}, client)
         self.assertEqual(target, "assist_satellite.kitchen")
 
+    async def test_the_speaking_call_waits_for_the_speech_to_end(self):
+        timeouts = []
+
+        def handler(request):
+            timeouts.append((request.url.path, request.extensions.get("timeout", {}).get("read")))
+            return httpx.Response(200, text="assist_satellite.echo")
+        async with httpx.AsyncClient(timeout=15, transport=httpx.MockTransport(handler)) as client:
+            await speaker.speak("Lista lunga.", "it", "dev1", {}, client)
+        self.assertEqual(timeouts[-1], ("/core/api/services/assist_satellite/announce",
+                                        speaker._SPEAK_TIMEOUT))
+        self.assertGreaterEqual(speaker._SPEAK_TIMEOUT, 120)
+
+    async def test_waits_for_the_satellite_to_finish_its_reply(self):
+        states = iter(["responding", "responding", "idle"])
+        calls = []
+
+        def handler(request):
+            calls.append(request.url.path)
+            if "/states/" in request.url.path:
+                return httpx.Response(200, json={"state": next(states)})
+            return httpx.Response(200, json=[])
+        slept = []
+
+        async def fake_sleep(sec):
+            slept.append(sec)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            ok = await speaker.wait_until_idle(client, "assist_satellite.echo", sleep=fake_sleep)
+        self.assertTrue(ok)
+        self.assertEqual(len(slept), 2)
+
+    async def test_a_satellite_that_never_settles_is_spoken_to_anyway(self):
+        def handler(request):
+            return httpx.Response(200, json={"state": "responding"})
+
+        async def fake_sleep(sec):
+            pass
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            ok = await speaker.wait_until_idle(client, "assist_satellite.echo", max_wait=3,
+                                               poll=1, sleep=fake_sleep)
+        self.assertFalse(ok)
+
+    async def test_the_announcement_follows_the_wait(self):
+        order = []
+
+        def handler(request):
+            order.append(request.url.path)
+            if request.url.path.endswith("/template"):
+                return httpx.Response(200, text="assist_satellite.echo")
+            if "/states/" in request.url.path:
+                return httpx.Response(200, json={"state": "idle"})
+            return httpx.Response(200, json=[])
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await speaker.speak("Fatto.", "it", "dev1", {}, client)
+        self.assertEqual(order, ["/core/api/template", "/core/api/states/assist_satellite.echo",
+                                 "/core/api/services/assist_satellite/announce"])
+
     async def test_an_ha_error_never_raises(self):
         async with httpx.AsyncClient(transport=httpx.MockTransport(
                 lambda r: httpx.Response(500))) as client:

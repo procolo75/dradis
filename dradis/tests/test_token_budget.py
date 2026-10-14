@@ -532,5 +532,78 @@ class PriorRoundPacingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.slept), 1)
 
 
+class SchemaBillTest(PriorRoundPacingTest):
+    """The FIRST round of a turn, priced from the last bill for the same tools.
+
+    From the log: 3774 spent; the next question's first round was estimated at
+    4389 + 2048 and waited 30 s; Groq then billed 1860 for it."""
+
+    def _kw(self, **extra):
+        kw = self._kwargs()
+        kw["model"] = "openai/gpt-oss-120b"
+        kw["messages"] = kw["messages"][:2]              # a fresh turn: system + question
+        kw.update(extra)
+        return kw
+
+    async def test_a_known_tool_set_is_priced_from_its_bill(self):
+        kw = self._kw()
+        core.remember_schema_bill("groq", kw["model"], kw["tools"], 900)
+        bound = core.schema_bill_bound("groq", kw["model"], kw["tools"], kw["messages"])
+        self.assertLess(bound, core.estimate_request_tokens(kw["messages"], kw["tools"], "groq"))
+        self.assertEqual(bound, 900 + core._messages_estimate(kw["messages"], "groq"))
+        core.record_tpm("groq", 3774)
+        await core._create_with_pacing(self._Client(), "groq", kw, 2048)
+        self.assertEqual(self.slept, [])
+
+    async def test_without_a_bill_it_waits_as_before(self):
+        kw = self._kw()
+        core.record_tpm("groq", 3774)
+        await core._create_with_pacing(self._Client(), "groq", kw, 2048)
+        self.assertEqual(len(self.slept), 1)
+
+    async def test_another_tool_set_or_model_does_not_borrow_the_bill(self):
+        kw = self._kw()
+        core.remember_schema_bill("groq", kw["model"], kw["tools"][:5], 900)
+        core.remember_schema_bill("groq", "llama-3.3-70b", kw["tools"], 900)
+        self.assertIsNone(core.schema_bill_bound("groq", kw["model"], kw["tools"], kw["messages"]))
+
+    def test_the_smallest_bill_is_kept_and_never_raises_the_estimate(self):
+        kw = self._kw()
+        core.remember_schema_bill("groq", kw["model"], kw["tools"], 1200)
+        core.remember_schema_bill("groq", kw["model"], kw["tools"], 900)
+        core.remember_schema_bill("groq", kw["model"], kw["tools"], 1500)
+        msgs = core._messages_estimate(kw["messages"], "groq")
+        self.assertEqual(core.schema_bill_bound("groq", kw["model"], kw["tools"], kw["messages"]),
+                         900 + msgs)
+
+    async def test_a_huge_bill_cannot_raise_the_estimate(self):
+        kw = self._kw()
+        core.remember_schema_bill("groq", kw["model"], kw["tools"], 50000)
+        core.record_tpm("groq", 3774)
+        await core._create_with_pacing(self._Client(), "groq", kw, 2048)
+        self.assertEqual(len(self.slept), 1)              # same as with no bill at all
+
+    async def test_the_loop_remembers_what_it_was_billed(self):
+        """run_agent stores the bill of every round, keyed by the tools it sent."""
+        class Usage: prompt_tokens, completion_tokens = 777, 5
+        class Msg: content, tool_calls = "ok", None
+        class Choice: message = Msg()
+        class Resp: usage, choices = Usage(), [Choice()]
+
+        async def fake_create(client, provider, kwargs, cap, prior=None):
+            return Resp()
+        tools = [{"name": "t", "description": "d", "parameters": {"type": "object", "properties": {}},
+                  "fn": None}]
+        import types
+        from unittest import mock
+        stub = types.ModuleType("openai")
+        stub.AsyncOpenAI = lambda **kw: None              # never used: creation is faked
+        with mock.patch.dict(sys.modules, {"openai": stub}), \
+             mock.patch.object(core, "_create_with_pacing", fake_create), \
+             mock.patch.object(core, "_base_url_for_provider", lambda p: "https://stub.invalid/v1"):
+            await core.run_agent("sys", "hi", tools, "m", "groq", tool_call_limit=1)
+        self.assertEqual(core.schema_bill_bound("groq", "m", core._schemas(tools), []), 777 + 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,20 @@ from voice import for_voice
 SUPERVISOR = "http://supervisor"
 _S6_ENV_DIR = "/run/s6/container_environment"
 _TIMEOUT = 15
+# HA answers a service call only when the service has finished — and an
+# announcement finishes when it has been READ. A to-do list read aloud outlasted
+# 15 s: DRADIS dropped the connection mid-call, HA cancelled the announcement
+# and the satellite was left blinking. The speaking call waits as long as a
+# speech can last.
+_SPEAK_TIMEOUT = 180
+
+# An announcement must not land on a satellite that is still answering. A
+# voice-started task finished ~2 s after DRADIS said "started": the result was
+# announced while the satellite was still speaking that reply, the two
+# overlapped and the ring stayed lit in the reply's state. Wait for `idle`.
+_IDLE_STATE = "idle"
+_IDLE_WAIT_MAX = 60.0
+_IDLE_POLL = 1.0
 
 # A spoken answer longer than this is a lecture. Cut at a sentence end and say
 # where the rest is: the full text always goes to Telegram as well.
@@ -97,11 +111,37 @@ def trim_for_speech(text: str, lang: str = "it", limit: int = SPEECH_MAX_CHARS) 
     return head[:cut].rstrip() + " " + _REST_ON_TELEGRAM.get(lang, _REST_ON_TELEGRAM["en"])
 
 
-async def _ha(client: httpx.AsyncClient, method: str, path: str, json=None):
+async def _ha(client: httpx.AsyncClient, method: str, path: str, json=None,
+              timeout: float | None = None):
+    kwargs = {"timeout": timeout} if timeout else {}
     resp = await client.request(method, f"{SUPERVISOR}/core/api/{path}", json=json,
-                                headers={"Authorization": f"Bearer {supervisor_token()}"})
+                                headers={"Authorization": f"Bearer {supervisor_token()}"},
+                                **kwargs)
     resp.raise_for_status()
     return resp
+
+
+async def wait_until_idle(client: httpx.AsyncClient, entity_id: str,
+                          max_wait: float = _IDLE_WAIT_MAX, poll: float = _IDLE_POLL,
+                          sleep=None) -> bool:
+    """Wait until an assist satellite is idle (not listening, processing or
+    responding). True when it is; False after `max_wait` — the caller speaks
+    anyway rather than lose the message."""
+    import asyncio
+    sleep = sleep or asyncio.sleep
+    waited = 0.0
+    while True:
+        try:
+            state = (await _ha(client, "GET", f"states/{entity_id}")).json().get("state")
+        except Exception:
+            return False                       # cannot tell: do not hold the message
+        if state == _IDLE_STATE:
+            return True
+        if waited >= max_wait:
+            print(f"[DRADIS] Speaker: {entity_id} still {state!r} after {max_wait:.0f}s, speaking anyway")
+            return False
+        await sleep(poll)
+        waited += poll
 
 
 async def resolve_target(client: httpx.AsyncClient, device_id: str | None,
@@ -136,19 +176,23 @@ async def speak(text: str, lang: str = "it", device_id: str | None = None,
             print("[DRADIS] Speaker: no assistant to speak on (no device, no default speaker)")
             return ""
         if target.startswith("assist_satellite."):
+            await wait_until_idle(client, target)
             await _ha(client, "POST", "services/assist_satellite/announce",
-                      {"entity_id": target, "message": message})
+                      {"entity_id": target, "message": message}, timeout=_SPEAK_TIMEOUT)
         else:
             tts = (settings.get("assist_tts_entity") or "").strip()
             if not tts:
                 print(f"[DRADIS] Speaker: {target} is a media player and no TTS engine is set")
                 return ""
             await _ha(client, "POST", "services/tts/speak",
-                      {"entity_id": tts, "media_player_entity_id": target, "message": message})
+                      {"entity_id": tts, "media_player_entity_id": target, "message": message},
+                      timeout=_SPEAK_TIMEOUT)
         print(f"[DRADIS] Speaker: said {len(message)} chars on {target}")
         return target
     except Exception as e:
-        print(f"[DRADIS] Speaker: cannot speak: {e}")
+        # The type, not just the text: a timeout's message is empty, and
+        # "cannot speak: " told nobody anything.
+        print(f"[DRADIS] Speaker: cannot speak: {type(e).__name__}: {e}")
         return ""
     finally:
         if own:

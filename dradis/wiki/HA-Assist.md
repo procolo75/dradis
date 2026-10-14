@@ -115,7 +115,12 @@ DRADIS can speak when nobody just asked: a task's result minutes later, a live m
   - `assist_satellite.*` → `assist_satellite.announce` — the satellite speaks with its pipeline's
     voice. Preferred.
   - `media_player.*` → `tts.speak` with the **TTS engine** chosen in the panel.
-- A speaker that is off or unreachable never breaks anything: the log says `[DRADIS] Speaker: …`.
+- On a satellite it first waits (up to 60 s) for the satellite to be `idle`: an announcement that
+  lands while it is still speaking a reply overlaps it and leaves the ring lit.
+- The call waits until the speech has been read (up to 3 minutes): Home Assistant answers an
+  announcement only when it is over, and dropping the call earlier cancels it.
+- A speaker that is off or unreachable never breaks anything: the log says
+  `[DRADIS] Speaker: cannot speak: <error type>: …`.
 
 ## Live monitors that speak
 

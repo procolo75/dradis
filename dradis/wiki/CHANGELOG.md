@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## [4.16.2] - 2026-10-14
+
+**A question asked right after another no longer waits half a minute for nothing.** The first round of
+every turn was paced on the local estimate, which over-counts tool schemas by more than two — with
+every tool on, 4389 estimated against 1860 billed. Added to the 2048 reserved for the reply, a second
+question ten seconds after the first "needed" 6437 tokens on top of 3774 already spent, and waited
+30 s for budget it never used (it was billed ~1920).
+
+- **Fix — the first round is priced from the last bill for the same tools.** `core.schema_bill_bound`:
+  the smallest prompt ever billed for the same provider, model and tool schemas, plus this request's
+  messages at the usual conservative rate. A bill is an upper bound on what the schemas cost, so it
+  can never under-count; it only lowers the estimate (≈4389 → ≈2250 in the case above). Applies to
+  every model call — chat, HA Assist, tasks, LLM monitors. Chat and voice share a tool set, so each
+  teaches the other; a task with its own tools learns its own cost on its first run. A new task or
+  monitor name changes the tool set, and the next request goes back to the full estimate once.
+- **Fix — a long announcement no longer leaves the satellite blinking.** Home Assistant answers
+  `assist_satellite.announce` (and `tts.speak`) only when the speech has been read. DRADIS waited
+  15 s: a to-do list read aloud outlasted it, the call was dropped mid-speech, HA cancelled the
+  announcement and the satellite stayed in its announcing state. The speaking call now waits up to
+  3 minutes, and a failure is logged with its type (`ReadTimeout` had an empty message, so the log
+  said only "cannot speak:").
+- **Fix — an announcement waits for the satellite to finish its reply.** A voice-started task that
+  finished ~2 s after DRADIS said "started" was announced while the satellite was still speaking that
+  reply; the two overlapped and the ring stayed lit. `speaker.speak` now waits (up to 60 s) for the
+  `assist_satellite` entity to be `idle` before announcing, then speaks anyway.
+- **Tip:** *Settings → DRADIS → Max completion tokens* 1024 instead of 2048 halves the reserve each
+  request holds for its reply; spoken answers are 50–200 tokens.
+
 ## [4.16.1] - 2026-10-14
 
 **DRADIS on your voice assistant — as in the Telegram chat.** DRADIS is now the conversation agent

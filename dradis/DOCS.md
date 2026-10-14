@@ -54,6 +54,7 @@ DRADIS keeps itself inside that budget rather than discovering it from a rejecti
 - **Provider tokens per minute** (default `0`) is that budget. `0` means the figure DRADIS knows — 8000 for Groq, uncapped elsewhere. Set it to your plan's ceiling when you leave the free tier.
 - Tool results are **trimmed to fit** what is left of the window and of the minute, with `[… content truncated to fit the model budget …]` appended so the model knows it has part of a page rather than all of one. A result dropped whole to make room says so differently, and says it is gone — a model told its page was merely "truncated" goes and fetches the rest, which is the round the trim was paying for.
 - The **size estimate is measured, not assumed**. Text is priced at 2.2 characters per token, the worst ratio observed rather than the average one (a page three-quarters made of URLs tokenises nothing like prose), tool schemas are counted, and after every round the provider's own `usage.prompt_tokens` corrects the estimate upward for the rest of the process if it was optimistic.
+- Requests are **paced against what the provider bills, not only against the estimate.** The estimate over-counts tool schemas by more than two (with every tool on: 4389 estimated, 1860 billed), so a request is priced as the smallest prompt ever billed for the same tool set and model, plus its own messages at the conservative rate — and, from the second round of a turn, as the previous round's bill plus what was added since. Both can only lower the estimate, never under-count. Without this a question asked right after another waited 30–60 s for budget it never used.
 - Requests are **paced**: if the next call would not fit in the rolling minute, the runtime waits for the budget to free up instead of being refused. A rate-limited call is retried once after the delay the provider asks for, and the fallback model waits too when it sits on the provider that just refused — the ceiling belongs to the API key, not the model.
 - A request bigger than *a whole minute* is a different problem, and waiting cannot solve it: it is **trimmed before it is sent**, and if the provider still refuses it (`413 … Limit 8000, Requested 8081`) that refusal is read as a measurement, applied to the estimate, and the request is cut down and sent again.
 - The **final round carries no tool call at all**, in the history as well as the request. Sending a transcript full of tool calls with no tools attached is what Groq reads as `tool_choice: none`, and gpt-oss answers it with another tool call, which the provider refuses with a 400 — losing a turn that had already paid for its context.
@@ -543,7 +544,12 @@ DRADIS can speak when nobody just asked: a task's result minutes later, a live m
   - `assist_satellite.*` → `assist_satellite.announce` — the satellite speaks with its pipeline's
     voice. Preferred.
   - `media_player.*` → `tts.speak` with the **TTS engine** chosen in the panel.
-- A speaker that is off or unreachable never breaks anything: the log says `[DRADIS] Speaker: …`.
+- On a satellite it first waits (up to 60 s) for the satellite to be `idle`: an announcement that
+  lands while it is still speaking a reply overlaps it and leaves the ring lit.
+- The call waits until the speech has been read (up to 3 minutes): Home Assistant answers an
+  announcement only when it is over, and dropping the call earlier cancels it.
+- A speaker that is off or unreachable never breaks anything: the log says
+  `[DRADIS] Speaker: cannot speak: <error type>: …`.
 
 #### Live monitors that speak
 
