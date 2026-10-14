@@ -32,3 +32,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# macOS SMB deletion placeholders on the network share
+.smbdelete*
